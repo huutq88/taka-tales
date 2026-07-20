@@ -10,11 +10,13 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.1.6"
+AGENT_VERSION = "0.1.7"
 
 BASE_DIR = pathlib.Path(__file__).parent
 PROJECTS_DIR = BASE_DIR / "projects"
 PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+VOICES_DIR = BASE_DIR / "voices"
+VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 # In-memory stores
 active_agents: Set[WebSocket] = set()
@@ -556,6 +558,64 @@ async def get_voice_defaults():
         "voice_id": config.get("AUDIO", "VOICE", fallback="vi-VN-HoaiMyNeural")
     }
 
+@app.get("/v1/voices")
+async def list_voices():
+    voices_list = []
+    if VOICES_DIR.exists():
+        for item in VOICES_DIR.iterdir():
+            if item.is_dir():
+                voice_id = item.name
+                has_audio = (item / "ref.wav").exists()
+                has_text = (item / "ref_text.txt").exists()
+                voices_list.append({
+                    "id": voice_id,
+                    "name": voice_id,
+                    "has_audio": has_audio,
+                    "has_text": has_text
+                })
+    return sorted(voices_list, key=lambda x: x["id"])
+
+@app.post("/v1/voices")
+async def create_voice(voice_id: str, ref_text: str = "", file: UploadFile = File(...)):
+    if not voice_id.strip():
+        raise HTTPException(status_code=400, detail="Voice ID cannot be empty")
+    clean_id = "".join(c for c in voice_id if c.isalnum() or c in ("-", "_")).strip()
+    if not clean_id:
+        raise HTTPException(status_code=400, detail="Invalid Voice ID format")
+    
+    voice_dir = VOICES_DIR / clean_id
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save audio file
+    audio_path = voice_dir / "ref.wav"
+    try:
+        with open(audio_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save audio file: {str(e)}")
+        
+    # Save transcription text
+    text_path = voice_dir / "ref_text.txt"
+    try:
+        with open(text_path, "w", encoding="utf-8") as f:
+            f.write(ref_text.strip())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save transcription text: {str(e)}")
+        
+    return {"ok": True, "voice_id": clean_id}
+
+@app.delete("/v1/voices/{voice_id}")
+async def delete_voice(voice_id: str):
+    clean_id = "".join(c for c in voice_id if c.isalnum() or c in ("-", "_")).strip()
+    voice_dir = VOICES_DIR / clean_id
+    if voice_dir.exists() and voice_dir.is_dir():
+        try:
+            shutil.rmtree(voice_dir)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete voice profile: {str(e)}")
+        return {"ok": True}
+    raise HTTPException(status_code=404, detail="Voice profile not found")
+
 @app.get("/v1/projects/{story_id}/{chapter_id}/fragments")
 async def get_project_fragments(story_id: str, chapter_id: str):
     content = ""
@@ -676,40 +736,38 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
     voice_payload = {}
     if request_data and request_data.voice_config:
         vc = request_data.voice_config
-        voice_payload["provider"] = vc.provider
-        voice_payload["voice_id"] = vc.voice_id
-        voice_payload["omnivoice_mode"] = vc.omnivoice_mode
-        voice_payload["ref_text"] = vc.ref_text
-        voice_payload["voice_instruct"] = vc.voice_instruct
+        selected_voice_id = vc.voice_id
+        
+        # Hardcode provider and mode for OmniVoice cloning
+        voice_payload["provider"] = "omnivoice"
+        voice_payload["omnivoice_mode"] = "clone"
+        voice_payload["voice_id"] = selected_voice_id
         voice_payload["start_fragment"] = vc.start_fragment or 0
         voice_payload["limit_fragments"] = vc.limit_fragments or 0
         
-        # If Base64 reference audio is provided, decode and save it
-        if vc.ref_audio_b64:
-            try:
-                import base64
-                ext = ".wav"
-                if vc.ref_audio_filename:
-                    ext = pathlib.Path(vc.ref_audio_filename).suffix or ".wav"
-                
-                (project_dir / "audio").mkdir(parents=True, exist_ok=True)
-                ref_audio_path = project_dir / f"audio/ref_audio{ext}"
-                
-                b64_data = vc.ref_audio_b64
-                if "," in b64_data:
-                    b64_data = b64_data.split(",", 1)[1]
-                
-                with open(ref_audio_path, "wb") as f:
-                    f.write(base64.b64decode(b64_data))
-                
-                voice_payload["ref_audio_path"] = str(ref_audio_path)
-                print(f"[Server] Saved reference voice clone audio to {ref_audio_path}")
-            except Exception as e:
-                print(f"[Server] Failed to decode/save reference audio: {e}")
-        elif vc.ref_audio_local_path:
-            # Set to local path directly
-            voice_payload["ref_audio_path"] = vc.ref_audio_local_path
-            print(f"[Server] Using local reference audio path: {vc.ref_audio_local_path}")
+        # Resolve voice profile from voices folder
+        if selected_voice_id:
+            voice_dir = VOICES_DIR / selected_voice_id
+            ref_audio = voice_dir / "ref.wav"
+            ref_text_file = voice_dir / "ref_text.txt"
+            
+            if ref_audio.exists():
+                try:
+                    import base64
+                    with open(ref_audio, "rb") as f:
+                        audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+                    voice_payload["ref_audio_b64"] = audio_b64
+                    voice_payload["ref_audio_filename"] = "ref.wav"
+                    print(f"[Server] Encoded base64 audio for voice ID: {selected_voice_id}")
+                except Exception as e:
+                    print(f"[Server] Failed to read/encode voice profile audio: {e}")
+                    
+            if ref_text_file.exists():
+                try:
+                    with open(ref_text_file, "r", encoding="utf-8") as f:
+                        voice_payload["ref_text"] = f.read().strip()
+                except Exception as e:
+                    print(f"[Server] Failed to read voice profile text: {e}")
 
     # Initialize job state
     job_key = f"{story_id}/{chapter_id}"
@@ -1597,56 +1655,13 @@ async def dashboard():
                     </select>
                 </div>
                 <div class="form-group">
-                    <label for="vc-provider">Voice Provider</label>
-                    <select id="vc-provider" onchange="toggleVoiceFields()">
-                        <option value="edge">Edge TTS (Free)</option>
-                        <option value="kokoro">Kokoro TTS</option>
-                        <option value="elevenlabs">ElevenLabs</option>
-                        <option value="omnivoice">OmniVoice (Local Clone/Design)</option>
+                    <label for="vc-voice-id" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Voice ID (Giọng đọc)</span>
+                        <a href="javascript:void(0)" onclick="openVoiceManagement()" style="font-size: 0.85rem; color: var(--primary-light); text-decoration: none; font-weight: 600;">➕ Quản lý giọng đọc</a>
+                    </label>
+                    <select id="vc-voice-id" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;" required>
+                        <option value="">-- Select Voice Profile --</option>
                     </select>
-                </div>
-
-                <!-- Fields for Edge, Kokoro, ElevenLabs -->
-                <div class="form-group" id="group-voice-id">
-                    <label for="vc-voice-id" id="label-voice-id">Voice Name/ID</label>
-                    <input type="text" id="vc-voice-id" placeholder="e.g. vi-VN-HoaiMyNeural">
-                </div>
-
-                <!-- Fields for OmniVoice -->
-                <div id="omnivoice-fields" style="display: none;">
-                    <div class="form-group">
-                        <label for="vc-omnivoice-mode">OmniVoice Mode</label>
-                        <select id="vc-omnivoice-mode" onchange="toggleOmniVoiceModeFields()">
-                            <option value="auto">Auto Voice Selection</option>
-                            <option value="clone">Voice Cloning (Requires Audio)</option>
-                            <option value="design">Voice Design (Attributes)</option>
-                        </select>
-                    </div>
-
-                    <!-- Voice Cloning specific fields -->
-                    <div id="vc-clone-fields" style="display: none;">
-                        <div class="form-group">
-                            <label for="vc-ref-audio">Reference Audio File (.wav / .mp3)</label>
-                            <input type="file" id="vc-ref-audio" accept="audio/wav, audio/mpeg, audio/mp3">
-                        </div>
-                        <div style="text-align: center; font-size: 0.8rem; color: var(--text-muted); margin: 0.5rem 0;">— OR —</div>
-                        <div class="form-group">
-                            <label for="vc-ref-audio-local-path">Local Reference Audio Path (on Server)</label>
-                            <input type="text" id="vc-ref-audio-local-path" placeholder="e.g. /Users/huutq/Desktop/WorkingSpace/Demo/taka-tales/ref.wav">
-                        </div>
-                        <div class="form-group">
-                            <label for="vc-ref-text">Reference Transcription (Text in Audio)</label>
-                            <textarea id="vc-ref-text" rows="2" placeholder="Optional. If left blank, local Whisper ASR will auto-transcribe it."></textarea>
-                        </div>
-                    </div>
-
-                    <!-- Voice Design specific fields -->
-                    <div id="vc-design-fields" style="display: none;">
-                        <div class="form-group">
-                            <label for="vc-voice-instruct">Voice Attributes Instruction</label>
-                            <input type="text" id="vc-voice-instruct" placeholder="e.g., female, low pitch, american accent">
-                        </div>
-                    </div>
                 </div>
                 
                 <!-- Fragment Subset Selection -->
@@ -1736,6 +1751,45 @@ async def dashboard():
                     <button type="submit" class="btn-submit">Upload & Start</button>
                 </div>
             </form>
+        </dialog>
+
+        <!-- Voice Management Dialog -->
+        <dialog id="voice-management-dialog" style="width: 90%; max-width: 650px; background: #11111b; border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; color: var(--text);">
+            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem;">
+                <span>🎙️ OmniVoice Voice Management</span>
+                <button onclick="closeVoiceManagement()" style="background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; padding: 0.2rem 0.5rem;">✕</button>
+            </h3>
+            
+            <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 1.5rem; margin-top: 1rem;">
+                <!-- Existing Voices List -->
+                <div>
+                    <h4 style="margin-top: 0; color: var(--primary-light);">Cloned Voices List</h4>
+                    <div id="voices-list-container" style="max-height: 320px; overflow-y: auto; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                        <!-- List loaded dynamically -->
+                        <p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">No voices cloned yet.</p>
+                    </div>
+                </div>
+                
+                <!-- Create Voice Form -->
+                <div style="border-left: 1px solid var(--border); padding-left: 1.5rem;">
+                    <h4 style="margin-top: 0; color: var(--success);">Clone New Voice</h4>
+                    <form id="create-voice-form" onsubmit="submitCreateVoice(event)" style="display: flex; flex-direction: column; gap: 0.8rem;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="new-voice-id" style="font-size: 0.85rem;">Voice ID (No spaces)</label>
+                            <input type="text" id="new-voice-id" required placeholder="e.g. giong-nu-mientay" style="width: 100%; padding: 0.5rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); border-radius: 6px; outline: none; font-size: 0.85rem;">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="new-voice-file" style="font-size: 0.85rem;">Reference Audio File (.wav / .mp3)</label>
+                            <input type="file" id="new-voice-file" accept="audio/wav, audio/mpeg, audio/mp3" required style="width: 100%; font-size: 0.8rem;">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="new-voice-text" style="font-size: 0.85rem;">Transcription Text (spoken in audio)</label>
+                            <textarea id="new-voice-text" rows="3" placeholder="Optional. If left blank, local Whisper ASR will auto-transcribe it." style="width: 100%; padding: 0.5rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); border-radius: 6px; outline: none; font-size: 0.85rem; resize: none;"></textarea>
+                        </div>
+                        <button type="submit" class="btn-submit" style="margin-top: 0.5rem; font-size: 0.85rem; padding: 0.6rem; background: var(--success); border-color: var(--success);">💾 Save Voice Profile</button>
+                    </form>
+                </div>
+            </div>
         </dialog>
 
         <script>
@@ -1903,49 +1957,7 @@ async def dashboard():
                 pollChapterStatus(storyId, chapterId);
             }
 
-            function toggleVoiceFields() {
-                let provider = document.getElementById("vc-provider").value;
-                let groupVoiceId = document.getElementById("group-voice-id");
-                let labelVoiceId = document.getElementById("label-voice-id");
-                let inputVoiceId = document.getElementById("vc-voice-id");
-                let omnivoiceFields = document.getElementById("omnivoice-fields");
 
-                if (provider === "omnivoice") {
-                    groupVoiceId.style.display = "none";
-                    omnivoiceFields.style.display = "block";
-                } else {
-                    groupVoiceId.style.display = "block";
-                    omnivoiceFields.style.display = "none";
-                    
-                    if (provider === "edge") {
-                        labelVoiceId.innerText = "Voice Name (Edge TTS)";
-                        inputVoiceId.placeholder = "e.g. vi-VN-HoaiMyNeural or en-US-BrianNeural";
-                    } else if (provider === "kokoro") {
-                        labelVoiceId.innerText = "Voice ID (Kokoro TTS)";
-                        inputVoiceId.placeholder = "e.g. af_heart";
-                    } else if (provider === "elevenlabs") {
-                        labelVoiceId.innerText = "Voice ID (ElevenLabs)";
-                        inputVoiceId.placeholder = "e.g. pMs2g8ZcAlEx2o6I17t4";
-                    }
-                }
-            }
-
-            function toggleOmniVoiceModeFields() {
-                let mode = document.getElementById("vc-omnivoice-mode").value;
-                let cloneFields = document.getElementById("vc-clone-fields");
-                let designFields = document.getElementById("vc-design-fields");
-
-                if (mode === "clone") {
-                    cloneFields.style.display = "block";
-                    designFields.style.display = "none";
-                } else if (mode === "design") {
-                    cloneFields.style.display = "none";
-                    designFields.style.display = "block";
-                } else {
-                    cloneFields.style.display = "none";
-                    designFields.style.display = "none";
-                }
-            }
 
             let dialogStoryId = "";
             let dialogChapterId = "";
@@ -1955,25 +1967,19 @@ async def dashboard():
                 dialogChapterId = chapterId;
                 document.getElementById("dialog-chapter-id").innerText = chapterId;
                 
+                // Load voices dropdown
+                await loadVoicesDropdown();
+                
                 try {
                     let res = await fetch("/v1/voice/defaults");
                     let defaults = await res.json();
                     
-                    document.getElementById("vc-provider").value = defaults.provider;
                     document.getElementById("vc-voice-id").value = defaults.voice_id;
-                    document.getElementById("vc-omnivoice-mode").value = defaults.omnivoice_mode;
-                    document.getElementById("vc-ref-audio").value = "";
-                    document.getElementById("vc-ref-audio-local-path").value = defaults.ref_audio_local_path;
-                    document.getElementById("vc-ref-text").value = defaults.ref_text;
-                    document.getElementById("vc-voice-instruct").value = defaults.voice_instruct;
                     document.getElementById("vc-start-fragment").value = 0;
                     document.getElementById("vc-limit-fragments").value = 0;
                 } catch(e) {
                     console.error("Failed to load voice defaults: ", e);
                 }
-                
-                toggleVoiceFields();
-                toggleOmniVoiceModeFields();
 
                 // Fetch fragments
                 storyFragments = [];
@@ -2070,77 +2076,195 @@ async def dashboard():
                 closeVoiceConfig();
                 
                 let artStyle = document.getElementById("art-style-story").value;
-                let provider = document.getElementById("vc-provider").value;
                 let voiceId = document.getElementById("vc-voice-id").value;
-                let omniMode = document.getElementById("vc-omnivoice-mode").value;
-                let refText = document.getElementById("vc-ref-text").value;
-                let voiceInstruct = document.getElementById("vc-voice-instruct").value;
-                let refAudioFile = document.getElementById("vc-ref-audio").files[0];
-                let refAudioLocalPath = document.getElementById("vc-ref-audio-local-path").value;
                 let startFragment = parseInt(document.getElementById("vc-start-fragment").value) || 0;
                 let limitFragments = parseInt(document.getElementById("vc-limit-fragments").value) || 0;
                 let useWatermark = document.getElementById("story-use-watermark").checked;
                 let useSubtitles = document.getElementById("story-use-subtitles").checked;
 
                 let voiceConfig = {
-                    provider: provider,
+                    provider: "omnivoice",
                     voice_id: voiceId,
-                    omnivoice_mode: omniMode,
-                    ref_text: refText,
-                    voice_instruct: voiceInstruct,
-                    ref_audio_local_path: refAudioLocalPath,
+                    omnivoice_mode: "clone",
                     start_fragment: startFragment,
                     limit_fragments: limitFragments
                 };
 
-                let triggerPipeline = async (vConfig) => {
-                    let btnId = `btn-${dialogStoryId}-${dialogChapterId}`;
-                    let btn = document.getElementById(btnId);
-                    if (btn) {
-                        btn.disabled = true;
-                        btn.innerText = "Starting...";
-                    }
-                    let detailsBtn = document.getElementById("details-run-btn");
-                    if (detailsBtn) {
-                        detailsBtn.disabled = true;
-                        detailsBtn.innerText = "Starting...";
-                    }
+                let btnId = `btn-${dialogStoryId}-${dialogChapterId}`;
+                let btn = document.getElementById(btnId);
+                if (btn) {
+                    btn.disabled = true;
+                    btn.innerText = "Starting...";
+                }
+                let detailsBtn = document.getElementById("details-run-btn");
+                if (detailsBtn) {
+                    detailsBtn.disabled = true;
+                    detailsBtn.innerText = "Starting...";
+                }
 
-                    let url = `/v1/projects/${encodeURIComponent(dialogStoryId)}/${encodeURIComponent(dialogChapterId)}/run`;
-                    try {
-                        let res = await fetch(url, {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json"
-                            },
-                            body: JSON.stringify({
-                                voice_config: vConfig,
-                                art_style: artStyle,
-                                use_watermark: useWatermark,
-                                use_subtitles: useSubtitles
-                            })
-                        });
-                        if (!res.ok) {
-                            let err = await res.json();
-                            alert(err.detail || "Failed to start run");
-                        }
-                        selectChapter(dialogStoryId, dialogChapterId, dialogChapterId);
-                    } catch(e) {
-                        alert("Error: " + e);
+                let url = `/v1/projects/${encodeURIComponent(dialogStoryId)}/${encodeURIComponent(dialogChapterId)}/run`;
+                try {
+                    let res = await fetch(url, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            voice_config: voiceConfig,
+                            art_style: artStyle,
+                            use_watermark: useWatermark,
+                            use_subtitles: useSubtitles
+                        })
+                    });
+                    if (!res.ok) {
+                        let err = await res.json();
+                        alert(err.detail || "Failed to start run");
                     }
-                };
+                    selectChapter(dialogStoryId, dialogChapterId, dialogChapterId);
+                } catch(e) {
+                    alert("Error: " + e);
+                }
+            }
 
-                if (provider === "omnivoice" && omniMode === "clone" && refAudioFile) {
-                    // Read file as base64
-                    let reader = new FileReader();
-                    reader.onload = async function() {
-                        voiceConfig.ref_audio_b64 = reader.result;
-                        voiceConfig.ref_audio_filename = refAudioFile.name;
-                        await triggerPipeline(voiceConfig);
-                    };
-                    reader.readAsDataURL(refAudioFile);
-                } else {
-                    await triggerPipeline(voiceConfig);
+            // Voice Management JS Helpers
+            function openVoiceManagement() {
+                document.getElementById("voice-management-dialog").showModal();
+                loadVoicesList();
+            }
+
+            function closeVoiceManagement() {
+                document.getElementById("voice-management-dialog").close();
+                loadVoicesDropdown();
+            }
+
+            async function loadVoicesDropdown() {
+                try {
+                    let res = await fetch("/v1/voices");
+                    let voices = await res.json();
+                    let select = document.getElementById("vc-voice-id");
+                    let currentValue = select.value;
+                    select.innerHTML = '<option value="">-- Select Voice Profile --</option>';
+                    voices.forEach(v => {
+                        let opt = document.createElement("option");
+                        opt.value = v.id;
+                        opt.textContent = `${v.name} (${v.has_audio ? "Ref Audio Present" : "Missing Audio"})`;
+                        select.appendChild(opt);
+                    });
+                    if (currentValue) {
+                        select.value = currentValue;
+                    }
+                } catch (e) {
+                    console.error("Failed to load voices: " + e);
+                }
+            }
+
+            async function loadVoicesList() {
+                let container = document.getElementById("voices-list-container");
+                container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">Loading...</p>';
+                try {
+                    let res = await fetch("/v1/voices");
+                    let voices = await res.json();
+                    container.innerHTML = "";
+                    if (voices.length === 0) {
+                        container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">No voices cloned yet.</p>';
+                        return;
+                    }
+                    voices.forEach(v => {
+                        let card = document.createElement("div");
+                        card.style.background = "rgba(255,255,255,0.03)";
+                        card.style.border = "1px solid var(--border)";
+                        card.style.borderRadius = "8px";
+                        card.style.padding = "0.6rem 0.8rem";
+                        card.style.display = "flex";
+                        card.style.justifyContent = "space-between";
+                        card.style.alignItems = "center";
+                        
+                        let info = document.createElement("div");
+                        info.innerHTML = `
+                            <div style="font-weight: 600; font-size: 0.9rem; color: var(--text);">${v.name}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">
+                                🔊 ${v.has_audio ? "Audio OK" : "No Audio"} | 📝 ${v.has_text ? "Text OK" : "No Text"}
+                            </div>
+                        `;
+                        
+                        let delBtn = document.createElement("button");
+                        delBtn.innerHTML = "🗑️";
+                        delBtn.style.background = "none";
+                        delBtn.style.border = "none";
+                        delBtn.style.cursor = "pointer";
+                        delBtn.style.fontSize = "1rem";
+                        delBtn.onclick = () => deleteVoiceProfile(v.id);
+                        
+                        card.appendChild(info);
+                        card.appendChild(delBtn);
+                        container.appendChild(card);
+                    });
+                } catch(e) {
+                    container.innerHTML = `<p style="color: #ff6b6b; font-size: 0.85rem; padding: 0.5rem; text-align: center;">Error: ${e}</p>`;
+                }
+            }
+
+            async function submitCreateVoice(event) {
+                event.preventDefault();
+                let voiceIdInput = document.getElementById("new-voice-id");
+                let fileInput = document.getElementById("new-voice-file");
+                let textInput = document.getElementById("new-voice-text");
+                
+                let voiceId = voiceIdInput.value.trim();
+                let file = fileInput.files[0];
+                let refText = textInput.value.trim();
+                
+                if (!voiceId || !file) {
+                    alert("Voice ID and Audio File are required!");
+                    return;
+                }
+                
+                let formData = new FormData();
+                formData.append("file", file);
+                
+                let submitBtn = event.target.querySelector("button[type='submit']");
+                submitBtn.disabled = true;
+                submitBtn.textContent = "Cloning...";
+                
+                let url = `/v1/voices?voice_id=${encodeURIComponent(voiceId)}&ref_text=${encodeURIComponent(refText)}`;
+                try {
+                    let res = await fetch(url, {
+                        method: "POST",
+                        body: formData
+                    });
+                    if (!res.ok) {
+                        let err = await res.json();
+                        alert(err.detail || "Failed to create voice profile");
+                    } else {
+                        voiceIdInput.value = "";
+                        fileInput.value = "";
+                        textInput.value = "";
+                        loadVoicesList();
+                    }
+                } catch(e) {
+                    alert("Error creating voice profile: " + e);
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = "💾 Save Voice Profile";
+                }
+            }
+
+            async function deleteVoiceProfile(voiceId) {
+                if (!confirm(`Are you sure you want to delete voice profile "${voiceId}"?`)) {
+                    return;
+                }
+                try {
+                    let res = await fetch(`/v1/voices/${encodeURIComponent(voiceId)}`, {
+                        method: "DELETE"
+                    });
+                    if (!res.ok) {
+                        let err = await res.json();
+                        alert(err.detail || "Failed to delete voice profile");
+                    } else {
+                        loadVoicesList();
+                    }
+                } catch(e) {
+                    alert("Error: " + e);
                 }
             }
 
