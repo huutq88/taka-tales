@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.1.2"
+AGENT_VERSION = "0.1.3"
 
 BASE_DIR = pathlib.Path(__file__).parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -255,8 +255,8 @@ else
     echo "OmniVoice is already pre-installed."
 fi
 
-echo "Downloading OmniVoice base model checkpoints from Hugging Face..."
-python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice')" || echo "Warning: Failed to download model checkpoints, they will be downloaded on first run."
+echo "Pre-downloading AI models and NLTK assets (this may take a few minutes)..."
+python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True); from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice'); snapshot_download(repo_id='openai/whisper-small'); from keybert import KeyBERT; KeyBERT()" || echo "Warning: Failed to pre-download some models, they will download on first run."
 
 echo "============================================="
 echo "🎉 Taka Agent Installation Complete!"
@@ -360,11 +360,11 @@ if (-not (Test-Path "tools\OmniVoice")) {{
     Write-Host "OmniVoice is already pre-installed."
 }}
 
-Write-Host "Downloading OmniVoice base model checkpoints from Hugging Face..." -ForegroundColor Yellow
+Write-Host "Pre-downloading AI models and NLTK assets (this may take a few minutes)..." -ForegroundColor Yellow
 try {{
-    & env\Scripts\python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice')"
+    & env\Scripts\python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True); from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice'); snapshot_download(repo_id='openai/whisper-small'); from keybert import KeyBERT; KeyBERT()"
 }} catch {{
-    Write-Host "Warning: Failed to download model checkpoints, they will be downloaded on first run." -ForegroundColor Gray
+    Write-Host "Warning: Failed to pre-download some models, they will download on first run." -ForegroundColor Gray
 }}
 
 Write-Host "=============================================" -ForegroundColor Cyan
