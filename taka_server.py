@@ -1790,6 +1790,11 @@ async def dashboard():
         </dialog>
 
         <script>
+            if (!localStorage.getItem("taka_visited_before")) {
+                localStorage.setItem("taka_visited_before", "true");
+                window.location.href = "/welcome";
+            }
+
             let currentStory = "";
             let currentChapter = "";
             let timerId = null;
