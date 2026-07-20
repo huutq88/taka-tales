@@ -68,14 +68,14 @@ async def check_environment() -> dict:
         pass
 
     # 3. Check OmniVoice directory & entrypoints
-    omnivoice_installed = OMNIVOICE_PATH.exists() and (OMNIVOICE_PATH / "requirements.txt").exists()
+    omnivoice_installed = OMNIVOICE_PATH.exists() and (OMNIVOICE_PATH / "pyproject.toml").exists()
 
     return {
         "cuda_available": cuda_available,
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.1.5"
+        "agent_version": "0.1.6"
     }
 
 async def setup_omnivoice():
