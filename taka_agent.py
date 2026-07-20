@@ -38,7 +38,10 @@ OMNIVOICE_LANG = config.get("OMNIVOICE", "LANGUAGE", fallback="vi")
 from core import video_engine
 
 # Resolve secure WebSocket URL from Server URL
-ws_base = SERVER_URL.replace("http://", "ws://").replace("https://", "wss://")
+if "localhost" not in SERVER_URL and "127.0.0.1" not in SERVER_URL:
+    ws_base = SERVER_URL.replace("http://", "wss://").replace("https://", "wss://")
+else:
+    ws_base = SERVER_URL.replace("http://", "ws://").replace("https://", "wss://")
 ws_url = f"{ws_base}/v1/system/agent/ws?workspace_id={WORKSPACE_ID}"
 
 active_websocket = None
