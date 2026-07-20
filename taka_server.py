@@ -10,12 +10,16 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.2.0"
+AGENT_VERSION = "0.2.1"
 
 BASE_DIR = pathlib.Path(__file__).parent
-PROJECTS_DIR = BASE_DIR / "projects"
+DATA_DIR = pathlib.Path.home() / ".taka-agent"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+PROJECTS_DIR = DATA_DIR / "projects"
 PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-VOICES_DIR = BASE_DIR / "voices"
+
+VOICES_DIR = DATA_DIR / "voices"
 VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 # In-memory stores
