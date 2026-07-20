@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.1.9"
+AGENT_VERSION = "0.2.0"
 
 BASE_DIR = pathlib.Path(__file__).parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -779,6 +779,21 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
         "error": None
     }
 
+    # Read and encode music file if it's a music project
+    music_b64 = None
+    music_filename = None
+    if story_id == "music":
+        music_files = list(project_dir.glob("music.*"))
+        if music_files:
+            music_file = music_files[0]
+            try:
+                import base64
+                with open(music_file, "rb") as f:
+                    music_b64 = base64.b64encode(f.read()).decode("utf-8")
+                music_filename = music_file.name
+            except Exception as e:
+                print(f"[Server] Failed to read/encode music file: {e}")
+
     # Send trigger message to the first available agent
     agent_ws = list(active_agents)[0]
     trigger_message = {
@@ -791,7 +806,10 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
             "art_style": request_data.art_style if request_data else None,
             "use_watermark": request_data.use_watermark if request_data else True,
             "use_subtitles": request_data.use_subtitles if request_data else True,
-            "use_whisper": request_data.use_whisper if request_data else False
+            "use_whisper": request_data.use_whisper if request_data else False,
+            "story_text": content if story_id != "music" else None,
+            "music_b64": music_b64,
+            "music_filename": music_filename
         }
     }
     await agent_ws.send_text(json.dumps(trigger_message))
@@ -1587,9 +1605,9 @@ async def dashboard():
                 <h1>Taka Tales</h1>
             </div>
             <nav class="header-menu">
-                <a onclick="window.location.reload()" class="active">Home</a>
-                <a onclick="openVoiceManagement()">Voices</a>
-                <a onclick="openMusicDialog()">Music</a>
+                <a id="nav-home" onclick="showPage('home')" class="active">Home</a>
+                <a id="nav-voices" onclick="showPage('voices')">Voices</a>
+                <a id="nav-music" onclick="openMusicDialog()">Music</a>
             </nav>
             <div id="agent-badge" class="agent-badge">
                 <span class="badge-dot"></span>
@@ -1597,7 +1615,7 @@ async def dashboard():
             </div>
         </header>
 
-        <div class="grid">
+        <div class="grid" id="main-grid">
             <!-- Sidebar: Project Lists -->
             <div class="glass-card">
                 <div class="card-title">
@@ -1779,44 +1797,42 @@ async def dashboard():
             </form>
         </dialog>
 
-        <!-- Voice Management Dialog -->
-        <dialog id="voice-management-dialog" style="width: 90%; max-width: 650px; background: #11111b; border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; color: var(--text);">
-            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem;">
+        <!-- Voices Page Layout (Hidden by default) -->
+        <div id="voices-page" style="display: none;" class="glass-card">
+            <h2 style="color: var(--primary-light); margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem;">
                 <span>🎙️ OmniVoice Voice Management</span>
-                <button onclick="closeVoiceManagement()" style="background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; padding: 0.2rem 0.5rem;">✕</button>
-            </h3>
+            </h2>
             
-            <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 1.5rem; margin-top: 1rem;">
-                <!-- Existing Voices List -->
+            <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 2rem;">
+                <!-- Existing Voices -->
                 <div>
-                    <h4 style="margin-top: 0; color: var(--primary-light);">Cloned Voices List</h4>
-                    <div id="voices-list-container" style="max-height: 320px; overflow-y: auto; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
-                        <!-- List loaded dynamically -->
-                        <p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">No voices cloned yet.</p>
+                    <h3 style="margin-top: 0; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; font-size: 1.1rem;">Cloned Voices List</h3>
+                    <div id="voices-page-list" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.8rem; max-height: 450px; overflow-y: auto; padding-right: 0.5rem;">
+                        <p style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding: 2rem;">Loading voices...</p>
                     </div>
                 </div>
                 
                 <!-- Create Voice Form -->
-                <div style="border-left: 1px solid var(--border); padding-left: 1.5rem;">
-                    <h4 style="margin-top: 0; color: var(--success);">Clone New Voice</h4>
-                    <form id="create-voice-form" onsubmit="submitCreateVoice(event)" style="display: flex; flex-direction: column; gap: 0.8rem;">
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label for="new-voice-id" style="font-size: 0.85rem;">Voice ID (No spaces)</label>
-                            <input type="text" id="new-voice-id" required placeholder="e.g. giong-nu-mientay" style="width: 100%; padding: 0.5rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); border-radius: 6px; outline: none; font-size: 0.85rem;">
+                <div style="border-left: 1px solid var(--border); padding-left: 2rem;">
+                    <h3 style="margin-top: 0; color: var(--success); border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; font-size: 1.1rem;">Clone New Voice Profile</h3>
+                    <form id="create-voice-form-page" onsubmit="submitCreateVoicePage(event)" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+                        <div class="form-group">
+                            <label for="new-voice-id-page">Voice ID (No spaces, lowercase, numbers, hyphens)</label>
+                            <input type="text" id="new-voice-id-page" required placeholder="e.g. giong-nu-mientay">
                         </div>
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label for="new-voice-file" style="font-size: 0.85rem;">Reference Audio File (.wav / .mp3)</label>
-                            <input type="file" id="new-voice-file" accept="audio/wav, audio/mpeg, audio/mp3" required style="width: 100%; font-size: 0.8rem;">
+                        <div class="form-group">
+                            <label for="new-voice-file-page">Reference Audio File (.wav / .mp3)</label>
+                            <input type="file" id="new-voice-file-page" accept="audio/wav, audio/mpeg, audio/mp3" required>
                         </div>
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label for="new-voice-text" style="font-size: 0.85rem;">Transcription Text (spoken in audio)</label>
-                            <textarea id="new-voice-text" rows="3" placeholder="Optional. If left blank, local Whisper ASR will auto-transcribe it." style="width: 100%; padding: 0.5rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); border-radius: 6px; outline: none; font-size: 0.85rem; resize: none;"></textarea>
+                        <div class="form-group">
+                            <label for="new-voice-text-page">Reference Transcription (Text spoken in audio)</label>
+                            <textarea id="new-voice-text-page" rows="4" placeholder="Optional. If left blank, local Whisper ASR will auto-transcribe it." style="resize: none;"></textarea>
                         </div>
-                        <button type="submit" class="btn-submit" style="margin-top: 0.5rem; font-size: 0.85rem; padding: 0.6rem; background: var(--success); border-color: var(--success);">💾 Save Voice Profile</button>
+                        <button type="submit" class="btn-submit" style="background: var(--success); border-color: var(--success); padding: 0.8rem; font-size: 0.95rem; margin-top: 0.5rem;">💾 Save Cloned Voice Profile</button>
                     </form>
                 </div>
             </div>
-        </dialog>
+        </div>
 
         <script>
             if (!localStorage.getItem("taka_visited_before")) {
@@ -2151,13 +2167,28 @@ async def dashboard():
 
             // Voice Management JS Helpers
             function openVoiceManagement() {
-                document.getElementById("voice-management-dialog").showModal();
-                loadVoicesList();
+                closeVoiceConfig();
+                showPage('voices');
             }
 
             function closeVoiceManagement() {
-                document.getElementById("voice-management-dialog").close();
-                loadVoicesDropdown();
+                showPage('home');
+            }
+
+            function showPage(pageId) {
+                document.getElementById("nav-home").classList.remove("active");
+                document.getElementById("nav-voices").classList.remove("active");
+                
+                if (pageId === 'home') {
+                    document.getElementById("nav-home").classList.add("active");
+                    document.getElementById("main-grid").style.display = "grid";
+                    document.getElementById("voices-page").style.display = "none";
+                } else if (pageId === 'voices') {
+                    document.getElementById("nav-voices").classList.add("active");
+                    document.getElementById("main-grid").style.display = "none";
+                    document.getElementById("voices-page").style.display = "block";
+                    loadVoicesList();
+                }
             }
 
             async function loadVoicesDropdown() {
@@ -2182,7 +2213,7 @@ async def dashboard():
             }
 
             async function loadVoicesList() {
-                let container = document.getElementById("voices-list-container");
+                let container = document.getElementById("voices-page-list");
                 container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">Loading...</p>';
                 try {
                     let res = await fetch("/v1/voices");
@@ -2197,25 +2228,28 @@ async def dashboard():
                         card.style.background = "rgba(255,255,255,0.03)";
                         card.style.border = "1px solid var(--border)";
                         card.style.borderRadius = "8px";
-                        card.style.padding = "0.6rem 0.8rem";
+                        card.style.padding = "0.8rem 1rem";
                         card.style.display = "flex";
                         card.style.justifyContent = "space-between";
                         card.style.alignItems = "center";
                         
                         let info = document.createElement("div");
                         info.innerHTML = `
-                            <div style="font-weight: 600; font-size: 0.9rem; color: var(--text);">${v.name}</div>
-                            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">
-                                🔊 ${v.has_audio ? "Audio OK" : "No Audio"} | 📝 ${v.has_text ? "Text OK" : "No Text"}
+                            <div style="font-weight: 600; font-size: 0.95rem; color: var(--text);">${v.name}</div>
+                            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.3rem;">
+                                🔊 ${v.has_audio ? "Audio File Present" : "No Audio File"} | 📝 ${v.has_text ? "Transcription Present" : "No Transcription"}
                             </div>
                         `;
                         
                         let delBtn = document.createElement("button");
-                        delBtn.innerHTML = "🗑️";
-                        delBtn.style.background = "none";
-                        delBtn.style.border = "none";
+                        delBtn.innerHTML = "🗑️ Delete";
+                        delBtn.style.background = "rgba(239, 68, 68, 0.15)";
+                        delBtn.style.border = "1px solid var(--danger)";
+                        delBtn.style.color = "var(--danger)";
+                        delBtn.style.borderRadius = "6px";
+                        delBtn.style.padding = "0.4rem 0.8rem";
                         delBtn.style.cursor = "pointer";
-                        delBtn.style.fontSize = "1rem";
+                        delBtn.style.fontSize = "0.85rem";
                         delBtn.onclick = () => deleteVoiceProfile(v.id);
                         
                         card.appendChild(info);
@@ -2227,11 +2261,11 @@ async def dashboard():
                 }
             }
 
-            async function submitCreateVoice(event) {
+            async function submitCreateVoicePage(event) {
                 event.preventDefault();
-                let voiceIdInput = document.getElementById("new-voice-id");
-                let fileInput = document.getElementById("new-voice-file");
-                let textInput = document.getElementById("new-voice-text");
+                let voiceIdInput = document.getElementById("new-voice-id-page");
+                let fileInput = document.getElementById("new-voice-file-page");
+                let textInput = document.getElementById("new-voice-text-page");
                 
                 let voiceId = voiceIdInput.value.trim();
                 let file = fileInput.files[0];
@@ -2268,7 +2302,7 @@ async def dashboard():
                     alert("Error creating voice profile: " + e);
                 } finally {
                     submitBtn.disabled = false;
-                    submitBtn.textContent = "💾 Save Voice Profile";
+                    submitBtn.textContent = "💾 Save Cloned Voice Profile";
                 }
             }
 
