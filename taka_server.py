@@ -181,7 +181,7 @@ cd "$HOME/.taka-agent"
 
 # 2. Download agent files from Server
 echo "[2/6] Downloading agent files from server..."
-curl -fsSL "$SERVER_URL/v1/system/agent/files/requirements.txt" -o requirements.txt
+curl -fsSL "$SERVER_URL/v1/system/agent/files/requirements-agent.txt" -o requirements.txt
 curl -fsSL "$SERVER_URL/v1/system/agent/files/taka_agent.py" -o taka_agent.py
 curl -fsSL "$SERVER_URL/v1/system/agent/files/config.ini" -o config.ini
 
@@ -316,7 +316,7 @@ Set-Location -Path "$HOME\.taka-agent"
 
 # 2. Download agent files from Server
 Write-Host "[2/6] Downloading agent files from server..." -ForegroundColor Green
-Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/requirements.txt" -OutFile "requirements.txt"
+Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/requirements-agent.txt" -OutFile "requirements.txt"
 Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/taka_agent.py" -OutFile "taka_agent.py"
 Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/config.ini" -OutFile "config.ini"
 
@@ -438,7 +438,7 @@ async def get_agent_file(filepath: str):
     allowed_files = [
         "taka_agent.py",
         "config.ini",
-        "requirements.txt",
+        "requirements-agent.txt",
         "core/__init__.py",
         "core/video_engine.py",
         "core/characters_descriptions.ini"
