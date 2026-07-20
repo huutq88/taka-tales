@@ -169,7 +169,7 @@ SERVER_URL="{server_url}"
 WORKSPACE_ID="{workspace_id}"
 
 echo "============================================="
-echo "   Taka Agent Installer (Melorix-style)      "
+echo "   Taka Agent Installer                      "
 echo "============================================="
 echo "Coordinator Server: $SERVER_URL"
 echo "Workspace ID:       $WORKSPACE_ID"

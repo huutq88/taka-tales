@@ -1,7 +1,7 @@
 # 🎙️ TAKA-TALES SYSTEM ARCHITECTURE SPECIFICATION
 > **Dự án:** Taka-Tales - Hệ thống Sản xuất Video Tự động Thế hệ mới (Taka-Server & Taka-Agent)  
 > **Repository:** `git@github.com:huutq88/taka-tales.git`
-> **Kiến trúc tham chiếu:** Melorix Hybrid Worker Architecture  
+> **Kiến trúc tham chiếu:** Taka Tales Hybrid Worker Architecture  
 > **Tích hợp mở rộng:** Lore-Keeper Database & API (Tự động lấy nội dung câu chuyện/chương truyện từ Postgres/HTTP API)
 
 ---

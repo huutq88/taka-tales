@@ -112,7 +112,7 @@ POSTGRES_URI = postgresql://username:password@localhost:5432/lore_keeper_db
 
 ### Hướng dẫn Cài đặt Taka-Agent
 
-#### Cách 1: Cài đặt nhanh bằng lệnh One-liner (Khuyên dùng - Giống Melorix)
+#### Cách 1: Cài đặt nhanh bằng lệnh One-liner (Khuyên dùng)
 Nếu máy trạm (Worker Machine) đã cài đặt Python 3, Git, và curl/PowerShell, người dùng mới chỉ cần chạy một dòng lệnh duy nhất trên terminal phù hợp với hệ điều hành của họ (không cần nhập thủ công `workspace_id`, hệ thống sẽ tự động tạo mã định danh duy nhất (Device Fingerprint) làm `workspace_id` mặc định):
 
 * **Dành cho macOS / Linux (Terminal / Bash)**:
