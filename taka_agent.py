@@ -75,7 +75,7 @@ async def check_environment() -> dict:
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.2.1"
+        "agent_version": "0.2.2"
     }
 
 async def setup_omnivoice():
@@ -406,7 +406,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             print(f"[Agent] Failed to send error status: {send_err}")
 
 
-async def run_music_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = False, use_subtitles: bool = False, use_whisper: bool = False, music_b64: str = None, music_filename: str = None):
+async def run_music_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = False, use_subtitles: bool = False, use_whisper: bool = False, music_b64: str = None, music_filename: str = None, music_local_path: str = None):
     """Executes the music-to-video pipeline by transcribing audio and generating images/subtitles."""
     try:
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
@@ -416,8 +416,11 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
         project_dir = AGENT_DIR / "projects" / story_id / chapter_id
         project_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save music file if sent by server
-        if music_b64 and music_filename:
+        # Save music file if sent by server or local path
+        if music_local_path and os.path.exists(music_local_path):
+            suffix = pathlib.Path(music_local_path).suffix or ".mp3"
+            shutil.copy(music_local_path, project_dir / f"music{suffix}")
+        elif music_b64 and music_filename:
             import base64
             with open(project_dir / music_filename, "wb") as f:
                 f.write(base64.b64decode(music_b64))
@@ -738,7 +741,8 @@ async def main():
                         if pipeline_type == "music":
                             music_b64 = payload.get("music_b64")
                             music_filename = payload.get("music_filename")
-                            asyncio.create_task(run_music_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, use_whisper, music_b64, music_filename))
+                            music_local_path = payload.get("music_local_path")
+                            asyncio.create_task(run_music_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, use_whisper, music_b64, music_filename, music_local_path))
                         else:
                             story_text = payload.get("story_text")
                             asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text))

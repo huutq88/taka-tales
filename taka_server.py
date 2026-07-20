@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.2.1"
+AGENT_VERSION = "0.2.2"
 
 BASE_DIR = pathlib.Path(__file__).parent
 DATA_DIR = pathlib.Path.home() / ".taka-agent"
@@ -405,6 +405,27 @@ async def get_agent_file(filepath: str):
     return FileResponse(str(file_path))
 
 
+@app.get("/v1/system/select-file")
+async def select_local_file(prompt: str = "Select a file"):
+    import subprocess
+    # Run AppleScript to choose file
+    script = f'POSIX path of (choose file with prompt "{prompt}")'
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        file_path = proc.stdout.strip()
+        return {"path": file_path}
+    except subprocess.CalledProcessError as e:
+        # AppleScript returns exit code 1 if user cancels
+        if "User canceled" in e.stderr or "User canceled" in e.stdout or e.returncode == 1:
+            return {"path": ""}
+        raise HTTPException(status_code=500, detail=f"Failed to open file dialog: {e.stderr or e.stdout}")
+
+
 @app.post("/v1/projects")
 async def create_project(story_id: str):
     if not story_id.strip():
@@ -419,7 +440,7 @@ async def create_project(story_id: str):
 
 
 @app.post("/v1/projects/music")
-async def create_music_project(project_name: str, file: UploadFile = File(...)):
+async def create_music_project(project_name: str, local_path: str = "", file: Optional[UploadFile] = File(None)):
     if not project_name.strip():
         raise HTTPException(status_code=400, detail="project_name cannot be empty")
     clean_name = "".join(c for c in project_name if c.isalnum() or c in ("-", "_")).strip()
@@ -434,17 +455,31 @@ async def create_music_project(project_name: str, file: UploadFile = File(...)):
         
     project_dir.mkdir(parents=True, exist_ok=True)
     
-    ext = pathlib.Path(file.filename).suffix or ".mp3"
-    audio_path = project_dir / f"music{ext}"
-    
-    try:
-        with open(audio_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        print(f"[Server] Music file saved for project {clean_name} at {audio_path}")
-    except Exception as e:
+    if file is not None and file.filename:
+        ext = pathlib.Path(file.filename).suffix or ".mp3"
+        audio_path = project_dir / f"music{ext}"
+        try:
+            with open(audio_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            print(f"[Server] Music file saved for project {clean_name} at {audio_path}")
+        except Exception as e:
+            if project_dir.exists():
+                shutil.rmtree(project_dir)
+            raise HTTPException(status_code=500, detail=f"Failed to save music file: {str(e)}")
+    elif local_path.strip():
+        local_path_file = project_dir / "local_music_path.txt"
+        try:
+            with open(local_path_file, "w", encoding="utf-8") as f:
+                f.write(local_path.strip())
+            print(f"[Server] Music local path saved for project {clean_name}: {local_path.strip()}")
+        except Exception as e:
+            if project_dir.exists():
+                shutil.rmtree(project_dir)
+            raise HTTPException(status_code=500, detail=f"Failed to save local path: {str(e)}")
+    else:
         if project_dir.exists():
             shutil.rmtree(project_dir)
-        raise HTTPException(status_code=500, detail=f"Failed to save music file: {str(e)}")
+        raise HTTPException(status_code=400, detail="Either a music file upload or a local path is required.")
         
     return {"ok": True, "project_name": clean_name}
 
@@ -569,7 +604,7 @@ async def list_voices():
         for item in VOICES_DIR.iterdir():
             if item.is_dir():
                 voice_id = item.name
-                has_audio = (item / "ref.wav").exists()
+                has_audio = (item / "ref.wav").exists() or (item / "local_path.txt").exists()
                 has_text = (item / "ref_text.txt").exists()
                 voices_list.append({
                     "id": voice_id,
@@ -580,7 +615,7 @@ async def list_voices():
     return sorted(voices_list, key=lambda x: x["id"])
 
 @app.post("/v1/voices")
-async def create_voice(voice_id: str, ref_text: str = "", file: UploadFile = File(...)):
+async def create_voice(voice_id: str, ref_text: str = "", local_path: str = "", file: Optional[UploadFile] = File(None)):
     if not voice_id.strip():
         raise HTTPException(status_code=400, detail="Voice ID cannot be empty")
     clean_id = "".join(c for c in voice_id if c.isalnum() or c in ("-", "_")).strip()
@@ -590,13 +625,31 @@ async def create_voice(voice_id: str, ref_text: str = "", file: UploadFile = Fil
     voice_dir = VOICES_DIR / clean_id
     voice_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save audio file
-    audio_path = voice_dir / "ref.wav"
-    try:
-        with open(audio_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save audio file: {str(e)}")
+    # Save audio file or local path
+    if file is not None and file.filename:
+        audio_path = voice_dir / "ref.wav"
+        try:
+            with open(audio_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            # Remove local_path.txt if exists
+            local_path_file = voice_dir / "local_path.txt"
+            if local_path_file.exists():
+                local_path_file.unlink()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save audio file: {str(e)}")
+    elif local_path.strip():
+        local_path_file = voice_dir / "local_path.txt"
+        try:
+            with open(local_path_file, "w", encoding="utf-8") as f:
+                f.write(local_path.strip())
+            # Remove ref.wav if exists
+            audio_path = voice_dir / "ref.wav"
+            if audio_path.exists():
+                audio_path.unlink()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save local path: {str(e)}")
+    else:
+        raise HTTPException(status_code=400, detail="Either a reference audio file upload or a local path is required.")
         
     # Save transcription text
     text_path = voice_dir / "ref_text.txt"
@@ -753,9 +806,18 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
         if selected_voice_id:
             voice_dir = VOICES_DIR / selected_voice_id
             ref_audio = voice_dir / "ref.wav"
+            local_path_file = voice_dir / "local_path.txt"
             ref_text_file = voice_dir / "ref_text.txt"
             
-            if ref_audio.exists():
+            if local_path_file.exists():
+                try:
+                    with open(local_path_file, "r", encoding="utf-8") as f:
+                        path_str = f.read().strip()
+                    voice_payload["ref_audio_path"] = path_str
+                    print(f"[Server] Using local audio path for voice ID: {selected_voice_id} -> {path_str}")
+                except Exception as e:
+                    print(f"[Server] Failed to read voice profile local path: {e}")
+            elif ref_audio.exists():
                 try:
                     import base64
                     with open(ref_audio, "rb") as f:
@@ -786,17 +848,27 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
     # Read and encode music file if it's a music project
     music_b64 = None
     music_filename = None
+    music_local_path = None
     if story_id == "music":
-        music_files = list(project_dir.glob("music.*"))
-        if music_files:
-            music_file = music_files[0]
+        local_music_path_file = project_dir / "local_music_path.txt"
+        if local_music_path_file.exists():
             try:
-                import base64
-                with open(music_file, "rb") as f:
-                    music_b64 = base64.b64encode(f.read()).decode("utf-8")
-                music_filename = music_file.name
+                with open(local_music_path_file, "r", encoding="utf-8") as f:
+                    music_local_path = f.read().strip()
+                print(f"[Server] Using local music path: {music_local_path}")
             except Exception as e:
-                print(f"[Server] Failed to read/encode music file: {e}")
+                print(f"[Server] Failed to read local music path file: {e}")
+        else:
+            music_files = list(project_dir.glob("music.*"))
+            if music_files:
+                music_file = music_files[0]
+                try:
+                    import base64
+                    with open(music_file, "rb") as f:
+                        music_b64 = base64.b64encode(f.read()).decode("utf-8")
+                    music_filename = music_file.name
+                except Exception as e:
+                    print(f"[Server] Failed to read/encode music file: {e}")
 
     # Send trigger message to the first available agent
     agent_ws = list(active_agents)[0]
@@ -813,7 +885,8 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
             "use_whisper": request_data.use_whisper if request_data else False,
             "story_text": content if story_id != "music" else None,
             "music_b64": music_b64,
-            "music_filename": music_filename
+            "music_filename": music_filename,
+            "music_local_path": music_local_path
         }
     }
     await agent_ws.send_text(json.dumps(trigger_message))
@@ -1767,8 +1840,15 @@ async def dashboard():
                     <input type="text" id="music-project-name" required placeholder="e.g. my-favorite-song">
                 </div>
                 <div class="form-group">
-                    <label for="music-file">Music/Audio File (.mp3 / .wav / .m4a)</label>
-                    <input type="file" id="music-file" accept="audio/*" required>
+                    <label>Music/Audio File (.mp3 / .wav / .m4a)</label>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input type="text" id="music-path" readonly placeholder="No file selected..." style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-size: 0.85rem;">
+                        <button type="button" onclick="browseLocalFileForMusic()" style="background: var(--primary); border: 1px solid var(--primary); color: white; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem;">Browse...</button>
+                    </div>
+                    <input type="file" id="music-file" accept="audio/*" style="display: none;">
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                        Or <a href="javascript:void(0)" onclick="document.getElementById('music-file').click();" style="color: var(--primary-light); text-decoration: underline;">upload file manually</a> if needed.
+                    </div>
                 </div>
                 <div class="form-group">
                     <label for="art-style-music">Visual Art Style (Phong Cảnh Vẽ)</label>
@@ -1825,8 +1905,15 @@ async def dashboard():
                             <input type="text" id="new-voice-id-page" required placeholder="e.g. giong-nu-mientay">
                         </div>
                         <div class="form-group">
-                            <label for="new-voice-file-page">Reference Audio File (.wav / .mp3)</label>
-                            <input type="file" id="new-voice-file-page" accept="audio/wav, audio/mpeg, audio/mp3" required>
+                            <label>Reference Audio File (.wav / .mp3)</label>
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <input type="text" id="new-voice-path-page" readonly placeholder="No file selected..." style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-size: 0.85rem;">
+                                <button type="button" onclick="browseLocalFileForVoice()" style="background: var(--primary); border: 1px solid var(--primary); color: white; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem;">Browse...</button>
+                            </div>
+                            <input type="file" id="new-voice-file-page" accept="audio/wav, audio/mpeg, audio/mp3" style="display: none;">
+                            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                                Or <a href="javascript:void(0)" onclick="document.getElementById('new-voice-file-page').click();" style="color: var(--primary-light); text-decoration: underline;">upload file manually</a> if needed.
+                            </div>
                         </div>
                         <div class="form-group">
                             <label for="new-voice-text-page">Reference Transcription (Text spoken in audio)</label>
@@ -1843,6 +1930,52 @@ async def dashboard():
                 localStorage.setItem("taka_visited_before", "true");
                 window.location.href = "/welcome";
             }
+
+            async function browseLocalFileForMusic() {
+                try {
+                    let res = await fetch("/v1/system/select-file?prompt=Chọn tệp nhạc (audio file)");
+                    let data = await res.json();
+                    if (data.path) {
+                        document.getElementById("music-path").value = data.path;
+                        document.getElementById("music-file").value = "";
+                    }
+                } catch(e) {
+                    alert("Không thể mở hộp thoại chọn file: " + e);
+                }
+            }
+
+            async function browseLocalFileForVoice() {
+                try {
+                    let res = await fetch("/v1/system/select-file?prompt=Chọn file âm thanh giọng mẫu");
+                    let data = await res.json();
+                    if (data.path) {
+                        document.getElementById("new-voice-path-page").value = data.path;
+                        document.getElementById("new-voice-file-page").value = "";
+                    }
+                } catch(e) {
+                    alert("Không thể mở hộp thoại chọn file: " + e);
+                }
+            }
+
+            // Register change listeners for manual upload fallbacks after DOM content load
+            window.addEventListener('DOMContentLoaded', (event) => {
+                const musicFile = document.getElementById('music-file');
+                if (musicFile) {
+                    musicFile.addEventListener('change', function(e) {
+                        if (e.target.files.length > 0) {
+                            document.getElementById('music-path').value = "Staged Upload: " + e.target.files[0].name;
+                        }
+                    });
+                }
+                const voiceFile = document.getElementById('new-voice-file-page');
+                if (voiceFile) {
+                    voiceFile.addEventListener('change', function(e) {
+                        if (e.target.files.length > 0) {
+                            document.getElementById('new-voice-path-page').value = "Staged Upload: " + e.target.files[0].name;
+                        }
+                    });
+                }
+            });
 
             let currentStory = "";
             let currentChapter = "";
@@ -2268,36 +2401,51 @@ async def dashboard():
             async function submitCreateVoicePage(event) {
                 event.preventDefault();
                 let voiceIdInput = document.getElementById("new-voice-id-page");
+                let pathInput = document.getElementById("new-voice-path-page");
                 let fileInput = document.getElementById("new-voice-file-page");
                 let textInput = document.getElementById("new-voice-text-page");
                 
                 let voiceId = voiceIdInput.value.trim();
                 let file = fileInput.files[0];
+                let localPath = pathInput.value.trim();
                 let refText = textInput.value.trim();
                 
-                if (!voiceId || !file) {
-                    alert("Voice ID and Audio File are required!");
+                let isUpload = file && localPath.startsWith("Staged Upload:");
+                
+                if (!voiceId) {
+                    alert("Voice ID is required!");
+                    return;
+                }
+                if (!isUpload && !localPath) {
+                    alert("Please select a file via Browse or choose upload manual!");
                     return;
                 }
                 
                 let formData = new FormData();
-                formData.append("file", file);
+                if (isUpload) {
+                    formData.append("file", file);
+                }
                 
                 let submitBtn = event.target.querySelector("button[type='submit']");
                 submitBtn.disabled = true;
                 submitBtn.textContent = "Cloning...";
                 
                 let url = `/v1/voices?voice_id=${encodeURIComponent(voiceId)}&ref_text=${encodeURIComponent(refText)}`;
+                if (!isUpload) {
+                    url += `&local_path=${encodeURIComponent(localPath)}`;
+                }
+                
                 try {
                     let res = await fetch(url, {
                         method: "POST",
-                        body: formData
+                        body: isUpload ? formData : undefined
                     });
                     if (!res.ok) {
                         let err = await res.json();
                         alert(err.detail || "Failed to create voice profile");
                     } else {
                         voiceIdInput.value = "";
+                        pathInput.value = "";
                         fileInput.value = "";
                         textInput.value = "";
                         loadVoicesList();
@@ -2468,6 +2616,7 @@ async def dashboard():
 
             function openMusicDialog() {
                 document.getElementById("music-project-name").value = "";
+                document.getElementById("music-path").value = "";
                 document.getElementById("music-file").value = "";
                 document.getElementById("music-dialog").showModal();
             }
@@ -2479,27 +2628,46 @@ async def dashboard():
              async function submitMusicProject(event) {
                 event.preventDefault();
                 let projectName = document.getElementById("music-project-name").value.trim();
+                let pathInput = document.getElementById("music-path");
                 let musicFile = document.getElementById("music-file").files[0];
                 let artStyle = document.getElementById("art-style-music").value;
                 let useWatermark = document.getElementById("music-use-watermark").checked;
                 let useSubtitles = document.getElementById("music-use-subtitles").checked;
                 let useWhisper = document.getElementById("music-use-whisper").checked;
-                if (!projectName || !musicFile) return;
+                
+                let localPath = pathInput.value.trim();
+                let isUpload = musicFile && localPath.startsWith("Staged Upload:");
+
+                if (!projectName) {
+                    alert("Project Name is required!");
+                    return;
+                }
+                if (!isUpload && !localPath) {
+                    alert("Please select a music file via Browse or choose upload manual!");
+                    return;
+                }
 
                 closeMusicDialog();
 
                 let formData = new FormData();
-                formData.append("file", musicFile);
+                if (isUpload) {
+                    formData.append("file", musicFile);
+                }
 
                 let detailsPanel = document.getElementById("details-panel");
                 detailsPanel.style.display = "block";
-                document.getElementById("current-project-title").innerText = `Uploading: ${projectName}`;
-                document.getElementById("status-banner").innerText = "Uploading...";
+                document.getElementById("current-project-title").innerText = isUpload ? `Uploading: ${projectName}` : `Starting Music: ${projectName}`;
+                document.getElementById("status-banner").innerText = isUpload ? "Uploading..." : "Starting...";
                 
+                let url = "/v1/projects/music?project_name=" + encodeURIComponent(projectName);
+                if (!isUpload) {
+                    url += `&local_path=${encodeURIComponent(localPath)}`;
+                }
+
                 try {
-                    let res = await fetch("/v1/projects/music?project_name=" + encodeURIComponent(projectName), {
+                    let res = await fetch(url, {
                         method: "POST",
-                        body: formData
+                        body: isUpload ? formData : undefined
                     });
                     if (res.ok) {
                         let runRes = await fetch(`/v1/projects/music/${encodeURIComponent(projectName)}/run`, {
@@ -2522,10 +2690,10 @@ async def dashboard():
                         }
                     } else {
                         let err = await res.json();
-                        alert("Upload failed: " + (err.detail || "Unknown error"));
+                        alert("Creation failed: " + (err.detail || "Unknown error"));
                     }
                 } catch (e) {
-                    alert("Error uploading music: " + e);
+                    alert("Error: " + e);
                 }
             }
         </script>
