@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.1.8"
+AGENT_VERSION = "0.1.9"
 
 BASE_DIR = pathlib.Path(__file__).parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -1936,9 +1936,6 @@ async def dashboard():
                                     <h4>${c.title}</h4>
                                     <p>${c.has_video ? "🎬 Video completed" : "No video output yet"}</p>
                                 </div>
-                                <button class="run-btn" id="${btnId}" onclick="runChapter(event, '${s.story_id}', '${c.id}')" ${isRunning ? 'disabled' : ''}>
-                                    ${isRunning ? 'Running' : 'Run'}
-                                </button>
                             `;
                             chList.appendChild(item);
                         });
