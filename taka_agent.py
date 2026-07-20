@@ -75,7 +75,7 @@ async def check_environment() -> dict:
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.1.4"
+        "agent_version": "0.1.5"
     }
 
 async def setup_omnivoice():
@@ -209,6 +209,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
         story_id = path_obj.parent.name
         chapter_id = path_obj.name
         project_dir = AGENT_DIR / "projects" / story_id / chapter_id
+        project_dir.mkdir(parents=True, exist_ok=True)
         
         # Save project_config.json
         config_data = {
@@ -408,6 +409,7 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
         story_id = path_obj.parent.name
         chapter_id = path_obj.name
         project_dir = AGENT_DIR / "projects" / story_id / chapter_id
+        project_dir.mkdir(parents=True, exist_ok=True)
         
         # Save project_config.json
         config_data = {
