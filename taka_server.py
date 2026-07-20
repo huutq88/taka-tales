@@ -991,9 +991,11 @@ async def welcome_page():
                     <p style="font-size: 0.85rem; margin-bottom: 0.5rem;">
                         Run this command to create environment, install packages, and clone OmniVoice automatically:
                     </p>
-                    <div class="code-box-wrapper">
-                        <code id="cmd-mac">curl -fsSL <span class="server-origin-placeholder"></span>/v1/system/install-agent.sh | bash -s -- --server <span class="server-origin-placeholder"></span> --workspace default_workspace</code>
-                        <button class="copy-btn" onclick="copyCommand('cmd-mac')">Copy</button>
+                    <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem;">
+                        <div class="code-box-wrapper" style="flex: 1; margin-top: 0; overflow-x: auto; background: rgba(0, 0, 0, 0.4); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem 1rem; font-family: monospace; font-size: 0.85rem; color: var(--success); white-space: nowrap;">
+                            <code id="cmd-mac">curl -fsSL <span class="server-origin-placeholder"></span>/v1/system/install-agent.sh | bash</code>
+                        </div>
+                        <button class="copy-btn" onclick="copyCommand('cmd-mac')" style="height: 38px; padding: 0 1.2rem; white-space: nowrap;">Copy</button>
                     </div>
                 </div>
 
@@ -1002,9 +1004,11 @@ async def welcome_page():
                     <p style="font-size: 0.85rem; margin-bottom: 0.5rem;">
                         Run this command in PowerShell to automatically install all dependencies and setup OmniVoice:
                     </p>
-                    <div class="code-box-wrapper">
-                        <code id="cmd-win">powershell -ExecutionPolicy Bypass -Command "Invoke-Expression (Invoke-RestMethod -Uri '<span class="server-origin-placeholder"></span>/v1/system/install-agent.ps1')"</code>
-                        <button class="copy-btn" onclick="copyCommand('cmd-win')">Copy</button>
+                    <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem;">
+                        <div class="code-box-wrapper" style="flex: 1; margin-top: 0; overflow-x: auto; background: rgba(0, 0, 0, 0.4); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem 1rem; font-family: monospace; font-size: 0.85rem; color: var(--success); white-space: nowrap;">
+                            <code id="cmd-win">powershell -ExecutionPolicy Bypass -Command "Invoke-Expression (Invoke-RestMethod -Uri '<span class="server-origin-placeholder"></span>/v1/system/install-agent.ps1')"</code>
+                        </div>
+                        <button class="copy-btn" onclick="copyCommand('cmd-win')" style="height: 38px; padding: 0 1.2rem; white-space: nowrap;">Copy</button>
                     </div>
                 </div>
 
