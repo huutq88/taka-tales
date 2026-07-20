@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.1.3"
+AGENT_VERSION = "0.1.4"
 
 BASE_DIR = pathlib.Path(__file__).parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -261,8 +261,10 @@ python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt
 echo "============================================="
 echo "🎉 Taka Agent Installation Complete!"
 echo "============================================="
-echo "Starting Taka Agent..."
-python taka_agent.py
+echo "Starting Taka Agent in the background..."
+nohup python taka_agent.py > agent.log 2>&1 &
+echo "Agent is running. You can check logs in ~/.taka-agent/agent.log"
+echo "============================================="
 """
     return PlainTextResponse(content=script_content, media_type="text/x-shellscript")
 
@@ -370,8 +372,10 @@ try {{
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "🎉 Taka Agent Installation Complete!" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "Starting Taka Agent..." -ForegroundColor Yellow
-& env\Scripts\python taka_agent.py
+Write-Host "Starting Taka Agent in the background..." -ForegroundColor Yellow
+Start-Process -FilePath "$HOME\.taka-agent\env\Scripts\python.exe" -ArgumentList "taka_agent.py" -WindowStyle Hidden -WorkingDirectory "$HOME\.taka-agent" -RedirectStandardOutput "$HOME\.taka-agent\agent.log" -RedirectStandardError "$HOME\.taka-agent\agent.log"
+Write-Host "Agent is running. You can check logs in $HOME\.taka-agent\agent.log"
+Write-Host "=============================================" -ForegroundColor Cyan
 """
     return PlainTextResponse(content=script_content, media_type="text/plain")
 
