@@ -1146,14 +1146,6 @@ async def welcome_page():
                     </div>
                 </div>
 
-                <div style="margin-bottom: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
-                    <h4>💡 Running the Agent</h4>
-                    <p style="font-size: 0.85rem;">
-                        After installation completes, navigate to the agent directory and launch the worker agent:
-                    </p>
-                    <pre>cd ~/.taka-agent<br>source env/bin/activate  # (On Windows use: env\\Scripts\\activate)<br>python taka_agent.py</pre>
-                </div>
-
                 <div id="welcome-agent-status" class="status-box">
                     <span id="welcome-status-dot" class="badge-dot"></span>
                     <span id="welcome-status-text">Waiting for Taka Agent to connect...</span>
