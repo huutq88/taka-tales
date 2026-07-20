@@ -26,6 +26,7 @@ VOICES_DIR.mkdir(parents=True, exist_ok=True)
 active_agents: Set[WebSocket] = set()
 agent_status: Dict[str, dict] = {}
 project_jobs: Dict[str, dict] = {}  # project_name -> job state
+pending_file_selects: Dict[str, dict] = {}
 
 # Resolve Postgres connection URI (Prioritize env variable, then config fallback)
 import configparser
@@ -152,6 +153,12 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default")
                         "error": data.get("error"),
                         "updated_at": data.get("updated_at")
                     }
+            elif msg_type == "select_file_response":
+                request_id = data.get("request_id")
+                selected_path = payload.get("path", "")
+                if request_id in pending_file_selects:
+                    pending_file_selects[request_id]["path"] = selected_path
+                    pending_file_selects[request_id]["event"].set()
     except WebSocketDisconnect:
         print(f"[Server] Taka-Agent disconnected: {workspace_id}")
     finally:
@@ -407,8 +414,36 @@ async def get_agent_file(filepath: str):
 
 @app.get("/v1/system/select-file")
 async def select_local_file(prompt: str = "Select a file"):
+    # If there is a connected local agent, route the request to it
+    if len(active_agents) > 0:
+        import uuid
+        request_id = str(uuid.uuid4())
+        event = asyncio.Event()
+        pending_file_selects[request_id] = {"event": event, "path": ""}
+        
+        msg = {
+            "type": "select_file_request",
+            "request_id": request_id,
+            "payload": {"prompt": prompt}
+        }
+        
+        # Send request to the first connected agent
+        agent_ws = list(active_agents)[0]
+        try:
+            await agent_ws.send_text(json.dumps(msg))
+            # Wait for response with a 60-second timeout
+            await asyncio.wait_for(event.wait(), timeout=60.0)
+            result = pending_file_selects.pop(request_id, {"path": ""})
+            return {"path": result.get("path", "")}
+        except asyncio.TimeoutError:
+            pending_file_selects.pop(request_id, None)
+            raise HTTPException(status_code=504, detail="Timeout waiting for agent to select file")
+        except Exception as ex:
+            pending_file_selects.pop(request_id, None)
+            raise HTTPException(status_code=500, detail=f"Agent error selecting file: {str(ex)}")
+
+    # Fallback: run local osascript (only works if server is on macOS)
     import subprocess
-    # Run AppleScript to choose file
     script = f'POSIX path of (choose file with prompt "{prompt}")'
     try:
         proc = subprocess.run(
@@ -419,11 +454,12 @@ async def select_local_file(prompt: str = "Select a file"):
         )
         file_path = proc.stdout.strip()
         return {"path": file_path}
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         # AppleScript returns exit code 1 if user cancels
-        if "User canceled" in e.stderr or "User canceled" in e.stdout or e.returncode == 1:
-            return {"path": ""}
-        raise HTTPException(status_code=500, detail=f"Failed to open file dialog: {e.stderr or e.stdout}")
+        if isinstance(e, subprocess.CalledProcessError):
+            if "User canceled" in e.stderr or "User canceled" in e.stdout or e.returncode == 1:
+                return {"path": ""}
+        raise HTTPException(status_code=500, detail=f"Failed to open file dialog: {str(e)}")
 
 
 @app.post("/v1/projects")

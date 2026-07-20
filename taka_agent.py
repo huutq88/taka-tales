@@ -746,6 +746,31 @@ async def main():
                         else:
                             story_text = payload.get("story_text")
                             asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text))
+                    elif msg_type == "select_file_request":
+                        request_id = message.get("request_id")
+                        prompt = payload.get("prompt", "Select a file")
+                        
+                        def pick_file():
+                            import subprocess
+                            script = f'POSIX path of (choose file with prompt "{prompt}")'
+                            try:
+                                proc = subprocess.run(
+                                    ["osascript", "-e", script],
+                                    capture_output=True,
+                                    text=True
+                                )
+                                if proc.returncode == 0:
+                                    return proc.stdout.strip()
+                            except Exception as ex:
+                                print(f"[Agent] Error choosing file: {ex}")
+                            return ""
+                        
+                        selected_path = await asyncio.to_thread(pick_file)
+                        await websocket.send(json.dumps({
+                            "type": "select_file_response",
+                            "request_id": request_id,
+                            "payload": {"path": selected_path}
+                        }))
                         
         except ConnectionClosed:
             print("[Agent] Connection to server closed. Retrying in 5 seconds...")
