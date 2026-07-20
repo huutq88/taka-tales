@@ -198,8 +198,8 @@ import configparser, uuid, hashlib, socket
 
 mac = uuid.getnode()
 hostname = socket.gethostname()
-device_hash = hashlib.md5(f'{mac}-{hostname}'.encode()).hexdigest()[:12]
-default_ws = f'device_{device_hash}'
+device_hash = hashlib.md5((str(mac) + '-' + hostname).encode()).hexdigest()[:12]
+default_ws = 'device_' + device_hash
 
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
@@ -340,8 +340,8 @@ import configparser, uuid, hashlib, socket
 
 mac = uuid.getnode()
 hostname = socket.gethostname()
-device_hash = hashlib.md5(f'{{mac}}-{{hostname}}'.encode()).hexdigest()[:12]
-default_ws = f'device_{{device_hash}}'
+device_hash = hashlib.md5((str(mac) + '-' + hostname).encode()).hexdigest()[:12]
+default_ws = 'device_' + device_hash
 
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
