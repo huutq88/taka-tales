@@ -6,7 +6,6 @@ from typing import Dict, List, Set, Optional
 from pydantic import BaseModel
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
-import psycopg2
 import requests
 import shutil
 
@@ -33,6 +32,7 @@ def fetch_postgres_document(chapter_id: str) -> str:
     """Queries Postgres directly, and falls back to Lore-Keeper API if Postgres is not connected/fails."""
     if POSTGRES_URI:
         try:
+            import psycopg2
             conn = psycopg2.connect(POSTGRES_URI)
             conn.autocommit = True
             with conn.cursor() as cur:
@@ -65,6 +65,7 @@ def fetch_story_chapters(story_id: str) -> list:
     """Queries Postgres directly, and falls back to Lore-Keeper API if Postgres is not connected/fails."""
     if POSTGRES_URI:
         try:
+            import psycopg2
             conn = psycopg2.connect(POSTGRES_URI)
             conn.autocommit = True
             with conn.cursor() as cur:
