@@ -258,9 +258,8 @@ fi
 echo "============================================="
 echo "🎉 Taka Agent Installation Complete!"
 echo "============================================="
-echo "To start the agent worker run:"
-echo "  cd ~/.taka-agent && source env/bin/activate && python taka_agent.py"
-echo "============================================="
+echo "Starting Taka Agent..."
+python taka_agent.py
 """
     return PlainTextResponse(content=script_content, media_type="text/x-shellscript")
 
@@ -361,11 +360,8 @@ if (-not (Test-Path "tools\OmniVoice")) {{
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "🎉 Taka Agent Installation Complete!" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "To start the agent worker run:" -ForegroundColor Yellow
-Write-Host "  cd `$HOME\.taka-agent"
-Write-Host "  env\Scripts\activate"
-Write-Host "  python taka_agent.py"
-Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "Starting Taka Agent..." -ForegroundColor Yellow
+& env\Scripts\python taka_agent.py
 """
     return PlainTextResponse(content=script_content, media_type="text/plain")
 
