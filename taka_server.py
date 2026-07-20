@@ -162,6 +162,11 @@ async def get_agent_status():
 async def get_install_script(request: Request, workspace_id: str = "default_workspace"):
     server_url = str(request.base_url).rstrip('/')
     
+    import configparser
+    config = configparser.ConfigParser()
+    config.read("config.ini", encoding="utf-8")
+    ollama_model = config.get("IMAGE_PROMPT", "OLLAMA_MODEL", fallback="qwen2.5-coder:14b")
+    
     script_content = f"""#!/bin/bash
 set -e
 
@@ -247,8 +252,8 @@ if command -v ollama >/dev/null 2>&1; then
     else
         echo "Ollama is already running."
     fi
-    echo "Pulling Ollama model (llama3.1:8b-instruct-q8_0)..."
-    ollama pull llama3.1:8b-instruct-q8_0 || echo "Failed to pull Ollama model, please pull it manually: ollama pull llama3.1:8b-instruct-q8_0"
+    echo "Pulling Ollama model ({ollama_model})..."
+    ollama pull {ollama_model} || echo "Failed to pull Ollama model, please pull it manually: ollama pull {ollama_model}"
 else
     echo "Ollama not found. Please install Ollama (https://ollama.com) to use offline prompt generation."
 fi
@@ -298,6 +303,11 @@ echo "============================================="
 @app.get("/v1/system/install-agent.ps1", response_class=PlainTextResponse)
 async def get_install_script_ps1(request: Request, workspace_id: str = "default_workspace"):
     server_url = str(request.base_url).rstrip('/')
+    
+    import configparser
+    config = configparser.ConfigParser()
+    config.read("config.ini", encoding="utf-8")
+    ollama_model = config.get("IMAGE_PROMPT", "OLLAMA_MODEL", fallback="qwen2.5-coder:14b")
     
     script_content = f"""
 $SERVER_URL = "{server_url}"
@@ -387,8 +397,8 @@ if (Get-Command "ollama" -ErrorAction SilentlyContinue) {{
     }} else {{
         Write-Host "Ollama is already running."
     }}
-    Write-Host "Pulling Ollama model (llama3.1:8b-instruct-q8_0)..." -ForegroundColor Yellow
-    & ollama pull llama3.1:8b-instruct-q8_0
+    Write-Host "Pulling Ollama model ({ollama_model})..." -ForegroundColor Yellow
+    & ollama pull {ollama_model}
 }} else {{
     Write-Host "Ollama not found. Please install Ollama (https://ollama.com) to use offline prompt generation." -ForegroundColor Gray
 }}
