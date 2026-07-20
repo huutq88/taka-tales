@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.1.1"
+AGENT_VERSION = "0.1.2"
 
 BASE_DIR = pathlib.Path(__file__).parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -255,6 +255,9 @@ else
     echo "OmniVoice is already pre-installed."
 fi
 
+echo "Downloading OmniVoice base model checkpoints from Hugging Face..."
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice')" || echo "Warning: Failed to download model checkpoints, they will be downloaded on first run."
+
 echo "============================================="
 echo "🎉 Taka Agent Installation Complete!"
 echo "============================================="
@@ -355,6 +358,13 @@ if (-not (Test-Path "tools\OmniVoice")) {{
     }}
 }} else {{
     Write-Host "OmniVoice is already pre-installed."
+}}
+
+Write-Host "Downloading OmniVoice base model checkpoints from Hugging Face..." -ForegroundColor Yellow
+try {{
+    & env\Scripts\python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice')"
+}} catch {{
+    Write-Host "Warning: Failed to download model checkpoints, they will be downloaded on first run." -ForegroundColor Gray
 }}
 
 Write-Host "=============================================" -ForegroundColor Cyan
