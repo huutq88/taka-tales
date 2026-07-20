@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.1.7"
+AGENT_VERSION = "0.1.8"
 
 BASE_DIR = pathlib.Path(__file__).parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -1557,6 +1557,27 @@ async def dashboard():
                 background: #7c3aed;
                 box-shadow: 0 0 15px var(--primary-glow);
             }
+            .header-menu {
+                display: flex;
+                gap: 1.5rem;
+                align-items: center;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid var(--border);
+                border-radius: 30px;
+                padding: 0.4rem 1.5rem;
+            }
+            .header-menu a {
+                color: var(--text-muted);
+                text-decoration: none;
+                font-weight: 600;
+                font-size: 0.95rem;
+                transition: color 0.2s ease, text-shadow 0.2s ease;
+                cursor: pointer;
+            }
+            .header-menu a:hover, .header-menu a.active {
+                color: var(--text);
+                text-shadow: 0 0 10px rgba(255,255,255,0.4);
+            }
         </style>
     </head>
     <body>
@@ -1565,6 +1586,11 @@ async def dashboard():
                 <span class="logo-icon">🔊</span>
                 <h1>Taka Tales</h1>
             </div>
+            <nav class="header-menu">
+                <a onclick="window.location.reload()" class="active">Home</a>
+                <a onclick="openVoiceManagement()">Voices</a>
+                <a onclick="openMusicDialog()">Music</a>
+            </nav>
             <div id="agent-badge" class="agent-badge">
                 <span class="badge-dot"></span>
                 <span id="agent-text">Agent Offline</span>
