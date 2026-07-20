@@ -2456,18 +2456,19 @@ async def dashboard():
                 }
                 
                 let formData = new FormData();
+                formData.append("voice_id", voiceId);
+                formData.append("ref_text", refText);
                 if (isUpload) {
                     formData.append("file", file);
+                } else {
+                    formData.append("local_path", localPath);
                 }
                 
                 let submitBtn = event.target.querySelector("button[type='submit']");
                 submitBtn.disabled = true;
                 submitBtn.textContent = "Cloning...";
                 
-                let url = `/v1/voices?voice_id=${encodeURIComponent(voiceId)}&ref_text=${encodeURIComponent(refText)}`;
-                if (!isUpload) {
-                    url += `&local_path=${encodeURIComponent(localPath)}`;
-                }
+                let url = "/v1/voices";
                 
                 try {
                     let res = await fetch(url, {
