@@ -240,46 +240,8 @@ fi
 pip install -r requirements.txt
 pip install psycopg2-binary || echo "psycopg2-binary not installed, continuing..."
 
-# 6. Start Ollama and Voice Server (Kokoro)
-echo "[6/6] Starting background services..."
-
-# Start Ollama
-if command -v ollama >/dev/null 2>&1; then
-    if ! curl -s http://localhost:11434 >/dev/null; then
-        echo "Starting Ollama server..."
-        ollama serve >/dev/null 2>&1 &
-        sleep 3
-    else
-        echo "Ollama is already running."
-    fi
-    echo "Pulling Ollama model ({ollama_model})..."
-    ollama pull {ollama_model} || echo "Failed to pull Ollama model, please pull it manually: ollama pull {ollama_model}"
-else
-    echo "Ollama not found. Please install Ollama (https://ollama.com) to use offline prompt generation."
-fi
-
-# Start Kokoro Voice Server via Docker
-if command -v docker >/dev/null 2>&1; then
-    if ! curl -s http://localhost:8880 >/dev/null; then
-        echo "Starting Kokoro Voice Server via Docker..."
-        # Detect if NVIDIA Docker is supported or just CPU
-        if docker info 2>/dev/null | grep -i nvidia >/dev/null; then
-            echo "NVIDIA GPU support detected for Docker. Launching GPU container..."
-            docker run -d --gpus all -p 8880:8880 --name kokoro-voice-server ghcr.io/remsky/kokoro-fastapi-gpu:latest || \
-            docker run -d -p 8880:8880 --name kokoro-voice-server ghcr.io/remsky/kokoro-fastapi-cpu:latest
-        else
-            echo "Launching CPU container..."
-            docker run -d -p 8880:8880 --name kokoro-voice-server ghcr.io/remsky/kokoro-fastapi-cpu:latest
-        fi
-    else
-        echo "Voice server is already running on port 8880."
-    fi
-else
-    echo "Docker not found. Please install Docker to run the Kokoro Voice Server, or use ElevenLabs/Edge-TTS."
-fi
-
-# 7. Setup OmniVoice (Vietnamese Voice Cloning Tool)
-echo "[7/7] Pre-installing OmniVoice tool..."
+# 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
+echo "[6/6] Pre-installing OmniVoice tool..."
 if [ ! -d "tools/OmniVoice" ]; then
     echo "Cloning OmniVoice repository..."
     git clone https://github.com/k2-fsa/OmniVoice tools/OmniVoice
@@ -380,48 +342,8 @@ env\\Scripts\\pip install torch torchvision torchaudio --index-url https://downl
 env\\Scripts\\pip install -r requirements.txt
 env\\Scripts\\pip install psycopg2-binary
 
-# 6. Start Ollama and Voice Server (Kokoro)
-Write-Host "[6/6] Starting background services..." -ForegroundColor Green
-
-# Start Ollama
-if (Get-Command "ollama" -ErrorAction SilentlyContinue) {{
-    $running = $null
-    try {{
-        $running = Invoke-RestMethod -Uri "http://localhost:11434" -ErrorAction Stop
-    }} catch {{}}
-    
-    if (-not $running) {{
-        Write-Host "Starting Ollama server..." -ForegroundColor Yellow
-        Start-Process ollama -ArgumentList "serve" -WindowStyle Hidden
-        Start-Sleep -Seconds 3
-    }} else {{
-        Write-Host "Ollama is already running."
-    }}
-    Write-Host "Pulling Ollama model ({ollama_model})..." -ForegroundColor Yellow
-    & ollama pull {ollama_model}
-}} else {{
-    Write-Host "Ollama not found. Please install Ollama (https://ollama.com) to use offline prompt generation." -ForegroundColor Gray
-}}
-
-# Start Kokoro Voice Server via Docker
-if (Get-Command "docker" -ErrorAction SilentlyContinue) {{
-    $running = $null
-    try {{
-        $running = Invoke-RestMethod -Uri "http://localhost:8880" -ErrorAction Stop
-    }} catch {{}}
-    
-    if (-not $running) {{
-        Write-Host "Starting Kokoro Voice Server via Docker..." -ForegroundColor Yellow
-        & docker run -d -p 8880:8880 --name kokoro-voice-server ghcr.io/remsky/kokoro-fastapi-cpu:latest
-    }} else {{
-        Write-Host "Voice server is already running on port 8880."
-    }}
-}} else {{
-    Write-Host "Docker not found. Please install Docker to run the Kokoro Voice Server, or use ElevenLabs/Edge-TTS." -ForegroundColor Gray
-}}
-
-# 7. Setup OmniVoice (Vietnamese Voice Cloning Tool)
-Write-Host "[7/7] Pre-installing OmniVoice tool..." -ForegroundColor Green
+# 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
+Write-Host "[6/6] Pre-installing OmniVoice tool..." -ForegroundColor Green
 if (-not (Test-Path "tools\OmniVoice")) {{
     Write-Host "Cloning OmniVoice repository..." -ForegroundColor Yellow
     & git clone https://github.com/k2-fsa/OmniVoice tools/OmniVoice
