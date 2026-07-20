@@ -10,6 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
+AGENT_VERSION = "0.1.0"
 
 BASE_DIR = pathlib.Path(__file__).parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -174,10 +175,11 @@ SERVER_URL="{server_url}"
 WORKSPACE_ID="{workspace_id}"
 
 echo "============================================="
-echo "   Taka Agent Installer                      "
+echo "   Taka Agent Installer v{AGENT_VERSION}     "
 echo "============================================="
 echo "Coordinator Server: $SERVER_URL"
 echo "Workspace ID:       $WORKSPACE_ID"
+echo "Agent Version:      {AGENT_VERSION}"
 echo "============================================="
 
 # 1. Create and change to agent directory
@@ -275,12 +277,13 @@ async def get_install_script_ps1(request: Request, workspace_id: str = "default_
 $SERVER_URL = "{server_url}"
 $WORKSPACE_ID = "{workspace_id}"
 
-Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "   Taka Agent Installer (Windows PowerShell) " -ForegroundColor Cyan
-Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "=====================================================" -ForegroundColor Cyan
+Write-Host "   Taka Agent Installer v{AGENT_VERSION} (Windows PowerShell) " -ForegroundColor Cyan
+Write-Host "=====================================================" -ForegroundColor Cyan
 Write-Host "Coordinator Server: $SERVER_URL"
 Write-Host "Workspace ID:       $WORKSPACE_ID"
-Write-Host "============================================="
+Write-Host "Agent Version:      {AGENT_VERSION}"
+Write-Host "====================================================="
 
 # 1. Create and change to agent directory
 Write-Host "[1/6] Creating directory '$HOME\.taka-agent'..." -ForegroundColor Green
