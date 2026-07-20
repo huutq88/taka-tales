@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.2.2"
+AGENT_VERSION = "0.2.3"
 
 BASE_DIR = pathlib.Path(__file__).parent
 DATA_DIR = pathlib.Path.home() / ".taka-agent"
@@ -1758,6 +1758,7 @@ async def dashboard():
                     </div>
                 </div>
             </div>
+        </div>
         <!-- Voice Configuration Dialog -->
         <dialog id="voice-config-dialog">
             <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0;">
@@ -2438,7 +2439,7 @@ async def dashboard():
                 try {
                     let res = await fetch(url, {
                         method: "POST",
-                        body: isUpload ? formData : undefined
+                        body: formData
                     });
                     if (!res.ok) {
                         let err = await res.json();
@@ -2667,7 +2668,7 @@ async def dashboard():
                 try {
                     let res = await fetch(url, {
                         method: "POST",
-                        body: isUpload ? formData : undefined
+                        body: formData
                     });
                     if (res.ok) {
                         let runRes = await fetch(`/v1/projects/music/${encodeURIComponent(projectName)}/run`, {
