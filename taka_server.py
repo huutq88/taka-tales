@@ -1,0 +1,2034 @@
+import asyncio
+import json
+import os
+import pathlib
+from typing import Dict, List, Set, Optional
+from pydantic import BaseModel
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, File
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
+import psycopg2
+import requests
+import shutil
+
+app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
+
+BASE_DIR = pathlib.Path(__file__).parent
+PROJECTS_DIR = BASE_DIR / "projects"
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# In-memory stores
+active_agents: Set[WebSocket] = set()
+agent_status: Dict[str, dict] = {}
+project_jobs: Dict[str, dict] = {}  # project_name -> job state
+
+# Resolve Postgres connection URI (Prioritize env variable, then config fallback)
+import configparser
+_CONFIG_PATH = BASE_DIR / "config.ini"
+config = configparser.ConfigParser()
+if _CONFIG_PATH.exists():
+    config.read(_CONFIG_PATH, encoding="utf-8")
+POSTGRES_URI = os.getenv("POSTGRES_URI") or config.get("LORE_KEEPER", "POSTGRES_URI", fallback=None)
+
+def fetch_postgres_document(chapter_id: str) -> str:
+    """Queries Postgres directly, and falls back to Lore-Keeper API if Postgres is not connected/fails."""
+    if POSTGRES_URI:
+        try:
+            conn = psycopg2.connect(POSTGRES_URI)
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT d.content FROM agent_documents ad "
+                    "JOIN documents d ON ad.document_id = d.id "
+                    "WHERE ad.id::text = %s",
+                    (chapter_id,)
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    return row[0]
+        except Exception as e:
+            print(f"[Server] Direct Postgres query failed: {e}. Falling back to Lore-Keeper API...")
+
+    # Fallback to Lore-Keeper REST API
+    try:
+        url = f"https://lore-keeper.taka.zone/api/chapters/{chapter_id}"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("ok") and "chapter" in data:
+            return data["chapter"]["content"]
+        else:
+            raise ValueError("Invalid response format from Lore-Keeper API")
+    except Exception as api_err:
+        raise RuntimeError(f"Failed to fetch chapter content from both Postgres and Lore-Keeper API: {api_err}")
+
+def fetch_story_chapters(story_id: str) -> list:
+    """Queries Postgres directly, and falls back to Lore-Keeper API if Postgres is not connected/fails."""
+    if POSTGRES_URI:
+        try:
+            conn = psycopg2.connect(POSTGRES_URI)
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT ad.id, d.title FROM agent_documents ad "
+                    "JOIN documents d ON ad.document_id = d.id "
+                    "WHERE ad.story_id::text = %s ORDER BY ad.id ASC",
+                    (story_id,)
+                )
+                rows = cur.fetchall()
+                if rows:
+                    return [{"id": str(r[0]), "title": r[1]} for r in rows]
+        except Exception as e:
+            print(f"[Server] Direct Postgres chapters query failed: {e}. Falling back to Lore-Keeper API...")
+
+    # Fallback to Lore-Keeper REST API
+    try:
+        url = f"https://lore-keeper.taka.zone/api/stories/{story_id}/chapters"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("ok") and "chapters" in data:
+            return [{"id": ch["id"], "title": ch["title"]} for ch in data["chapters"]]
+        else:
+            raise ValueError("Invalid response format from Lore-Keeper API")
+    except Exception as api_err:
+        print(f"[Server] Failed to fetch story chapters from both Postgres and Lore-Keeper API: {api_err}")
+        return [
+            {"id": f"chap_{story_id}_1", "title": f"Chương 1 (Mẫu - Lỗi kết nối: {str(api_err)[:20]})"},
+            {"id": f"chap_{story_id}_2", "title": f"Chương 2 (Mẫu)"}
+        ]
+
+# Serve output videos and media
+@app.get("/media/{story_id}/{chapter_id}/final.mp4")
+async def get_final_video(story_id: str, chapter_id: str):
+    video_path = PROJECTS_DIR / story_id / chapter_id / "final.mp4"
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Final video not found")
+    return FileResponse(str(video_path))
+
+@app.get("/media/{story_id}/{chapter_id}/images/{image_name}")
+async def get_project_image(story_id: str, chapter_id: str, image_name: str):
+    image_path = PROJECTS_DIR / story_id / chapter_id / "images" / image_name
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(str(image_path))
+
+# WebSocket endpoint for agent connection
+@app.websocket("/v1/system/agent/ws")
+async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default"):
+    await websocket.accept()
+    active_agents.add(websocket)
+    print(f"[Server] Taka-Agent connected. Workspace: {workspace_id}")
+    try:
+        while True:
+            data_str = await websocket.receive_text()
+            try:
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = data.get("type")
+            payload = data.get("payload", {})
+
+            if msg_type == "status_update":
+                agent_status[workspace_id] = payload
+            elif msg_type == "pipeline_progress":
+                project_name = data.get("project_name")
+                if project_name:
+                    # Translate story_id_chapter_id back to story_id/chapter_id
+                    job_key = project_name.replace("_", "/", 1)
+                    project_jobs[job_key] = {
+                        "status": data.get("status"),
+                        "current_fragment": data.get("current_fragment", 0),
+                        "total_fragments": data.get("total_fragments", 0),
+                        "fragment_status": data.get("fragment_status", {}),
+                        "error": data.get("error"),
+                        "updated_at": data.get("updated_at")
+                    }
+    except WebSocketDisconnect:
+        print(f"[Server] Taka-Agent disconnected: {workspace_id}")
+    finally:
+        active_agents.remove(websocket)
+        agent_status.pop(workspace_id, None)
+
+@app.get("/v1/agent/status")
+async def get_agent_status():
+    return {
+        "connected": len(active_agents) > 0,
+        "agents": agent_status
+    }
+
+@app.get("/v1/system/install-agent.sh", response_class=PlainTextResponse)
+async def get_install_script(request: Request, workspace_id: str = "default_workspace"):
+    server_url = str(request.base_url).rstrip('/')
+    
+    script_content = f"""#!/bin/bash
+set -e
+
+SERVER_URL="{server_url}"
+WORKSPACE_ID="{workspace_id}"
+
+echo "============================================="
+echo "   Taka Agent Installer (Melorix-style)      "
+echo "============================================="
+echo "Coordinator Server: $SERVER_URL"
+echo "Workspace ID:       $WORKSPACE_ID"
+echo "============================================="
+
+# 1. Create and change to agent directory
+echo "[1/6] Creating directory '~/.taka-agent'..."
+mkdir -p "$HOME/.taka-agent"
+cd "$HOME/.taka-agent"
+
+# 2. Download agent files from Server
+echo "[2/6] Downloading agent files from server..."
+curl -fsSL "$SERVER_URL/v1/system/agent/files/requirements.txt" -o requirements.txt
+curl -fsSL "$SERVER_URL/v1/system/agent/files/taka_agent.py" -o taka_agent.py
+curl -fsSL "$SERVER_URL/v1/system/agent/files/config.ini" -o config.ini
+
+mkdir -p core
+curl -fsSL "$SERVER_URL/v1/system/agent/files/core/__init__.py" -o core/__init__.py
+curl -fsSL "$SERVER_URL/v1/system/agent/files/core/video_engine.py" -o core/video_engine.py
+curl -fsSL "$SERVER_URL/v1/system/agent/files/core/characters_descriptions.ini" -o core/characters_descriptions.ini
+
+# 3. Configure config.ini with SERVER_URL and WORKSPACE_ID
+echo "[3/6] Configuring config.ini..."
+python3 -c "
+import configparser, uuid, hashlib, socket
+
+mac = uuid.getnode()
+hostname = socket.gethostname()
+device_hash = hashlib.md5(f'{mac}-{hostname}'.encode()).hexdigest()[:12]
+default_ws = f'device_{device_hash}'
+
+config = configparser.ConfigParser()
+config.read('config.ini', encoding='utf-8')
+if not config.has_section('TAKA_AGENT'):
+    config.add_section('TAKA_AGENT')
+config.set('TAKA_AGENT', 'SERVER_URL', '$SERVER_URL')
+
+ws_id = '$WORKSPACE_ID'
+if ws_id == 'default_workspace' or not ws_id:
+    ws_id = default_ws
+config.set('TAKA_AGENT', 'WORKSPACE_ID', ws_id)
+
+with open('config.ini', 'w', encoding='utf-8') as f:
+    config.write(f)
+"
+
+# 4. Set up virtual environment
+echo "[4/6] Setting up Python virtual environment..."
+python3 -m venv env
+source env/bin/activate
+
+# 5. Install PyTorch and dependencies
+echo "[5/6] Installing dependencies..."
+# Simple platform detection for PyTorch
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macOS detected. Installing default PyTorch..."
+    pip3 install torch torchvision torchaudio
+else
+    echo "Linux/Other detected. Installing PyTorch with CUDA support..."
+    pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+fi
+
+pip install -r requirements.txt
+pip install psycopg2-binary || echo "psycopg2-binary not installed, continuing..."
+
+# 6. Start Ollama and Voice Server (Kokoro)
+echo "[6/6] Starting background services..."
+
+# Start Ollama
+if command -v ollama >/dev/null 2>&1; then
+    if ! curl -s http://localhost:11434 >/dev/null; then
+        echo "Starting Ollama server..."
+        ollama serve >/dev/null 2>&1 &
+        sleep 3
+    else
+        echo "Ollama is already running."
+    fi
+    echo "Pulling Ollama model (llama3.1:8b-instruct-q8_0)..."
+    ollama pull llama3.1:8b-instruct-q8_0 || echo "Failed to pull Ollama model, please pull it manually: ollama pull llama3.1:8b-instruct-q8_0"
+else
+    echo "Ollama not found. Please install Ollama (https://ollama.com) to use offline prompt generation."
+fi
+
+# Start Kokoro Voice Server via Docker
+if command -v docker >/dev/null 2>&1; then
+    if ! curl -s http://localhost:8880 >/dev/null; then
+        echo "Starting Kokoro Voice Server via Docker..."
+        # Detect if NVIDIA Docker is supported or just CPU
+        if docker info 2>/dev/null | grep -i nvidia >/dev/null; then
+            echo "NVIDIA GPU support detected for Docker. Launching GPU container..."
+            docker run -d --gpus all -p 8880:8880 --name kokoro-voice-server ghcr.io/remsky/kokoro-fastapi-gpu:latest || \
+            docker run -d -p 8880:8880 --name kokoro-voice-server ghcr.io/remsky/kokoro-fastapi-cpu:latest
+        else
+            echo "Launching CPU container..."
+            docker run -d -p 8880:8880 --name kokoro-voice-server ghcr.io/remsky/kokoro-fastapi-cpu:latest
+        fi
+    else
+        echo "Voice server is already running on port 8880."
+    fi
+else
+    echo "Docker not found. Please install Docker to run the Kokoro Voice Server, or use ElevenLabs/Edge-TTS."
+fi
+
+# 7. Setup OmniVoice (Vietnamese Voice Cloning Tool)
+echo "[7/7] Pre-installing OmniVoice tool..."
+if [ ! -d "tools/OmniVoice" ]; then
+    echo "Cloning OmniVoice repository..."
+    git clone https://github.com/k2-fsa/OmniVoice tools/OmniVoice
+    if [ -f "tools/OmniVoice/requirements.txt" ]; then
+        echo "Installing OmniVoice requirements..."
+        pip install -r tools/OmniVoice/requirements.txt
+    fi
+else
+    echo "OmniVoice is already pre-installed."
+fi
+
+echo "============================================="
+echo "🎉 Taka Agent Installation Complete!"
+echo "============================================="
+echo "To start the agent worker run:"
+echo "  cd ~/.taka-agent && source env/bin/activate && python taka_agent.py"
+echo "============================================="
+"""
+    return PlainTextResponse(content=script_content, media_type="text/x-shellscript")
+
+@app.get("/v1/system/install-agent.ps1", response_class=PlainTextResponse)
+async def get_install_script_ps1(request: Request, workspace_id: str = "default_workspace"):
+    server_url = str(request.base_url).rstrip('/')
+    
+    script_content = f"""
+$SERVER_URL = "{server_url}"
+$WORKSPACE_ID = "{workspace_id}"
+
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "   Taka Agent Installer (Windows PowerShell) " -ForegroundColor Cyan
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "Coordinator Server: $SERVER_URL"
+Write-Host "Workspace ID:       $WORKSPACE_ID"
+Write-Host "============================================="
+
+# 1. Create and change to agent directory
+Write-Host "[1/6] Creating directory '$HOME\.taka-agent'..." -ForegroundColor Green
+New-Item -ItemType Directory -Force -Path "$HOME\.taka-agent" | Out-Null
+Set-Location -Path "$HOME\.taka-agent"
+
+# 2. Download agent files from Server
+Write-Host "[2/6] Downloading agent files from server..." -ForegroundColor Green
+Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/requirements.txt" -OutFile "requirements.txt"
+Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/taka_agent.py" -OutFile "taka_agent.py"
+Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/config.ini" -OutFile "config.ini"
+
+New-Item -ItemType Directory -Force -Path "core" | Out-Null
+Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/core/__init__.py" -OutFile "core/__init__.py"
+Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/core/video_engine.py" -OutFile "core/video_engine.py"
+Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/core/characters_descriptions.ini" -OutFile "core/characters_descriptions.ini"
+
+# 3. Configure config.ini with SERVER_URL and WORKSPACE_ID
+Write-Host "[3/6] Configuring config.ini..." -ForegroundColor Green
+# Find python command
+$PYTHON_CMD = "python"
+try {{
+    $version = & py --version 2>$null
+    if ($LASTEXITCODE -eq 0) {{ $PYTHON_CMD = "py" }}
+}} catch {{}}
+
+& $PYTHON_CMD -c "
+import configparser, uuid, hashlib, socket
+
+mac = uuid.getnode()
+hostname = socket.gethostname()
+device_hash = hashlib.md5(f'{{mac}}-{{hostname}}'.encode()).hexdigest()[:12]
+default_ws = f'device_{{device_hash}}'
+
+config = configparser.ConfigParser()
+config.read('config.ini', encoding='utf-8')
+if not config.has_section('TAKA_AGENT'):
+    config.add_section('TAKA_AGENT')
+config.set('TAKA_AGENT', 'SERVER_URL', '$SERVER_URL')
+
+ws_id = '$WORKSPACE_ID'
+if ws_id == 'default_workspace' or not ws_id:
+    ws_id = default_ws
+config.set('TAKA_AGENT', 'WORKSPACE_ID', ws_id)
+
+with open('config.ini', 'w', encoding='utf-8') as f:
+    config.write(f)
+"
+
+# 4. Set up virtual environment
+Write-Host "[4/6] Setting up Python virtual environment..." -ForegroundColor Green
+& $PYTHON_CMD -m venv env
+
+# 5. Install PyTorch and dependencies
+Write-Host "[5/6] Installing dependencies..." -ForegroundColor Green
+Write-Host "Installing PyTorch with CUDA support..." -ForegroundColor Yellow
+env\\Scripts\\pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+env\\Scripts\\pip install -r requirements.txt
+env\\Scripts\\pip install psycopg2-binary
+
+# 6. Start Ollama and Voice Server (Kokoro)
+Write-Host "[6/6] Starting background services..." -ForegroundColor Green
+
+# Start Ollama
+if (Get-Command "ollama" -ErrorAction SilentlyContinue) {{
+    $running = $null
+    try {{
+        $running = Invoke-RestMethod -Uri "http://localhost:11434" -ErrorAction Stop
+    }} catch {{}}
+    
+    if (-not $running) {{
+        Write-Host "Starting Ollama server..." -ForegroundColor Yellow
+        Start-Process ollama -ArgumentList "serve" -WindowStyle Hidden
+        Start-Sleep -Seconds 3
+    }} else {{
+        Write-Host "Ollama is already running."
+    }}
+    Write-Host "Pulling Ollama model (llama3.1:8b-instruct-q8_0)..." -ForegroundColor Yellow
+    & ollama pull llama3.1:8b-instruct-q8_0
+}} else {{
+    Write-Host "Ollama not found. Please install Ollama (https://ollama.com) to use offline prompt generation." -ForegroundColor Gray
+}}
+
+# Start Kokoro Voice Server via Docker
+if (Get-Command "docker" -ErrorAction SilentlyContinue) {{
+    $running = $null
+    try {{
+        $running = Invoke-RestMethod -Uri "http://localhost:8880" -ErrorAction Stop
+    }} catch {{}}
+    
+    if (-not $running) {{
+        Write-Host "Starting Kokoro Voice Server via Docker..." -ForegroundColor Yellow
+        & docker run -d -p 8880:8880 --name kokoro-voice-server ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    }} else {{
+        Write-Host "Voice server is already running on port 8880."
+    }}
+}} else {{
+    Write-Host "Docker not found. Please install Docker to run the Kokoro Voice Server, or use ElevenLabs/Edge-TTS." -ForegroundColor Gray
+}}
+
+# 7. Setup OmniVoice (Vietnamese Voice Cloning Tool)
+Write-Host "[7/7] Pre-installing OmniVoice tool..." -ForegroundColor Green
+if (-not (Test-Path "tools\OmniVoice")) {{
+    Write-Host "Cloning OmniVoice repository..." -ForegroundColor Yellow
+    & git clone https://github.com/k2-fsa/OmniVoice tools/OmniVoice
+    if (Test-Path "tools\OmniVoice\requirements.txt") {{
+        Write-Host "Installing OmniVoice requirements..." -ForegroundColor Yellow
+        & pip install -r tools/OmniVoice/requirements.txt
+    }}
+}} else {{
+    Write-Host "OmniVoice is already pre-installed."
+}}
+
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "🎉 Taka Agent Installation Complete!" -ForegroundColor Green
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "To start the agent worker run:" -ForegroundColor Yellow
+Write-Host "  cd `$HOME\.taka-agent"
+Write-Host "  env\Scripts\activate"
+Write-Host "  python taka_agent.py"
+Write-Host "=============================================" -ForegroundColor Cyan
+"""
+    return PlainTextResponse(content=script_content, media_type="text/plain")
+
+@app.get("/v1/system/agent/files/{filepath:path}")
+async def get_agent_file(filepath: str):
+    allowed_files = [
+        "taka_agent.py",
+        "config.ini",
+        "requirements.txt",
+        "core/__init__.py",
+        "core/video_engine.py",
+        "core/characters_descriptions.ini"
+    ]
+    if filepath not in allowed_files:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    file_path = BASE_DIR / filepath
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileResponse(str(file_path))
+
+
+@app.post("/v1/projects")
+async def create_project(story_id: str):
+    if not story_id.strip():
+        raise HTTPException(status_code=400, detail="story_id cannot be empty")
+    # Sanitize story_id to prevent path traversal
+    clean_id = "".join(c for c in story_id if c.isalnum() or c in ("-", "_")).strip()
+    if not clean_id:
+        raise HTTPException(status_code=400, detail="Invalid story_id format")
+    story_dir = PROJECTS_DIR / clean_id
+    story_dir.mkdir(parents=True, exist_ok=True)
+    return {"ok": True, "story_id": clean_id}
+
+
+@app.post("/v1/projects/music")
+async def create_music_project(project_name: str, file: UploadFile = File(...)):
+    if not project_name.strip():
+        raise HTTPException(status_code=400, detail="project_name cannot be empty")
+    clean_name = "".join(c for c in project_name if c.isalnum() or c in ("-", "_")).strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Invalid project_name format")
+    
+    project_dir = PROJECTS_DIR / "music" / clean_name
+    
+    # Clear old directory content completely if exists to avoid leftover music files with different extensions
+    if project_dir.exists():
+        shutil.rmtree(project_dir)
+        
+    project_dir.mkdir(parents=True, exist_ok=True)
+    
+    ext = pathlib.Path(file.filename).suffix or ".mp3"
+    audio_path = project_dir / f"music{ext}"
+    
+    try:
+        with open(audio_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        print(f"[Server] Music file saved for project {clean_name} at {audio_path}")
+    except Exception as e:
+        if project_dir.exists():
+            shutil.rmtree(project_dir)
+        raise HTTPException(status_code=500, detail=f"Failed to save music file: {str(e)}")
+        
+    return {"ok": True, "project_name": clean_name}
+
+@app.get("/v1/projects")
+async def list_projects():
+    if not PROJECTS_DIR.exists():
+        return []
+    
+    stories = []
+    for item in PROJECTS_DIR.iterdir():
+        # Exclude hidden files, files, and the old test_project_1
+        if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1":
+            story_id = item.name
+            
+            if story_id == "music":
+                chapters = []
+                for ch_dir in item.iterdir():
+                    if ch_dir.is_dir() and not ch_dir.name.startswith("."):
+                        ch_id = ch_dir.name
+                        ch_title = ch_id.replace("-", " ").replace("_", " ").title()
+                        story_file = ch_dir / "story.txt"
+                        final_file = ch_dir / "final.mp4"
+                        
+                        job_key = f"music/{ch_id}"
+                        job_state = project_jobs.get(job_key, {"status": "idle"})
+                        
+                        if final_file.exists() and job_state.get("status") == "idle":
+                            job_state["status"] = "completed"
+                            
+                        chapters.append({
+                            "id": ch_id,
+                            "title": ch_title,
+                            "has_story": story_file.exists(),
+                            "has_video": final_file.exists(),
+                            "status": job_state.get("status", "idle"),
+                            "progress": job_state,
+                            "is_music": True
+                        })
+                stories.append({
+                    "story_id": "music",
+                    "chapters": chapters
+                })
+                continue
+                
+            db_chapters = fetch_story_chapters(story_id)
+            
+            chapters = []
+            for ch in db_chapters:
+                ch_id = ch["id"]
+                ch_title = ch["title"]
+                ch_dir = item / ch_id
+                
+                story_file = ch_dir / "story.txt"
+                final_file = ch_dir / "final.mp4"
+                
+                # Retrieve job state under "story_id/chapter_id"
+                job_key = f"{story_id}/{ch_id}"
+                job_state = project_jobs.get(job_key, {"status": "idle"})
+                
+                if final_file.exists() and job_state.get("status") == "idle":
+                    job_state["status"] = "completed"
+                
+                chapters.append({
+                    "id": ch_id,
+                    "title": ch_title,
+                    "has_story": story_file.exists(),
+                    "has_video": final_file.exists(),
+                    "status": job_state.get("status", "idle"),
+                    "progress": job_state
+                })
+                
+            stories.append({
+                "story_id": story_id,
+                "chapters": chapters
+            })
+            
+    return stories
+
+@app.get("/v1/projects/{story_id}/{chapter_id}/status")
+async def get_project_status(story_id: str, chapter_id: str):
+    job_key = f"{story_id}/{chapter_id}"
+    job_state = project_jobs.get(job_key, {"status": "idle"})
+    final_file = PROJECTS_DIR / story_id / chapter_id / "final.mp4"
+    if final_file.exists() and job_state.get("status") == "idle":
+        job_state["status"] = "completed"
+    return job_state
+
+class VoiceConfig(BaseModel):
+    provider: Optional[str] = None
+    voice_id: Optional[str] = None
+    omnivoice_mode: Optional[str] = None  # "clone", "design", "auto"
+    ref_audio_b64: Optional[str] = None
+    ref_audio_filename: Optional[str] = None
+    ref_audio_local_path: Optional[str] = None
+    ref_text: Optional[str] = None
+    voice_instruct: Optional[str] = None
+    start_fragment: Optional[int] = 0
+    limit_fragments: Optional[int] = 0
+
+class RunPipelineRequest(BaseModel):
+    voice_config: Optional[VoiceConfig] = None
+    art_style: Optional[str] = None
+    use_watermark: Optional[bool] = True
+    use_subtitles: Optional[bool] = True
+    use_whisper: Optional[bool] = False
+
+@app.get("/v1/voice/defaults")
+async def get_voice_defaults():
+    return {
+        "provider": config.get("AUDIO", "TTS_PROVIDER", fallback="edge"),
+        "omnivoice_mode": config.get("AUDIO", "OMNIVOICE_MODE", fallback="auto"),
+        "ref_audio_local_path": config.get("AUDIO", "OMNIVOICE_REF_AUDIO", fallback=""),
+        "ref_text": config.get("AUDIO", "OMNIVOICE_REF_TEXT", fallback=""),
+        "voice_instruct": config.get("AUDIO", "OMNIVOICE_INSTRUCT", fallback=""),
+        "voice_id": config.get("AUDIO", "VOICE", fallback="vi-VN-HoaiMyNeural")
+    }
+
+@app.get("/v1/projects/{story_id}/{chapter_id}/fragments")
+async def get_project_fragments(story_id: str, chapter_id: str):
+    content = ""
+    if story_id == "music":
+        project_dir = PROJECTS_DIR / "music" / chapter_id
+        story_file = project_dir / "story.txt"
+        if story_file.exists():
+            content = story_file.read_text(encoding="utf-8")
+        else:
+            # Fallback to source story file in downloaded_albums
+            music_story_dir = PROJECTS_DIR.parent / "downloaded_albums/music"
+            if music_story_dir.exists():
+                for p in music_story_dir.glob("*.txt"):
+                    if chapter_id.replace("_", " ").replace("-", " ").lower() in p.name.lower():
+                        content = p.read_text(encoding="utf-8")
+                        break
+    else:
+        try:
+            content = fetch_postgres_document(chapter_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch content from database: {str(e)}")
+
+    if not content.strip():
+        return []
+
+    if story_id == "music":
+        project_dir = PROJECTS_DIR / "music" / chapter_id
+        segments_file = project_dir / "segments.json"
+        if segments_file.exists():
+            try:
+                import json
+                with open(segments_file, "r", encoding="utf-8") as f:
+                    segments = json.load(f)
+                    return [{"index": i, "text": seg.get("text", "") or f"Slide {i+1}"} for i, seg in enumerate(segments)]
+            except Exception:
+                pass
+        
+        # Split by lines as fallback
+        lines = [l.strip() for l in content.split("\n") if l.strip()]
+        return [{"index": i, "text": l} for i, l in enumerate(lines)]
+
+    # For story projects: tokenize and group
+    try:
+        import nltk
+        try:
+            nltk.data.find('tokenizers/punkt')
+        except LookupError:
+            nltk.download('punkt', quiet=True)
+        from nltk.tokenize import sent_tokenize
+    except Exception:
+        # Fallback sent_tokenize if nltk is not available
+        import re
+        def sent_tokenize(text):
+            return [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+
+    import re
+    text = re.sub(r'\s+', ' ', content).strip()
+    sentences = sent_tokenize(text)
+    
+    punctuation_list = [',', ';', ':']
+    new_sentences = []
+    frag_len = 12
+    try:
+        frag_len = config.getint("STABLE_DIFFUSION", "FRAGMENT_LENGTH", fallback=12)
+    except Exception:
+        pass
+        
+    for sent in sentences:
+        words = sent.split()
+        if len(words) <= frag_len:
+            new_sentences.append(sent)
+        else:
+            part = []
+            for word in words:
+                part.append(word)
+                if word[-1] in punctuation_list and len(part) > 3 * frag_len:
+                    new_sentences.append(' '.join(part))
+                    part = []
+            if part:
+                new_sentences.append(" ".join(part))
+                
+    fragments = []
+    current_words = []
+    for sent in new_sentences:
+        current_words.extend(sent.split())
+        if len(current_words) > frag_len:
+            fragments.append(" ".join(current_words))
+            current_words = []
+    if current_words:
+        fragments.append(" ".join(current_words))
+        
+    return [{"index": i, "text": f} for i, f in enumerate(fragments)]
+
+@app.post("/v1/projects/{story_id}/{chapter_id}/run")
+async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Optional[RunPipelineRequest] = None):
+    if not active_agents:
+        raise HTTPException(status_code=400, detail="No active Taka-Agent connected. Please start the agent first.")
+    
+    project_dir = PROJECTS_DIR / story_id / chapter_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+    story_file = project_dir / "story.txt"
+
+    # Fetch content from Postgres/Lore-Keeper (Only if not a music project)
+    if story_id != "music":
+        try:
+            print(f"[Server] Fetching story content for chapter_id={chapter_id} from Postgres...")
+            content = fetch_postgres_document(chapter_id)
+            with open(story_file, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[Server] Successfully wrote story content to {story_file}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch content from Postgres: {str(e)}")
+
+        if not story_file.exists():
+            raise HTTPException(status_code=404, detail="story.txt not found. Failed to write chapter content.")
+
+    # Process voice_config if present
+    voice_payload = {}
+    if request_data and request_data.voice_config:
+        vc = request_data.voice_config
+        voice_payload["provider"] = vc.provider
+        voice_payload["voice_id"] = vc.voice_id
+        voice_payload["omnivoice_mode"] = vc.omnivoice_mode
+        voice_payload["ref_text"] = vc.ref_text
+        voice_payload["voice_instruct"] = vc.voice_instruct
+        voice_payload["start_fragment"] = vc.start_fragment or 0
+        voice_payload["limit_fragments"] = vc.limit_fragments or 0
+        
+        # If Base64 reference audio is provided, decode and save it
+        if vc.ref_audio_b64:
+            try:
+                import base64
+                ext = ".wav"
+                if vc.ref_audio_filename:
+                    ext = pathlib.Path(vc.ref_audio_filename).suffix or ".wav"
+                
+                (project_dir / "audio").mkdir(parents=True, exist_ok=True)
+                ref_audio_path = project_dir / f"audio/ref_audio{ext}"
+                
+                b64_data = vc.ref_audio_b64
+                if "," in b64_data:
+                    b64_data = b64_data.split(",", 1)[1]
+                
+                with open(ref_audio_path, "wb") as f:
+                    f.write(base64.b64decode(b64_data))
+                
+                voice_payload["ref_audio_path"] = str(ref_audio_path)
+                print(f"[Server] Saved reference voice clone audio to {ref_audio_path}")
+            except Exception as e:
+                print(f"[Server] Failed to decode/save reference audio: {e}")
+        elif vc.ref_audio_local_path:
+            # Set to local path directly
+            voice_payload["ref_audio_path"] = vc.ref_audio_local_path
+            print(f"[Server] Using local reference audio path: {vc.ref_audio_local_path}")
+
+    # Initialize job state
+    job_key = f"{story_id}/{chapter_id}"
+    project_jobs[job_key] = {
+        "status": "starting",
+        "current_fragment": 0,
+        "total_fragments": 0,
+        "fragment_status": {},
+        "error": None
+    }
+
+    # Send trigger message to the first available agent
+    agent_ws = list(active_agents)[0]
+    trigger_message = {
+        "type": "run_pipeline",
+        "payload": {
+            "project_name": f"{story_id}_{chapter_id}",
+            "project_path": str(project_dir),
+            "voice_config": voice_payload if voice_payload else None,
+            "pipeline_type": "music" if story_id == "music" else "story",
+            "art_style": request_data.art_style if request_data else None,
+            "use_watermark": request_data.use_watermark if request_data else True,
+            "use_subtitles": request_data.use_subtitles if request_data else True,
+            "use_whisper": request_data.use_whisper if request_data else False
+        }
+    }
+    await agent_ws.send_text(json.dumps(trigger_message))
+    return {"message": "Pipeline run triggered on Taka-Agent", "story_id": story_id, "chapter_id": chapter_id}
+
+# HTML Dashboard using rich dark glassmorphism styling
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Taka-Agent Story Studio</title>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+        <style>
+            :root {
+                --bg: #09090e;
+                --primary: #8b5cf6;
+                --primary-glow: rgba(139, 92, 246, 0.4);
+                --success: #10b981;
+                --success-glow: rgba(16, 185, 129, 0.3);
+                --warning: #f59e0b;
+                --card-bg: rgba(255, 255, 255, 0.03);
+                --border: rgba(255, 255, 255, 0.08);
+                --text: #f3f4f6;
+                --text-muted: #9ca3af;
+            }
+
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+
+            body {
+                font-family: 'Outfit', sans-serif;
+                background-color: var(--bg);
+                color: var(--text);
+                min-height: 100vh;
+                overflow-x: hidden;
+                background-image: radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 40%),
+                                  radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.08) 0%, transparent 40%);
+                padding: 2rem;
+            }
+
+            header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 3rem;
+                border-bottom: 1px solid var(--border);
+                padding-bottom: 1.5rem;
+            }
+
+            .logo-container {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+            }
+
+            .logo-icon {
+                font-size: 2.5rem;
+                background: linear-gradient(135deg, var(--primary), #ec4899);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                font-weight: 800;
+            }
+
+            h1 {
+                font-size: 2rem;
+                font-weight: 800;
+                letter-spacing: -0.05em;
+            }
+
+            .agent-badge {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.5rem 1.2rem;
+                border-radius: 50px;
+                background: var(--card-bg);
+                border: 1px solid var(--border);
+                font-size: 0.9rem;
+                font-weight: 600;
+                transition: all 0.3s ease;
+            }
+
+            .badge-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background-color: var(--text-muted);
+            }
+
+            .agent-badge.connected .badge-dot {
+                background-color: var(--success);
+                box-shadow: 0 0 10px var(--success-glow);
+            }
+
+            .grid {
+                display: grid;
+                grid-template-columns: 1fr 2fr;
+                gap: 2rem;
+            }
+
+            @media (max-width: 900px) {
+                .grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .glass-card {
+                background: var(--card-bg);
+                backdrop-filter: blur(16px);
+                -webkit-backdrop-filter: blur(16px);
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                padding: 2rem;
+                box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+                transition: transform 0.3s ease, border-color 0.3s ease;
+            }
+
+            .glass-card:hover {
+                border-color: rgba(139, 92, 246, 0.2);
+            }
+
+            .card-title {
+                font-size: 1.3rem;
+                font-weight: 600;
+                margin-bottom: 1.5rem;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+
+            .project-list {
+                display: flex;
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .new-story-btn {
+                background: rgba(139, 92, 246, 0.15);
+                border: 1px dashed var(--primary);
+                color: #fff;
+                width: 32px;
+                height: 32px;
+                border-radius: 8px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                font-weight: 800;
+                font-size: 1.2rem;
+                transition: all 0.2s ease;
+            }
+
+            .new-story-btn:hover {
+                background: var(--primary);
+                box-shadow: 0 0 10px var(--primary-glow);
+                transform: scale(1.05);
+            }
+
+            .story-section {
+                margin-bottom: 1.5rem;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+                padding-bottom: 1rem;
+            }
+
+            .story-section:last-child {
+                border-bottom: none;
+                padding-bottom: 0;
+            }
+
+            .story-header-title {
+                font-size: 0.95rem;
+                font-weight: 800;
+                color: var(--primary);
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-bottom: 0.8rem;
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }
+
+            .chapter-list {
+                display: flex;
+                flex-direction: column;
+                gap: 0.6rem;
+                padding-left: 0.5rem;
+            }
+
+            .chapter-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.9rem 1.1rem;
+                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.01);
+                border: 1px solid var(--border);
+                cursor: pointer;
+                transition: all 0.2s ease;
+            }
+
+            .chapter-item:hover, .chapter-item.active {
+                background: rgba(139, 92, 246, 0.04);
+                border-color: var(--primary);
+                transform: translateX(4px);
+            }
+
+            .chapter-info h4 {
+                font-size: 0.95rem;
+                font-weight: 600;
+                margin-bottom: 0.1rem;
+            }
+
+            .chapter-info p {
+                font-size: 0.75rem;
+                color: var(--text-muted);
+            }
+
+            .run-btn {
+                background: linear-gradient(135deg, var(--primary), #a78bfa);
+                border: none;
+                color: #fff;
+                padding: 0.5rem 1rem;
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 0.85rem;
+                cursor: pointer;
+                box-shadow: 0 4px 15px var(--primary-glow);
+                transition: all 0.2s ease;
+            }
+
+            .run-btn:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px var(--primary-glow);
+            }
+
+            .run-btn:disabled {
+                background: var(--text-muted);
+                cursor: not-allowed;
+                box-shadow: none;
+                transform: none;
+            }
+
+            /* Detail Section */
+            .details-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid var(--border);
+                padding-bottom: 1rem;
+                margin-bottom: 1.5rem;
+            }
+
+            .status-banner {
+                font-size: 0.9rem;
+                padding: 0.4rem 1rem;
+                border-radius: 8px;
+                font-weight: 600;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid var(--border);
+                display: inline-block;
+            }
+
+            .status-banner.processing {
+                background: rgba(245, 158, 11, 0.1);
+                color: var(--warning);
+                border-color: rgba(245, 158, 11, 0.2);
+            }
+
+            .status-banner.completed {
+                background: rgba(16, 185, 129, 0.1);
+                color: var(--success);
+                border-color: rgba(16, 185, 129, 0.2);
+            }
+
+            .progress-container {
+                margin: 2rem 0;
+            }
+
+            .progress-bar-wrapper {
+                height: 12px;
+                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid var(--border);
+                overflow: hidden;
+                position: relative;
+                margin-bottom: 0.8rem;
+            }
+
+            .progress-bar-fill {
+                height: 100%;
+                width: 0%;
+                background: linear-gradient(90deg, var(--primary), #ec4899);
+                border-radius: 6px;
+                transition: width 0.4s ease;
+                box-shadow: 0 0 10px var(--primary-glow);
+            }
+
+            .progress-text {
+                display: flex;
+                justify-content: space-between;
+                font-size: 0.9rem;
+                color: var(--text-muted);
+            }
+
+            .fragments-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+                gap: 1rem;
+                margin-top: 1.5rem;
+            }
+
+            .fragment-card {
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 1rem;
+                text-align: center;
+                transition: all 0.2s ease;
+            }
+
+            .fragment-card.active {
+                border-color: var(--primary);
+                background: rgba(139, 92, 246, 0.03);
+            }
+
+            .fragment-card h4 {
+                font-size: 0.85rem;
+                color: var(--text-muted);
+                margin-bottom: 0.5rem;
+            }
+
+            .step-indicator {
+                display: flex;
+                justify-content: center;
+                gap: 0.4rem;
+                margin-top: 0.6rem;
+            }
+
+            .step-dot {
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                background: rgba(255, 255, 255, 0.1);
+                border: 1px solid var(--border);
+            }
+
+            .step-dot.active {
+                background: var(--primary);
+                box-shadow: 0 0 5px var(--primary-glow);
+            }
+
+            .step-dot.done {
+                background: var(--success);
+            }
+
+            .video-preview {
+                margin-top: 2rem;
+                text-align: center;
+            }
+
+            video {
+                width: 100%;
+                max-width: 640px;
+                border-radius: 12px;
+                border: 1px solid var(--border);
+                outline: none;
+                box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+            }
+
+            /* Modal / Dialog styling */
+            dialog {
+                background: rgba(15, 15, 25, 0.95);
+                border: 1px solid var(--border);
+                border-radius: 16px;
+                padding: 2rem;
+                color: var(--text-color);
+                width: 90%;
+                max-width: 500px;
+                box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+            }
+            dialog::backdrop {
+                background: rgba(0, 0, 0, 0.7);
+                backdrop-filter: blur(4px);
+                -webkit-backdrop-filter: blur(4px);
+            }
+            dialog h3 {
+                margin-top: 0;
+                margin-bottom: 1.5rem;
+                font-weight: 600;
+                color: var(--text-color);
+                font-size: 1.25rem;
+            }
+            .form-group {
+                margin-bottom: 1.25rem;
+            }
+            .form-group label {
+                display: block;
+                font-size: 0.85rem;
+                color: var(--text-muted);
+                margin-bottom: 0.5rem;
+                font-weight: 500;
+            }
+            .form-group select, .form-group input, .form-group textarea {
+                width: 100%;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 0.6rem 0.8rem;
+                color: var(--text-color);
+                font-family: inherit;
+                font-size: 0.9rem;
+                transition: all 0.2s ease;
+                box-sizing: border-box;
+            }
+            .form-group select:focus, .form-group input:focus, .form-group textarea:focus {
+                border-color: var(--primary);
+                box-shadow: 0 0 0 2px var(--primary-glow);
+                outline: none;
+            }
+            .dialog-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 1rem;
+                margin-top: 2rem;
+            }
+            .dialog-actions button {
+                padding: 0.6rem 1.2rem;
+                font-size: 0.9rem;
+                border-radius: 8px;
+                cursor: pointer;
+                font-weight: 600;
+                transition: all 0.2s ease;
+            }
+            .btn-cancel {
+                background: transparent;
+                border: 1px solid var(--border);
+                color: var(--text-color);
+            }
+            .btn-cancel:hover {
+                background: rgba(255, 255, 255, 0.05);
+            }
+            .btn-submit {
+                background: var(--primary);
+                border: 1px solid var(--primary);
+                color: #fff;
+            }
+            .btn-submit:hover {
+                background: #7c3aed;
+                box-shadow: 0 0 15px var(--primary-glow);
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <div class="logo-container">
+                <span class="logo-icon">🔊</span>
+                <h1>Taka Tales</h1>
+            </div>
+            <div id="agent-badge" class="agent-badge">
+                <span class="badge-dot"></span>
+                <span id="agent-text">Agent Offline</span>
+            </div>
+        </header>
+
+        <div class="grid">
+            <!-- Sidebar: Project Lists -->
+            <div class="glass-card">
+                <div class="card-title">
+                    <span>Stories & Chapters</span>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="new-story-btn" onclick="addNewStory()" title="Add New Story">+</button>
+                        <button class="new-story-btn" onclick="openMusicDialog()" title="Convert Music to Video" style="background: rgba(16, 185, 129, 0.15); border-color: var(--success); color: var(--success);">🎵</button>
+                    </div>
+                </div>
+                <div id="project-list" class="project-list">
+                    <p style="color: var(--text-muted);">Loading stories...</p>
+                </div>
+            </div>
+
+            <!-- Main Panel: Project details and real-time generation tracking -->
+            <div class="glass-card" id="details-panel" style="display: none;">
+                <div class="details-header">
+                    <div>
+                        <h2 id="current-project-title">Project Name</h2>
+                        <p id="current-project-desc" style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.2rem;">Pipeline Status</p>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                        <span id="status-banner" class="status-banner">Idle</span>
+                        <button id="details-run-btn" class="run-btn" style="padding: 0.4rem 1rem; font-size: 0.85rem;">Run</button>
+                    </div>
+                </div>
+
+                <div class="progress-container">
+                    <div class="progress-bar-wrapper">
+                        <div id="progress-bar" class="progress-bar-fill"></div>
+                    </div>
+                    <div class="progress-text">
+                        <span id="progress-percentage">0%</span>
+                        <span id="progress-fraction">0 / 0 Fragments</span>
+                    </div>
+                </div>
+
+                <div id="video-preview-container" class="video-preview" style="display: none;">
+                    <h3 style="margin-bottom: 1rem;">🎬 Final Output Video</h3>
+                    <video id="final-video" controls>
+                        <source src="" type="video/video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                </div>
+
+                <h3 style="margin-top: 2rem;">Fragments Processing State</h3>
+                <div id="fragments-grid" class="fragments-grid">
+                    <!-- Dynamic fragments status -->
+                </div>
+            </div>
+        <!-- Voice Configuration Dialog -->
+        <dialog id="voice-config-dialog">
+            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0;">
+                <span>🔊 Voice Configuration</span>
+                <span style="font-size:0.8rem; opacity:0.6;" id="dialog-chapter-id"></span>
+            </h3>
+            <form id="voice-config-form" onsubmit="submitVoiceConfig(event)">
+                <div class="form-group">
+                    <label for="art-style-story">Visual Art Style (Phong Cách Vẽ)</label>
+                    <select id="art-style-story" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;">
+                        <option value="watercolor">Tranh minh họa màu nước cổ điển (Watercolor)</option>
+                        <option value="dong_ho">Tranh dân gian Đông Hồ (Dong Ho folk art)</option>
+                        <option value="son_mai">Tranh Sơn mài Việt Nam (Lacquer art)</option>
+                        <option value="woodblock">Tranh khắc gỗ mộc mạc (Woodblock print)</option>
+                        <option value="thuy_mac">Tranh thủy mặc / mực nho hoài cổ (Ink wash)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="vc-provider">Voice Provider</label>
+                    <select id="vc-provider" onchange="toggleVoiceFields()">
+                        <option value="edge">Edge TTS (Free)</option>
+                        <option value="kokoro">Kokoro TTS</option>
+                        <option value="elevenlabs">ElevenLabs</option>
+                        <option value="omnivoice">OmniVoice (Local Clone/Design)</option>
+                    </select>
+                </div>
+
+                <!-- Fields for Edge, Kokoro, ElevenLabs -->
+                <div class="form-group" id="group-voice-id">
+                    <label for="vc-voice-id" id="label-voice-id">Voice Name/ID</label>
+                    <input type="text" id="vc-voice-id" placeholder="e.g. vi-VN-HoaiMyNeural">
+                </div>
+
+                <!-- Fields for OmniVoice -->
+                <div id="omnivoice-fields" style="display: none;">
+                    <div class="form-group">
+                        <label for="vc-omnivoice-mode">OmniVoice Mode</label>
+                        <select id="vc-omnivoice-mode" onchange="toggleOmniVoiceModeFields()">
+                            <option value="auto">Auto Voice Selection</option>
+                            <option value="clone">Voice Cloning (Requires Audio)</option>
+                            <option value="design">Voice Design (Attributes)</option>
+                        </select>
+                    </div>
+
+                    <!-- Voice Cloning specific fields -->
+                    <div id="vc-clone-fields" style="display: none;">
+                        <div class="form-group">
+                            <label for="vc-ref-audio">Reference Audio File (.wav / .mp3)</label>
+                            <input type="file" id="vc-ref-audio" accept="audio/wav, audio/mpeg, audio/mp3">
+                        </div>
+                        <div style="text-align: center; font-size: 0.8rem; color: var(--text-muted); margin: 0.5rem 0;">— OR —</div>
+                        <div class="form-group">
+                            <label for="vc-ref-audio-local-path">Local Reference Audio Path (on Server)</label>
+                            <input type="text" id="vc-ref-audio-local-path" placeholder="e.g. /Users/huutq/Desktop/WorkingSpace/Demo/taka-tales/ref.wav">
+                        </div>
+                        <div class="form-group">
+                            <label for="vc-ref-text">Reference Transcription (Text in Audio)</label>
+                            <textarea id="vc-ref-text" rows="2" placeholder="Optional. If left blank, local Whisper ASR will auto-transcribe it."></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Voice Design specific fields -->
+                    <div id="vc-design-fields" style="display: none;">
+                        <div class="form-group">
+                            <label for="vc-voice-instruct">Voice Attributes Instruction</label>
+                            <input type="text" id="vc-voice-instruct" placeholder="e.g., female, low pitch, american accent">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Fragment Subset Selection -->
+                <div style="border-top: 1px solid rgba(255,255,255,0.15); margin-top: 1.5rem; padding-top: 1rem;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div class="form-group">
+                            <label for="vc-start-fragment">Start Fragment Index</label>
+                            <input type="number" id="vc-start-fragment" min="0" value="0">
+                        </div>
+                        <div class="form-group">
+                            <label for="vc-limit-fragments">Limit Fragments (0 = All)</label>
+                            <input type="number" id="vc-limit-fragments" min="0" value="0" placeholder="e.g. 10 to 15">
+                        </div>
+                    </div>
+                    <div style="font-size: 0.85rem; opacity: 0.75; margin-top: 0.2rem; margin-bottom: 0.8rem; color: #7ad1ff;">
+                        💡 Tip: Set Limit to 10-15 to render a short 1-2 minute preview video of this chapter.
+                    </div>
+                </div>
+
+                <!-- Fragment Selection UI -->
+                <div style="margin-top: 1rem; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 1rem;">
+                    <label style="font-weight: 600; margin-bottom: 0.5rem; display: block; color: var(--text); font-size: 0.9rem;">🔎 Search & Click to Set Start Index</label>
+                    <input type="text" id="story-frag-search" placeholder="Type keyword to filter fragments..." oninput="filterStoryFragments()" style="width: 100%; padding: 0.6rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); border-radius: 6px; margin-bottom: 0.5rem; outline: none; font-size: 0.85rem;">
+                    <div id="story-frag-list" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem;">
+                        <p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem;">Loading fragments...</p>
+                    </div>
+                </div>
+
+                <!-- Watermark and Subtitle Toggles -->
+                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1.2rem; margin-bottom: 1.5rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
+                        <input type="checkbox" id="story-use-watermark" checked style="width: auto; margin-bottom: 0;"> Gắn Watermark
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
+                        <input type="checkbox" id="story-use-subtitles" checked style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
+                    </label>
+                </div>
+
+                <div class="dialog-actions">
+                    <button type="button" class="btn-cancel" onclick="closeVoiceConfig()">Cancel</button>
+                    <button type="submit" class="btn-submit">Start Pipeline</button>
+                </div>
+            </form>
+        </dialog>
+
+        <!-- Music to Video Dialog -->
+        <dialog id="music-dialog">
+            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0;">
+                <span>🎵 Convert Music to Video</span>
+                <span style="font-size:0.8rem; opacity:0.6;">Music Pipeline</span>
+            </h3>
+            <form id="music-form" onsubmit="submitMusicProject(event)">
+                <div class="form-group">
+                    <label for="music-project-name">Project Name (no spaces)</label>
+                    <input type="text" id="music-project-name" required placeholder="e.g. my-favorite-song">
+                </div>
+                <div class="form-group">
+                    <label for="music-file">Music/Audio File (.mp3 / .wav / .m4a)</label>
+                    <input type="file" id="music-file" accept="audio/*" required>
+                </div>
+                <div class="form-group">
+                    <label for="art-style-music">Visual Art Style (Phong Cảnh Vẽ)</label>
+                    <select id="art-style-music" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;">
+                        <option value="watercolor">Tranh minh họa màu nước cổ điển (Watercolor)</option>
+                        <option value="dong_ho">Tranh dân gian Đông Hồ (Dong Ho folk art)</option>
+                        <option value="son_mai">Tranh Sơn mài Việt Nam (Lacquer art)</option>
+                        <option value="woodblock">Tranh khắc gỗ mộc mạc (Woodblock print)</option>
+                        <option value="thuy_mac">Tranh thủy mặc / mực nho hoài cổ (Ink wash)</option>
+                    </select>
+                </div>
+
+                <!-- Watermark, Subtitle, and Whisper Toggles -->
+                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
+                        <input type="checkbox" id="music-use-watermark" style="width: auto; margin-bottom: 0;"> Gắn Watermark
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
+                        <input type="checkbox" id="music-use-subtitles" style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
+                        <input type="checkbox" id="music-use-whisper" style="width: auto; margin-bottom: 0;"> Nhận diện Whisper
+                    </label>
+                </div>
+
+                <div class="dialog-actions">
+                    <button type="button" class="btn-cancel" onclick="closeMusicDialog()">Cancel</button>
+                    <button type="submit" class="btn-submit">Upload & Start</button>
+                </div>
+            </form>
+        </dialog>
+
+        <script>
+            let currentStory = "";
+            let currentChapter = "";
+            let timerId = null;
+            let storyFragments = [];
+
+            async function updateAgentStatus() {
+                try {
+                    let res = await fetch("/v1/agent/status");
+                    let data = await res.json();
+                    let badge = document.getElementById("agent-badge");
+                    let text = document.getElementById("agent-text");
+                    if (data.connected) {
+                        badge.classList.add("connected");
+                        let info = Object.values(data.agents)[0] || {};
+                        text.innerText = "Agent Connected " + (info.agent_version || "");
+                    } else {
+                        badge.classList.remove("connected");
+                        text.innerText = "Agent Offline";
+                    }
+                } catch(e) {}
+            }
+
+            async function addNewStory() {
+                let storyId = prompt("Nhập Story ID mới:");
+                if (!storyId || !storyId.trim()) return;
+                try {
+                    let res = await fetch(`/v1/projects?story_id=${encodeURIComponent(storyId.trim())}`, { method: "POST" });
+                    if (res.ok) {
+                        loadProjects();
+                    } else {
+                        let err = await res.json();
+                        alert(err.detail || "Không thể tạo story");
+                    }
+                } catch (e) {
+                    alert("Error creating story: " + e);
+                }
+            }
+
+            async function loadProjects() {
+                try {
+                    let res = await fetch("/v1/projects");
+                    let stories = await res.json();
+                    let list = document.getElementById("project-list");
+                    list.innerHTML = "";
+                    
+                    if (stories.length === 0) {
+                        list.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem; padding: 1rem;">No stories loaded yet. Click '+' to load one.</p>`;
+                        return;
+                    }
+                    
+                    stories.forEach(s => {
+                        let sec = document.createElement("div");
+                        sec.className = "story-section";
+                        
+                        let header = document.createElement("div");
+                        header.className = "story-header-title";
+                        if (s.story_id === "music") {
+                            header.innerHTML = `🎵 Music Projects`;
+                            header.style.color = "var(--success)";
+                        } else {
+                            header.innerHTML = `📖 Story: ${s.story_id}`;
+                        }
+                        sec.appendChild(header);
+                        
+                        let chList = document.createElement("div");
+                        chList.className = "chapter-list";
+                        
+                        s.chapters.forEach(c => {
+                            let activeClass = (s.story_id === currentStory && c.id === currentChapter) ? "active" : "";
+                            let item = document.createElement("div");
+                            item.className = "chapter-item " + activeClass;
+                            item.onclick = () => selectChapter(s.story_id, c.id, c.title);
+                            
+                            let btnId = `btn-${s.story_id}-${c.id}`;
+                            let isRunning = (c.status !== 'idle' && c.status !== 'completed');
+                            
+                            item.innerHTML = `
+                                <div class="chapter-info">
+                                    <h4>${c.title}</h4>
+                                    <p>${c.has_video ? "🎬 Video completed" : "No video output yet"}</p>
+                                </div>
+                                <button class="run-btn" id="${btnId}" onclick="runChapter(event, '${s.story_id}', '${c.id}')" ${isRunning ? 'disabled' : ''}>
+                                    ${isRunning ? 'Running' : 'Run'}
+                                </button>
+                            `;
+                            chList.appendChild(item);
+                        });
+                        
+                        if (s.chapters.length === 0) {
+                            chList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.8rem; padding-left: 0.5rem;">No chapters found</p>`;
+                        }
+                        
+                        sec.appendChild(chList);
+                        list.appendChild(sec);
+                    });
+                } catch(e) {}
+            }
+
+            async function selectChapter(storyId, chapterId, title) {
+                currentStory = storyId;
+                currentChapter = chapterId;
+                
+                document.querySelectorAll(".chapter-item").forEach(item => {
+                    item.classList.remove("active");
+                });
+                loadProjects();
+                
+                document.getElementById("details-panel").style.display = "block";
+                document.getElementById("current-project-title").innerText = `${storyId} - ${title}`;
+                
+                let runBtn = document.getElementById("details-run-btn");
+                if (runBtn) {
+                    runBtn.disabled = false;
+                    if (storyId === "music") {
+                        runBtn.onclick = (event) => runChapter(event, storyId, chapterId);
+                    } else {
+                        runBtn.onclick = (event) => openVoiceConfig(storyId, chapterId);
+                    }
+                }
+
+                if (timerId) clearInterval(timerId);
+                timerId = setInterval(() => pollChapterStatus(storyId, chapterId), 1000);
+                pollChapterStatus(storyId, chapterId);
+            }
+
+            function toggleVoiceFields() {
+                let provider = document.getElementById("vc-provider").value;
+                let groupVoiceId = document.getElementById("group-voice-id");
+                let labelVoiceId = document.getElementById("label-voice-id");
+                let inputVoiceId = document.getElementById("vc-voice-id");
+                let omnivoiceFields = document.getElementById("omnivoice-fields");
+
+                if (provider === "omnivoice") {
+                    groupVoiceId.style.display = "none";
+                    omnivoiceFields.style.display = "block";
+                } else {
+                    groupVoiceId.style.display = "block";
+                    omnivoiceFields.style.display = "none";
+                    
+                    if (provider === "edge") {
+                        labelVoiceId.innerText = "Voice Name (Edge TTS)";
+                        inputVoiceId.placeholder = "e.g. vi-VN-HoaiMyNeural or en-US-BrianNeural";
+                    } else if (provider === "kokoro") {
+                        labelVoiceId.innerText = "Voice ID (Kokoro TTS)";
+                        inputVoiceId.placeholder = "e.g. af_heart";
+                    } else if (provider === "elevenlabs") {
+                        labelVoiceId.innerText = "Voice ID (ElevenLabs)";
+                        inputVoiceId.placeholder = "e.g. pMs2g8ZcAlEx2o6I17t4";
+                    }
+                }
+            }
+
+            function toggleOmniVoiceModeFields() {
+                let mode = document.getElementById("vc-omnivoice-mode").value;
+                let cloneFields = document.getElementById("vc-clone-fields");
+                let designFields = document.getElementById("vc-design-fields");
+
+                if (mode === "clone") {
+                    cloneFields.style.display = "block";
+                    designFields.style.display = "none";
+                } else if (mode === "design") {
+                    cloneFields.style.display = "none";
+                    designFields.style.display = "block";
+                } else {
+                    cloneFields.style.display = "none";
+                    designFields.style.display = "none";
+                }
+            }
+
+            let dialogStoryId = "";
+            let dialogChapterId = "";
+
+            async function openVoiceConfig(storyId, chapterId) {
+                dialogStoryId = storyId;
+                dialogChapterId = chapterId;
+                document.getElementById("dialog-chapter-id").innerText = chapterId;
+                
+                try {
+                    let res = await fetch("/v1/voice/defaults");
+                    let defaults = await res.json();
+                    
+                    document.getElementById("vc-provider").value = defaults.provider;
+                    document.getElementById("vc-voice-id").value = defaults.voice_id;
+                    document.getElementById("vc-omnivoice-mode").value = defaults.omnivoice_mode;
+                    document.getElementById("vc-ref-audio").value = "";
+                    document.getElementById("vc-ref-audio-local-path").value = defaults.ref_audio_local_path;
+                    document.getElementById("vc-ref-text").value = defaults.ref_text;
+                    document.getElementById("vc-voice-instruct").value = defaults.voice_instruct;
+                    document.getElementById("vc-start-fragment").value = 0;
+                    document.getElementById("vc-limit-fragments").value = 0;
+                } catch(e) {
+                    console.error("Failed to load voice defaults: ", e);
+                }
+                
+                toggleVoiceFields();
+                toggleOmniVoiceModeFields();
+
+                // Fetch fragments
+                storyFragments = [];
+                document.getElementById("story-frag-search").value = "";
+                let listContainer = document.getElementById("story-frag-list");
+                listContainer.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem;">Loading fragments...</p>`;
+                
+                fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/fragments`)
+                    .then(res => res.json())
+                    .then(frags => {
+                        storyFragments = frags;
+                        renderStoryFragments();
+                    })
+                    .catch(err => {
+                        listContainer.innerHTML = `<p style="color: #ff6b6b; font-size: 0.85rem; padding: 0.5rem;">Failed to load fragments: ${err}</p>`;
+                    });
+                
+                document.getElementById("voice-config-dialog").showModal();
+            }
+
+            function closeVoiceConfig() {
+                document.getElementById("voice-config-dialog").close();
+            }
+
+            function renderStoryFragments(filterKeyword = "") {
+                let listContainer = document.getElementById("story-frag-list");
+                listContainer.innerHTML = "";
+                
+                let filtered = storyFragments;
+                if (filterKeyword.trim()) {
+                    let kw = filterKeyword.toLowerCase();
+                    filtered = storyFragments.filter(f => f.text.toLowerCase().includes(kw));
+                }
+                
+                if (filtered.length === 0) {
+                    listContainer.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem;">No fragments found.</p>`;
+                    return;
+                }
+                
+                filtered.forEach(f => {
+                    let item = document.createElement("div");
+                    item.style.padding = "0.5rem 0.6rem";
+                    item.style.borderRadius = "6px";
+                    item.style.cursor = "pointer";
+                    item.style.fontSize = "0.85rem";
+                    item.style.color = "var(--text)";
+                    item.style.background = "rgba(255,255,255,0.03)";
+                    item.style.border = "1px solid rgba(255,255,255,0.05)";
+                    item.style.transition = "all 0.2s ease";
+                    item.style.display = "flex";
+                    item.style.gap = "0.5rem";
+                    
+                    // Check if this is the currently selected start fragment
+                    let startVal = parseInt(document.getElementById("vc-start-fragment").value) || 0;
+                    if (f.index === startVal) {
+                        item.style.background = "rgba(122, 209, 255, 0.15)";
+                        item.style.borderColor = "#7ad1ff";
+                        item.style.boxShadow = "0 0 8px rgba(122, 209, 255, 0.2)";
+                    }
+                    
+                    // Hover effects
+                    item.onmouseover = () => {
+                        if (f.index !== parseInt(document.getElementById("vc-start-fragment").value)) {
+                            item.style.background = "rgba(255,255,255,0.08)";
+                        }
+                    };
+                    item.onmouseout = () => {
+                        if (f.index !== parseInt(document.getElementById("vc-start-fragment").value)) {
+                            item.style.background = "rgba(255,255,255,0.03)";
+                        }
+                    };
+                    
+                    item.onclick = () => {
+                        document.getElementById("vc-start-fragment").value = f.index;
+                        renderStoryFragments(document.getElementById("story-frag-search").value);
+                    };
+                    
+                    item.innerHTML = `
+                        <span style="color:#7ad1ff; font-weight:bold; min-width:24px;">#${f.index}</span>
+                        <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${f.text.replace(/"/g, '&quot;')}">${f.text}</span>
+                    `;
+                    
+                    listContainer.appendChild(item);
+                });
+            }
+
+            function filterStoryFragments() {
+                let kw = document.getElementById("story-frag-search").value;
+                renderStoryFragments(kw);
+            }
+
+            async function submitVoiceConfig(event) {
+                event.preventDefault();
+                closeVoiceConfig();
+                
+                let artStyle = document.getElementById("art-style-story").value;
+                let provider = document.getElementById("vc-provider").value;
+                let voiceId = document.getElementById("vc-voice-id").value;
+                let omniMode = document.getElementById("vc-omnivoice-mode").value;
+                let refText = document.getElementById("vc-ref-text").value;
+                let voiceInstruct = document.getElementById("vc-voice-instruct").value;
+                let refAudioFile = document.getElementById("vc-ref-audio").files[0];
+                let refAudioLocalPath = document.getElementById("vc-ref-audio-local-path").value;
+                let startFragment = parseInt(document.getElementById("vc-start-fragment").value) || 0;
+                let limitFragments = parseInt(document.getElementById("vc-limit-fragments").value) || 0;
+                let useWatermark = document.getElementById("story-use-watermark").checked;
+                let useSubtitles = document.getElementById("story-use-subtitles").checked;
+
+                let voiceConfig = {
+                    provider: provider,
+                    voice_id: voiceId,
+                    omnivoice_mode: omniMode,
+                    ref_text: refText,
+                    voice_instruct: voiceInstruct,
+                    ref_audio_local_path: refAudioLocalPath,
+                    start_fragment: startFragment,
+                    limit_fragments: limitFragments
+                };
+
+                let triggerPipeline = async (vConfig) => {
+                    let btnId = `btn-${dialogStoryId}-${dialogChapterId}`;
+                    let btn = document.getElementById(btnId);
+                    if (btn) {
+                        btn.disabled = true;
+                        btn.innerText = "Starting...";
+                    }
+                    let detailsBtn = document.getElementById("details-run-btn");
+                    if (detailsBtn) {
+                        detailsBtn.disabled = true;
+                        detailsBtn.innerText = "Starting...";
+                    }
+
+                    let url = `/v1/projects/${encodeURIComponent(dialogStoryId)}/${encodeURIComponent(dialogChapterId)}/run`;
+                    try {
+                        let res = await fetch(url, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                voice_config: vConfig,
+                                art_style: artStyle,
+                                use_watermark: useWatermark,
+                                use_subtitles: useSubtitles
+                            })
+                        });
+                        if (!res.ok) {
+                            let err = await res.json();
+                            alert(err.detail || "Failed to start run");
+                        }
+                        selectChapter(dialogStoryId, dialogChapterId, dialogChapterId);
+                    } catch(e) {
+                        alert("Error: " + e);
+                    }
+                };
+
+                if (provider === "omnivoice" && omniMode === "clone" && refAudioFile) {
+                    // Read file as base64
+                    let reader = new FileReader();
+                    reader.onload = async function() {
+                        voiceConfig.ref_audio_b64 = reader.result;
+                        voiceConfig.ref_audio_filename = refAudioFile.name;
+                        await triggerPipeline(voiceConfig);
+                    };
+                    reader.readAsDataURL(refAudioFile);
+                } else {
+                    await triggerPipeline(voiceConfig);
+                }
+            }
+
+            async function runChapter(event, storyId, chapterId) {
+                if (event) event.stopPropagation();
+                let btnId = `btn-${storyId}-${chapterId}`;
+                let btn = document.getElementById(btnId);
+                if (btn) {
+                    btn.disabled = true;
+                    btn.innerText = "Starting...";
+                }
+                let detailsBtn = document.getElementById("details-run-btn");
+                if (detailsBtn) {
+                    detailsBtn.disabled = true;
+                    detailsBtn.innerText = "Starting...";
+                }
+                
+                let url = `/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/run`;
+                try {
+                    let res = await fetch(url, { method: "POST" });
+                    if (!res.ok) {
+                        let err = await res.json();
+                        alert(err.detail || "Failed to start run");
+                    }
+                    selectChapter(storyId, chapterId, chapterId);
+                } catch(e) {
+                    alert("Error: " + e);
+                }
+            }
+
+            async function pollChapterStatus(storyId, chapterId) {
+                if (currentStory !== storyId || currentChapter !== chapterId) return;
+                try {
+                    let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/status`);
+                    let status = await res.json();
+                    
+                    let banner = document.getElementById("status-banner");
+                    banner.innerText = status.status || "Idle";
+                    banner.className = "status-banner " + (status.status === 'completed' ? 'completed' : (status.status !== 'idle' ? 'processing' : ''));
+
+                    let detailsBtn = document.getElementById("details-run-btn");
+                    if (detailsBtn) {
+                        let isRunning = (status.status !== 'idle' && status.status !== 'completed');
+                        detailsBtn.innerText = isRunning ? "Restart Pipeline" : "Run";
+                        detailsBtn.disabled = false;
+                    }
+
+                    document.getElementById("current-project-desc").innerText = "Pipeline step: " + (status.status || "idle");
+
+                    let progressFill = document.getElementById("progress-bar");
+                    let pctText = document.getElementById("progress-percentage");
+                    let fracText = document.getElementById("progress-fraction");
+                    
+                    let total = status.total_fragments || 0;
+                    let current = status.current_fragment || 0;
+                    
+                    let percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+                    if (status.status === "completed") {
+                        percentage = 100;
+                    }
+                    progressFill.style.width = percentage + "%";
+                    pctText.innerText = percentage + "%";
+                    fracText.innerText = current + " / " + total + " Fragments";
+
+                    // Dynamic fragments
+                    let grid = document.getElementById("fragments-grid");
+                    grid.innerHTML = "";
+                    
+                    for (let i = 0; i < total; i++) {
+                        let card = document.createElement("div");
+                        card.className = "fragment-card";
+                        if (i === current) card.classList.add("active");
+                        
+                        let voiceDone = i < current;
+                        let imgDone = i < current;
+                        let clipDone = i < current;
+
+                        if (i === current && status.fragment_status) {
+                            let fStep = status.fragment_status.step;
+                            if (fStep === "image") voiceDone = true;
+                            if (fStep === "clip") { voiceDone = true; imgDone = true; }
+                        }
+
+                        card.innerHTML = `
+                            <h4>Frag #${i}</h4>
+                            <div class="step-indicator">
+                                <span class="step-dot ${voiceDone ? 'done' : (i === current && status.fragment_status && status.fragment_status.step === 'tts' ? 'active' : '')}" title="TTS (Voice)"></span>
+                                <span class="step-dot ${imgDone ? 'done' : (i === current && status.fragment_status && status.fragment_status.step === 'image' ? 'active' : '')}" title="Image Gen"></span>
+                                <span class="step-dot ${clipDone ? 'done' : (i === current && status.fragment_status && status.fragment_status.step === 'clip' ? 'active' : '')}" title="Stitch Clip"></span>
+                            </div>
+                        `;
+                        grid.appendChild(card);
+                    }
+
+                    // Video Output Preview
+                    let videoContainer = document.getElementById("video-preview-container");
+                    let videoElement = document.getElementById("final-video");
+                    if (status.status === "completed" || status.status === "idle") {
+                        let videoUrl = `/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/final.mp4`;
+                        let check = await fetch(videoUrl, { method: "HEAD" });
+                        if (check.ok) {
+                            videoContainer.style.display = "block";
+                            if (videoElement.src !== window.location.origin + videoUrl) {
+                                videoElement.src = videoUrl;
+                                videoElement.load();
+                            }
+                        } else {
+                            videoContainer.style.display = "none";
+                        }
+                    } else {
+                        videoContainer.style.display = "none";
+                    }
+
+                } catch(e) {}
+            }
+
+            setInterval(updateAgentStatus, 3000);
+            setInterval(loadProjects, 3000);
+            updateAgentStatus();
+            loadProjects();
+
+            function openMusicDialog() {
+                document.getElementById("music-project-name").value = "";
+                document.getElementById("music-file").value = "";
+                document.getElementById("music-dialog").showModal();
+            }
+
+            function closeMusicDialog() {
+                document.getElementById("music-dialog").close();
+            }
+
+             async function submitMusicProject(event) {
+                event.preventDefault();
+                let projectName = document.getElementById("music-project-name").value.trim();
+                let musicFile = document.getElementById("music-file").files[0];
+                let artStyle = document.getElementById("art-style-music").value;
+                let useWatermark = document.getElementById("music-use-watermark").checked;
+                let useSubtitles = document.getElementById("music-use-subtitles").checked;
+                let useWhisper = document.getElementById("music-use-whisper").checked;
+                if (!projectName || !musicFile) return;
+
+                closeMusicDialog();
+
+                let formData = new FormData();
+                formData.append("file", musicFile);
+
+                let detailsPanel = document.getElementById("details-panel");
+                detailsPanel.style.display = "block";
+                document.getElementById("current-project-title").innerText = `Uploading: ${projectName}`;
+                document.getElementById("status-banner").innerText = "Uploading...";
+                
+                try {
+                    let res = await fetch("/v1/projects/music?project_name=" + encodeURIComponent(projectName), {
+                        method: "POST",
+                        body: formData
+                    });
+                    if (res.ok) {
+                        let runRes = await fetch(`/v1/projects/music/${encodeURIComponent(projectName)}/run`, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                art_style: artStyle,
+                                use_watermark: useWatermark,
+                                use_subtitles: useSubtitles,
+                                use_whisper: useWhisper
+                            })
+                        });
+                        if (runRes.ok) {
+                            selectChapter("music", projectName, projectName);
+                        } else {
+                            let err = await runRes.json();
+                            alert("Failed to start music pipeline: " + (err.detail || "Unknown error"));
+                        }
+                    } else {
+                        let err = await res.json();
+                        alert("Upload failed: " + (err.detail || "Unknown error"));
+                    }
+                } catch (e) {
+                    alert("Error uploading music: " + e);
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(
+        content=html_content,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)

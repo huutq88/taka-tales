@@ -127,3 +127,42 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# ==========================================
+# Taka Tales Specific Ignores
+# ==========================================
+
+# Ignore OS metadata
+.DS_Store
+Thumbs.db
+
+# Ignore projects directory entirely
+projects/
+
+# Ignore downloaded albums
+downloaded_albums/
+
+# Ignore local reference/test media files
+*.jpeg
+*.jpg
+*.png
+*.gif
+*.wav
+*.mp3
+*.m4a
+
+# Ignore large media assets (can be downloaded separately)
+bg_music/
+
+# Ignore large documentation media files
+docs/*.mp4
+docs/screenshot.png
+
+# Ignore auto-cloned tools
+tools/OmniVoice/
+
+# Ignore scratch files
+scratch/
+
+
+

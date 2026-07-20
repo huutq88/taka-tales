@@ -1,315 +1,231 @@
-[![ChatGPT](https://img.shields.io/badge/ChatGPT-OpenAI-412991?logo=openai&logoColor=white)](https://openai.com/)
-[![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-FF6B35?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48dGV4dCB4PSI1MCIgeT0iNjAiIGZvbnQtc2l6ZT0iODAiIGZvbnQtd2VpZ2h0PSJib2xkIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+TzwvdGV4dD48L3N2Zz4=)](https://ollama.ai/)
-[![KeyBERT](https://img.shields.io/badge/KeyBERT-NLP-3776AB?logo=python&logoColor=white)](https://github.com/MaartenGr/KeyBERT)
-[![NLTK](https://img.shields.io/badge/NLTK-Text%20Processing-2C3E50?logo=python&logoColor=white)](https://www.nltk.org/)
-[![Python 3.10](https://img.shields.io/badge/Python-3.8-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Edge-TTS](https://img.shields.io/badge/Edge%20TTS-Microsoft-0078D4?logo=microsoft&logoColor=white)](https://github.com/rany2/edge-tts)
-[![ElevenLabs](https://img.shields.io/badge/ElevenLabs-Voice%20AI-00D9FF?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48dGV4dCB4PSI1MCIgeT0iNjAiIGZvbnQtc2l6ZT0iOTAiIGZvbnQtd2VpZ2h0PSJib2xkIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+🔊</L3RleHQ+PC9zdmc+)](https://elevenlabs.io/)
-[![MoviePy](https://img.shields.io/badge/MoviePy-Video%20Editing-E34C26?logo=movie&logoColor=white)](https://zulko.github.io/moviepy/)
-[![StableDiffusion](https://img.shields.io/badge/Stable%20Diffusion-Image%20Gen-512BD4?logo=pytorch&logoColor=white)](https://stablediffusion.ai/)
+# 🎙️ Taka Tales — Hệ thống Sản xuất Video Tự động hóa
 
+**Taka Tales** (trước đây là *Teller of Tales*) là một hệ thống tự động hóa thông minh giúp chuyển đổi các chương sách hoặc câu chuyện bằng văn bản thành video thuyết minh hoàn chỉnh có chất lượng cao. Hệ thống kết hợp các mô hình ngôn ngữ lớn (LLM), công cụ tạo ảnh AI (Stable Diffusion), tổng hợp giọng nói (TTS) và thư viện MoviePy để thực hiện toàn bộ quy trình biên tập video một cách tự động.
 
-# Teller of Tales
+Dự án đã được nâng cấp lên kiến trúc **Client-Server** bất đồng bộ qua **WebSockets**, cho phép tách biệt giữa máy chủ điều phối và các máy trạm (workers/agents) xử lý GPU hạng nặng, đồng thời tích hợp trực tiếp với cơ sở dữ liệu **Lore-Keeper**.
 
-Transform your favorite book chapters into stunning narrated video stories with AI-powered automation.
+---
 
-## Overview
+## ✨ Điểm nổi bật & Tính năng mới
 
-**Teller of Tales** is an intelligent automation system that converts written book chapters into professional-quality narrated videos. By leveraging natural language processing, advanced language models, and AI image generation, the project creates compelling visual narratives with synchronized voiceovers, background music, and text overlays—all in a fully automated, scalable pipeline.
+1. **Kiến trúc Client-Server Asynchronous**:
+   * **Taka Coordinator Server (`taka_server.py`)**: Máy chủ trung tâm viết bằng FastAPI, phục vụ giao diện Web Dashboard và quản lý các tác vụ.
+   * **Taka Agent (`taka_agent.py`)**: Worker chạy ngầm kết nối qua WebSocket, tự động kiểm tra môi trường phần cứng (CUDA/MPS), tự động cài đặt công cụ OmniVoice TTS và thực thi tác vụ render video.
+2. **Giao diện Web Dashboard Hiện đại**: Giao diện tối tối giản (Dark Glassmorphism) hiển thị danh sách dự án, giám sát trạng thái thời gian thực của agent, theo dõi tiến độ từng phân đoạn (fragment) và phát video trực tiếp trên trình duyệt khi hoàn thành.
+3. **Tích hợp Cơ sở dữ liệu Lore-Keeper**: Tự động tải nội dung chương truyện trực tiếp từ cơ sở dữ liệu PostgreSQL (`POSTGRES_URI`) khi người dùng nhập `chapter_id`, thay vì phải tạo file thủ công.
+4. **Hệ thống TTS đa dạng**: Hỗ trợ giọng nói chất lượng cao từ **Kokoro TTS**, **ElevenLabs**, **Edge-TTS** (miễn phí) và tích hợp nâng cao với **OmniVoice** (tự động clone mã nguồn từ GitHub nếu thiếu).
+5. **Prompt Engine Thông minh**: Tự sinh mô tả hình ảnh bằng **Ollama** (offline), **ChatGPT API**, hoặc fallback bằng **KeyBERT** trích xuất từ khóa.
+6. **Pipeline Xử lý Song song**: Tự động chia nhỏ câu chuyện thành các phân đoạn (fragment) có độ dài cấu hình được, chạy song song các tiến trình xử lý hình ảnh/âm thanh để tối ưu hiệu suất phần cứng.
 
-This tool enables content creators, educational platforms, and storytellers to generate engaging video content at scale, reducing production time from hours to minutes while maintaining high quality output.
+---
 
+## 📂 1. Cấu trúc thư mục dự án (Folder Structure)
 
-## Features:
-* NLP with OpenAI, Ollama or KeyBERT
-* Image generation with StableDiffusion
-* Text to speech with Edge Text-to-Speech or Elevenlabs
-* Video editing with MoviePy
-  
-![alt text](https://github.com/dawmro/teller_of_tales/blob/main/docs/screenshot.png?raw=true)
+Để giữ cho kho lưu trữ Git luôn **gọn nhẹ nhất có thể** khi commit, hệ thống sử dụng cơ chế bỏ qua (ignore) toàn bộ các tệp trung gian và tệp đầu ra dung lượng lớn được tạo ra trong quá trình chạy pipeline.
 
-## Example video output
-https://github.com/user-attachments/assets/079fa221-9822-45d7-be65-bdc7b5f2db38
-
-
-
-## Components & Flow
-### 1. File Input
-- Input File: projects/[project_name]/story.txt
-- Action: User provides a text file containing a chapter.
-- Output: Folder structure initialized for project.
-
-### 2. Text Preprocessing & Splitting
-Components:
-- Components involved in splitting text:
-- Text Storage → Text Splitter → Sentence Fragmentator
-
-- Text Storage: Loads story.txt using read_file().
-- Text Cleaner: Uses clean_text() to normalize text (remove special chars).
-- Sentence Splitter: Uses NLTK sent_tokenize() to split into sentences.
-- Fragment Aggregator: Combines sentences into ~N-word fragments (FRAGMENT_LENGTH) for manageable processing.
-
-### 3. Concurrent Processing Pipeline
-The following steps run in parallel per fragment (managing CPU/memory via process pools):
-
+```text
+taka-tales/
+├── taka_server.py                 # Máy chủ điều phối & Giao diện Web Dashboard (FastAPI)
+├── taka_agent.py                  # Agent xử lý ngầm (WebSocket Client & Worker)
+├── config.ini                     # Cấu hình hệ thống (Ollama, SD, TTS, Agent, Database)
+├── requirements.txt               # Thư viện phụ thuộc của Python
+├── notes.txt                      # Ghi chú kỹ thuật & Tối ưu hóa GPU cho MoviePy
+├── README.md                      # Hướng dẫn sử dụng hệ thống
+├── TAKA_TALES_ARCHITECTURE.md     # Tài liệu đặc tả kiến trúc kỹ thuật chi tiết
+├── bg_music/                      # Nhạc nền cho video (được cấu hình trong config.ini)
+│   └── *.mp3                      # [Bị bỏ qua bởi Git] Tránh commit các file nhạc nặng
+├── core/                          # Nhân engine xử lý video và NLP
+│   ├── __init__.py
+│   ├── video_engine.py            # Logic xử lý text, TTS, SD API, MoviePy Rendering
+│   └── characters_descriptions.ini# Mô tả nhân vật cố định để tạo hình nhất quán
+├── tools/                         # Các công cụ hỗ trợ
+│   ├── OmniVoice/                 # [Bị bỏ qua bởi Git] Tự động clone & cài đặt bởi Agent
+│   ├── move_to_dirs.py
+│   └── process_content.py
+└── projects/                      # Thư mục chứa các dự án biên tập video
+    └── [project_name]/
+        ├── story.txt              # Nội dung văn bản (đầu vào thủ công hoặc tải từ DB)
+        ├── final.mp4              # [Bị bỏ qua bởi Git] Video hoàn chỉnh cuối cùng
+        ├── text/                  # [Bị bỏ qua bởi Git] Câu và fragment đã được bóc tách
+        ├── audio/                 # [Bị bỏ qua bởi Git] Các file giọng nói phân đoạn (.wav/.mp3)
+        ├── images/                # [Bị bỏ qua bởi Git] Các hình ảnh minh họa (.jpg)
+        └── videos/                # [Bị bỏ qua bởi Git] Các clip phân đoạn (.mp4)
 ```
-sequenceDiagram
-    User->>TextFragment: Process fragment
-    TextFragment->>TTS: Generate audio
-    TextFragment->>PromptEngine: Create prompt
-    TextFragment->>ImageGen: Generate image
-    loop Per fragment
-        TTS->>AudioFile: Save WAV/MP3
-        PromptEngine->>PromptFile: Save prompt text
-        ImageGen->>ImageFile: Save JPG
-    end
-```
-![alt text](https://github.com/dawmro/teller_of_tales/blob/main/docs/processing_pipeline.PNG?raw=true)
 
-A. Text-to-Speech (TTS)
-- Engines:
-  - Edge TTS: Async via edge_tts.Communicate (default)
-  - ElevenLabs: Synthesizes via API if configured
-- Process:
-  - Audio generated for each fragment.
-  - Saves as audio/voiceover{i}.mp3 or .wav.
+> [!TIP]
+> Nhờ cấu hình `.gitignore` tối ưu, bạn chỉ lưu trữ mã nguồn cốt lõi và dữ liệu văn bản đầu vào (`story.txt`). Toàn bộ tài nguyên đa phương tiện phát sinh (ảnh, âm thanh, video, thư viện cài thêm) đều không bị đẩy lên Git.
 
-B. Prompt Generation
-Strategies:
-- LLM-Based:
-  - ChatGPT: Asks "Craft a visual prompt from this scene".
-  - Ollama: Offline LLM for prompt generation.
-- KeyBERT (fallback):
-  - Keyword extraction (NLTK + KeyBERT) if LLM fails.
-- Output: Saved to text/image-prompts/image_prompt{i}.txt.
+---
 
-C. Stable Diffusion Image Generation
-- Backends:
-  - Local API (e.g., SD WebUI): Sends prompts to SD_URL.
-  - Pollinations: Cloud API with requests (faster but less control).
-- Process:
-  - 1. Uses prompt file + global style desc.
-  - 2. Saves image as images/image{i}.jpg.
+## ⚙️ 2. Hướng dẫn Cấu hình (`config.ini`)
 
-### 4. Video Clips Creation
-MoviePy Workflow (per fragment):
+Mở file `config.ini` và cập nhật các tham số phù hợp với môi trường của bạn:
 
-```
-graph LR
-  subgraph VideoClipProcess{i}
-  Image --> ImageClip
-  Audio --> AudioClip
-  subgraph Compositing
-    ImageClip --> [Background]
-    TextClip --> [Foreground]
-  end
-  Compositing --> VideoClip
-  end
-```
-![alt text](https://github.com/dawmro/teller_of_tales/blob/main/docs/video_clip_creation.PNG?raw=true)
-
-- Audio Processing:
-  - Crossfades
-  - Silence padding
-- Text Overlay:
-  - Captions on image/movie clips.
-- Output: videos/video{i}.mp4.
-
-### 5. Final Video Assembly
-Steps:
-
-1. Clip Sorter: Orders video*.mp4 numerically.
-2. Transition Layer:
-- Crossfades/soft cuts between clips.
-- Background music layering.
-3. Encoder:
-- H264 via moviepy.write_videofile.
-
-### Dependency Graph
-
-```
-graph TD
-  A[story.txt] --> B[Preprocessing]
-  B --> |Sentences| C{Fragment Split}
-
-  C --> |Frag#1| D[TTS → Audio]
-  C --> |Frag#1| E[LLM → Prompt]
-  E --> H1["image_prompt{i}.txt"]
-  H1 --> F[Stable Diffusion → Image]
-  F --> I1["image{i}.jpg"]
-
-  D --> G1["voiceover{i}.wav"]
-  
-  G1 & I1 --> J[MoviePy Clip]
-  J --> K["video{i}.mp4"]
-
-  subgraph Aggregation
-    K --> L[Final.mp4]
-    style Aggregation fill:#f9f
-  end
-
-  L --> M[User Watch]
-  style D fill:#f88,stroke:#cc0
-  style E fill:#d8d
-  style F fill:#a93
-```
-![alt text](https://github.com/dawmro/teller_of_tales/blob/main/docs/dependency_graph.PNG?raw=true)
-
-### Concurrency Model
-- Processing Mode:
-  - Fragment jobs run in parallel (via multiprocessing).
-  - IO-bound tasks (TTS, API calls) use async/threads.
-- Resource Limits:
-  - Checks CPU, memory, and swap (uses psutil).
-
-### Usage Flow
-
-```
-graph LR
-  StartUserInput[Place story.txt] --> StartScript[python teller.py]
-  StartScript --> LoadProject[Project folder setup]
-  LoadProject --> ProcessText[Split and fragment]
-  ProcessText --> TTSPipeline[TTS Processing]
-  ProcessText --> PromptGen[LLM Prompts]
-  TTSPipeline --> AudioFiles
-  PromptGen --> Prompts
-  Prompts --> ImageGen[Images via SD]
-  
-  subgraph PerFragmentSteps["Per-fragment steps"]
-    AudioFiles --> ClipAssembly[Audio+Image→Video]
-    ImageGen --> ClipAssembly
-    ClipAssembly --> VideoFragments
-  end
-```
-![alt text](https://github.com/dawmro/teller_of_tales/blob/main/docs/usage_flow.PNG?raw=true)
-
-This architecture balances parallelism while preventing system overload, leveraging modern APIs and affordable cloud services where needed.
-
-## 🔧 Configuration Guide
-
-### Key Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `FRAGMENT_LENGTH` | Int | 150 | Words per text fragment (lower = shorter clips, higher = longer) |
-| `FREE_SWAP` | Int | 200 | Minimum GB free space before processing |
-| `DEBUG` | Bool | no | Verbose logging and debug info |
-| `USE_CHATGPT` | Bool | yes | Enable ChatGPT-based prompt generation |
-| `USE_ELEVENLABS` | Bool | no | Enable premium ElevenLabs TTS |
-| `SD_URL` | URL | localhost:7860 | StableDiffusion API endpoint |
-| `OLLAMA_MODEL` | String | llama2:7b | Ollama model specification |
-| `STYLE_DESCRIPTION` | String | empty | Global art style to apply to all images |
-
-### Key Configuration Points
-```
-# config.ini snippet
+```ini
 [GENERAL]
-FREE_SWAP=200  # GB free RAM for swapping
-DEBUG=no
+DEBUG = True
+FPS = 10                     # Số khung hình/giây (FPS cao hơn làm video mượt nhưng render lâu)
+FREE_SWAP = 200              # GB swap trống tối thiểu để tiếp tục tác vụ tiếp theo
 
 [AUDIO]
-USE_ELEVENLABS=no # Or edge-tts
+TTS_PROVIDER = kokoro        # Nhà cung cấp TTS: kokoro, elevenlabs, hoặc edge (Edge-TTS miễn phí)
+KOKORO_VOICE_ID = af_heart   # Voice ID của Kokoro
+KOKORO_URL = http://localhost:8880/v1/audio/speech
+BG_MUSIC = yes               # Bật nhạc nền
+BG_MUSIC_PATH = bg_music/Fantasy Music - Passing the Crown - Avery Alexander (youtube).mp3
+MUSIC_VOLUME = 0.05          # Âm lượng nhạc nền so với giọng đọc (khuyên dùng: 0.05 - 0.25)
 
 [IMAGE_PROMPT]
-OLLAMA_MODEL=llama3.2:3b-instruct-q8_0 # Offline model path
+IMAGE_PROMPT_PROVIDER = ollama # ollama (local LLM), yes (ChatGPT), hoặc no (KeyBERT fallback)
+OLLAMA_MODEL = llama3.1:8b-instruct-q8_0
 
 [STABLE_DIFFUSION]
-SD_URL=http://localhost:7860 # Local API URL
+USE_SD_VIA_API = yes         # Kết nối API Stable Diffusion cục bộ (A1111) hoặc pollinations (online)
+SD_URL = http://127.0.0.1:7860
+image_width = 1344
+image_height = 768
+seed = -1                    # -1 cho ngẫu nhiên, số nguyên dương cố định để giữ nét vẽ ổn định
+
+[TAKA_AGENT]
+SERVER_URL = http://localhost:8080
+WORKSPACE_ID = default_workspace
+OMNIVOICE_PATH = tools/OmniVoice
+OMNIVOICE_MODEL_DIR = tools/OmniVoice/checkpoints
+
+[LORE_KEEPER]
+# Cấu hình kết nối Postgres DB để tải chương truyện tự động
+POSTGRES_URI = postgresql://username:password@localhost:5432/lore_keeper_db
 ```
 
-## Prerequisites:
-1. Python 3.8.10
-2. NVidia GPU with 4GB VRAM. 
+---
 
-## Setup:
-1. Create new virtual env:
-``` sh
-py -3.8 -m venv env
-```
-2. Activate your virtual env:
-``` sh
-env/Scripts/activate
-```
-3. Install PyTorch from https://pytorch.org/get-started/locally/:
-``` sh
-pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
-```
-4. Install packages from included requirements.txt:
-``` sh
-pip install -r .\requirements.txt
-```
-5. Install ImageMagick:
-``` sh
-https://imagemagick.org/script/download.php
+## 🛠️ 3. Cài đặt hệ thống (Installation)
 
-Add both check boxes:
-* Associate supported file extensions
-* Install legacy utilities
+### Yêu cầu hệ thống
+* Python **3.8** đến **3.11**
+* Hệ điều hành hỗ trợ GPU NVIDIA (CUDA) hoặc Apple Silicon (MPS) để tăng tốc xử lý sinh ảnh và render video.
+* Cài đặt **ImageMagick** (Yêu cầu bắt buộc đối với thư viện MoviePy để ghi text đè lên video):
+  * Tải xuống và cài đặt từ trang chủ [ImageMagick](https://imagemagick.org/script/download.php).
+  * Trong lúc cài đặt trên Windows/macOS, đảm bảo tích chọn:
+    - *Associate supported file extensions*
+    - *Install legacy utilities (e.g. convert)*
+
+### Hướng dẫn Cài đặt Taka-Agent
+
+#### Cách 1: Cài đặt nhanh bằng lệnh One-liner (Khuyên dùng - Giống Melorix)
+Nếu máy trạm (Worker Machine) đã cài đặt Python 3, Git, và curl/PowerShell, người dùng mới chỉ cần chạy một dòng lệnh duy nhất trên terminal phù hợp với hệ điều hành của họ (không cần nhập thủ công `workspace_id`, hệ thống sẽ tự động tạo mã định danh duy nhất (Device Fingerprint) làm `workspace_id` mặc định):
+
+* **Dành cho macOS / Linux (Terminal / Bash)**:
+  ```bash
+  # Thay thế http://localhost:8080 bằng địa chỉ IP/domain của Coordinator Server thực tế
+  curl -fsSL "http://localhost:8080/v1/system/install-agent.sh" | bash
+  ```
+  *(Truyền tham số tùy chọn nếu muốn đặt tên máy trạm: `curl -fsSL "http://localhost:8080/v1/system/install-agent.sh?workspace_id=ten_may_cua_ban" | bash`)*
+
+* **Dành cho Windows (PowerShell)**:
+  ```powershell
+  # Mở PowerShell và chạy (thay thế http://localhost:8080 bằng địa chỉ IP/domain thực tế của Server)
+  irm "http://localhost:8080/v1/system/install-agent.ps1" | iex
+  ```
+  *(Truyền tham số tùy chọn nếu muốn đặt tên máy trạm: `irm "http://localhost:8080/v1/system/install-agent.ps1?workspace_id=ten_may_cua_ban" | iex`)*
+
+Sau khi hoàn tất cài đặt, hãy di chuyển vào thư mục vừa tạo và khởi chạy Agent:
+* **macOS / Linux**:
+  ```bash
+  cd taka-agent && source env/bin/activate && python taka_agent.py
+  ```
+* **Windows**:
+  ```powershell
+  cd taka-agent
+  env\Scripts\activate
+  python taka_agent.py
+  ```
+
+#### Cách 2: Cài đặt thủ công
+1. **Khởi tạo môi trường ảo (Virtual Environment)**:
+   ```bash
+   python -m venv env
+   source env/bin/activate       # Trên macOS/Linux
+   # hoặc
+   env\Scripts\activate          # Trên Windows
+   ```
+2. **Cài đặt PyTorch phù hợp với GPU của bạn**:
+   * *Ví dụ cho CUDA 11.8*:
+     ```bash
+     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+     ```
+3. **Cài đặt các thư viện trong `requirements.txt`**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. **Cài đặt thư viện kết nối cơ sở dữ liệu (nếu dùng Lore-Keeper PostgreSQL)**:
+   ```bash
+   pip install psycopg2-binary
+   ```
+
+---
+
+## 🚀 4. Quy trình khởi chạy & Sử dụng (Running & Usage)
+
+Để chạy hệ thống Taka Tales, bạn thực hiện theo các bước sau:
+
+### Bước 1: Khởi chạy Taka Coordinator Server
+Chạy máy chủ điều phối FastAPI:
+```bash
+python taka_server.py
 ```
-6. Add your OpenAI Token from https://beta.openai.com/account/api-keys to environment variables:
-``` sh
-setx OPENAI_TOKEN=your_token
+Server sẽ chạy mặc định tại cổng `8080`. Bạn có thể truy cập Giao diện quản lý qua trình duyệt tại địa chỉ: **`http://localhost:8080`**.
+
+### Bước 2: Khởi chạy Taka Agent
+Trong một terminal khác (ở máy tính có GPU để sinh ảnh/render), kích hoạt môi trường ảo và khởi động Agent:
+```bash
+python taka_agent.py
 ```
-6a. Don't want to use OpenAI account? No problem! Make sure that USE_CHATGPT in config.ini is set to no:
-``` sh
-USE_CHATGPT = no
-```
-7. Login to HugginFace using your Access Token from https://huggingface.co/settings/tokens:
-``` sh
-huggingface-cli login
-```
+Agent sẽ kết nối WebSocket đến server, báo cáo cấu hình hệ thống (CUDA, Ollama, Stable Diffusion) và chuyển sang trạng thái chờ lệnh từ Server.
 
+### Bước 3: Tạo và chạy một dự án video
+Có 2 phương thức để cấp dữ liệu văn bản đầu vào:
 
+#### Cách 1: Sử dụng thư mục `projects/` cục bộ (Thủ công)
+1. Tạo một thư mục con bên trong `projects/`, ví dụ: `projects/chuyen_cua_taka/`
+2. Tạo một tệp văn bản tên là `story.txt` bên trong thư mục này và dán nội dung chương truyện vào đó.
+3. F5 lại trang `http://localhost:8080`. Dự án `chuyen_cua_taka` sẽ xuất hiện trong danh sách bên trái.
+4. Bấm **Run Project** để bắt đầu quy trình.
 
-## 📖 Usage
+#### Cách 2: Tải tự động qua Lore-Keeper PostgreSQL (Tự động)
+1. Đảm bảo cấu hình đúng `POSTGRES_URI` trong file `config.ini` hoặc biến môi trường `POSTGRES_URI`.
+2. F5 trang quản trị và chọn dự án. Bấm **Run Project**.
+3. Hệ thống sẽ bật một hộp thoại yêu cầu nhập **Lore-Keeper Chapter ID**.
+4. Nhập ID chương truyện cần tải (ví dụ: `chap_01`).
+5. Server sẽ tự động kết nối cơ sở dữ liệu, lấy nội dung văn bản, tự động tạo cấu trúc thư mục dự án và tệp `story.txt` tương ứng, sau đó chuyển việc cho Agent bắt đầu sinh âm thanh, sinh ảnh và biên tập video.
 
-### Basic Workflow
+### Bước 4: Xem kết quả
+Tiến độ xử lý (tách câu, tạo prompt, sinh audio, tạo hình vẽ, dựng clip ngắn, ghép nối video cuối cùng) được hiển thị trực quan theo thời gian thực trên Web UI.
+Khi hoàn thành, trình phát video sẽ xuất hiện trên Web UI để bạn có thể xem trực tiếp kết quả. Video hoàn thiện cũng được lưu tại:
+`projects/[project_name]/final.mp4`
 
-#### 1. Prepare Your Content
+---
 
-```
-projects/
-├── my_first_story/
-│   └── story.txt          (Your book chapter goes here)
-├── another_story/
-│   └── story.txt
-└── third_story/
-    └── story.txt
-```
+## 🧹 5. Quản lý tài nguyên & Dọn dẹp kho Git
 
-Each `story.txt` file can be as long an you want (longer texts take proportionally longer to process).
+Do đặc thù sinh nhiều file đa phương tiện trung gian trong quá trình tạo video, nếu bạn muốn dọn dẹp thư mục làm việc cục bộ hoặc cần xóa các tài nguyên đã tạo để giải phóng ổ đĩa, bạn có thể thực hiện:
 
-#### 2. Run the Pipeline
+### Lệnh dọn dẹp các tệp trung gian sinh ra trong dự án
+Bạn có thể xóa thủ công các thư mục `text`, `audio`, `images`, `videos` và file `.mp4` trong dự án của mình khi đã xuất video thành công, hoặc dùng script tự động.
+Hệ thống sẽ tự động tạo lại các thư mục này nếu bạn bấm nút **Run Project** chạy lại lần sau.
+
+### Giải pháp Git gọn nhẹ
+Các quy tắc trong tệp [.gitignore](file:///Users/huutq/Desktop/WorkingSpace/Demo/taka-tales/.gitignore) đã bảo vệ kho lưu trữ của bạn khỏi việc commit nhầm các tài nguyên nặng. Nếu bạn lỡ commit các tệp âm nhạc hoặc video cũ trước đó, hãy sử dụng lệnh sau để gỡ bỏ chúng khỏi Git tracking mà vẫn giữ lại tệp trên máy cục bộ của bạn:
 
 ```bash
-python teller_of_tales.py
+# Gỡ bỏ các file mp3 nhạc nền khỏi git tracking
+git rm --cached bg_music/*.mp3
+
+# Gỡ bỏ các video mẫu hoặc ảnh mẫu trong docs khỏi git tracking (nếu cần)
+git rm --cached docs/*.mp4
+git rm --cached docs/screenshot.png
+
+# Gỡ bỏ các thư mục dự án sinh ra trước đó
+git rm -r --cached projects/*/audio/ projects/*/images/ projects/*/videos/ projects/*/*.mp4
 ```
-
-The script automatically discovers all projects in the `projects/` directory and processes them sequentially or in parallel based on your configuration.
-
-#### 3. Retrieve Output
-
-Each project folder contains the complete processing pipeline output:
-
-```
-projects/my_first_story/
-├── story.txt                    # Original input
-├── audio/
-│   ├── voiceover0.mp3
-│   ├── voiceover1.mp3
-│   └── ...
-├── images/
-│   ├── image0.jpg
-│   ├── image1.jpg
-│   └── ...
-├── text/
-│   └── image-prompts/
-│       ├── image_prompt0.txt
-│       ├── image_prompt1.txt
-│       └── ...
-├── videos/
-│   ├── video0.mp4
-│   ├── video1.mp4
-│   └── ...
-└── final.mp4                    # 🎬 Your completed video!
-```
+Sau đó commit và push thay đổi. Kho lưu trữ Git của bạn sẽ trở nên vô cùng gọn nhẹ và sạch sẽ!
