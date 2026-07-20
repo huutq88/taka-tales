@@ -4,7 +4,7 @@ import os
 import pathlib
 from typing import Dict, List, Set, Optional
 from pydantic import BaseModel
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 import requests
 import shutil
@@ -651,7 +651,12 @@ async def list_voices():
     return sorted(voices_list, key=lambda x: x["id"])
 
 @app.post("/v1/voices")
-async def create_voice(voice_id: str, ref_text: str = "", local_path: str = "", file: Optional[UploadFile] = File(None)):
+async def create_voice(
+    voice_id: str = Form(...),
+    ref_text: str = Form(""),
+    local_path: str = Form(""),
+    file: Optional[UploadFile] = File(None)
+):
     if not voice_id.strip():
         raise HTTPException(status_code=400, detail="Voice ID cannot be empty")
     clean_id = "".join(c for c in voice_id if c.isalnum() or c in ("-", "_")).strip()
