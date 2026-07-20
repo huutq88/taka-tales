@@ -1277,6 +1277,58 @@ async def dashboard():
                 </div>
             </div>
 
+            <!-- Welcome/Setup Guide Panel -->
+            <div class="glass-card" id="welcome-panel" style="display: block; padding: 2rem;">
+                <div style="text-align: center; margin-bottom: 2rem;">
+                    <span style="font-size: 3rem;">👋</span>
+                    <h2 style="margin-top: 1rem; color: var(--primary-light);">Welcome to Taka Tales</h2>
+                    <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 0.5rem;">
+                        Let's connect your local computing Agent to begin generating high-quality animated story videos.
+                    </p>
+                </div>
+
+                <div class="setup-section" style="border-top: 1px solid var(--border); padding-top: 1.5rem;">
+                    <h3 style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem; color: var(--success);">
+                        <span>💻</span> Step-by-Step Taka Agent Installation
+                    </h3>
+
+                    <div style="margin-bottom: 1.5rem;">
+                        <h4 style="margin-bottom: 0.5rem; color: var(--text);">Option A: macOS / Linux (Terminal)</h4>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+                            Run this command to create environment, install packages, and clone OmniVoice automatically:
+                        </p>
+                        <div class="code-box-wrapper" style="position: relative; display: flex; align-items: center; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem; font-family: monospace; font-size: 0.85rem; color: var(--success); overflow-x: auto; white-space: nowrap;">
+                            <code id="cmd-mac">curl -fsSL <span class="server-origin-placeholder">http://localhost:8080</span>/v1/system/install-agent.sh | bash -s -- --server <span class="server-origin-placeholder">http://localhost:8080</span> --workspace default_workspace</code>
+                            <button onclick="copyCommand('cmd-mac')" style="margin-left: auto; padding: 0.3rem 0.6rem; font-size: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid var(--border); border-radius: 4px; color: var(--text); cursor: pointer; transition: 0.2s;">Copy</button>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 1.5rem;">
+                        <h4 style="margin-bottom: 0.5rem; color: var(--text);">Option B: Windows (PowerShell - Run as Administrator)</h4>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+                            Run this command in PowerShell to automatically install all dependencies and setup OmniVoice:
+                        </p>
+                        <div class="code-box-wrapper" style="position: relative; display: flex; align-items: center; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem; font-family: monospace; font-size: 0.85rem; color: var(--success); overflow-x: auto; white-space: nowrap;">
+                            <code id="cmd-win">powershell -ExecutionPolicy Bypass -Command "Invoke-Expression (Invoke-RestMethod -Uri '<span class="server-origin-placeholder">http://localhost:8080</span>/v1/system/install-agent.ps1')"</code>
+                            <button onclick="copyCommand('cmd-win')" style="margin-left: auto; padding: 0.3rem 0.6rem; font-size: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid var(--border); border-radius: 4px; color: var(--text); cursor: pointer; transition: 0.2s;">Copy</button>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem;">
+                        <h4 style="margin-bottom: 0.5rem; color: var(--text);">💡 Running the Agent</h4>
+                        <p style="font-size: 0.85rem; color: var(--text-muted);">
+                            After installation completes, navigate to the agent directory and launch the worker agent:
+                        </p>
+                        <pre style="background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem; font-family: monospace; font-size: 0.85rem; color: var(--text); margin-top: 0.5rem; line-height: 1.4;">cd ~/.taka-agent<br>source env/bin/activate  # (On Windows use: env\Scripts\activate)<br>python taka_agent.py</pre>
+                    </div>
+
+                    <div id="welcome-agent-status" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; border-radius: 6px; padding: 0.8rem; font-size: 0.85rem;">
+                        <span class="badge-dot" id="welcome-status-dot" style="background: #ef4444; display: inline-block; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 8px #ef4444;"></span>
+                        <span id="welcome-status-text">Waiting for Taka Agent to connect...</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- Main Panel: Project details and real-time generation tracking -->
             <div class="glass-card" id="details-panel" style="display: none;">
                 <div class="details-header">
@@ -1484,13 +1536,44 @@ async def dashboard():
                     let data = await res.json();
                     let badge = document.getElementById("agent-badge");
                     let text = document.getElementById("agent-text");
+                    let welcomeStatus = document.getElementById("welcome-agent-status");
+                    let welcomeText = document.getElementById("welcome-status-text");
+                    let welcomeDot = document.getElementById("welcome-status-dot");
+
                     if (data.connected) {
                         badge.classList.add("connected");
                         let info = Object.values(data.agents)[0] || {};
-                        text.innerText = "Agent Connected " + (info.agent_version || "");
+                        let version = info.agent_version || "";
+                        text.innerText = "Agent Connected " + version;
+                        
+                        if (welcomeStatus) {
+                            welcomeStatus.style.background = "rgba(16, 185, 129, 0.1)";
+                            welcomeStatus.style.borderColor = "rgba(16, 185, 129, 0.2)";
+                            welcomeStatus.style.color = "#10b981";
+                        }
+                        if (welcomeText) {
+                            welcomeText.innerText = "Taka Agent connected successfully! Select a story chapter from the list on the left to start.";
+                        }
+                        if (welcomeDot) {
+                            welcomeDot.style.background = "#10b981";
+                            welcomeDot.style.boxShadow = "0 0 8px #10b981";
+                        }
                     } else {
                         badge.classList.remove("connected");
                         text.innerText = "Agent Offline";
+                        
+                        if (welcomeStatus) {
+                            welcomeStatus.style.background = "rgba(239, 68, 68, 0.1)";
+                            welcomeStatus.style.borderColor = "rgba(239, 68, 68, 0.2)";
+                            welcomeStatus.style.color = "#ef4444";
+                        }
+                        if (welcomeText) {
+                            welcomeText.innerText = "Waiting for Taka Agent to connect...";
+                        }
+                        if (welcomeDot) {
+                            welcomeDot.style.background = "#ef4444";
+                            welcomeDot.style.boxShadow = "0 0 8px #ef4444";
+                        }
                     }
                 } catch(e) {}
             }
@@ -1580,6 +1663,8 @@ async def dashboard():
                 });
                 loadProjects();
                 
+                let welcomePanel = document.getElementById("welcome-panel");
+                if (welcomePanel) welcomePanel.style.display = "none";
                 document.getElementById("details-panel").style.display = "block";
                 document.getElementById("current-project-title").innerText = `${storyId} - ${title}`;
                 
@@ -1951,6 +2036,25 @@ async def dashboard():
 
                 } catch(e) {}
             }
+
+            function copyCommand(id) {
+                let text = document.getElementById(id).innerText;
+                navigator.clipboard.writeText(text);
+                
+                let btn = document.querySelector(`button[onclick="copyCommand('${id}')"]`);
+                let origText = btn.innerText;
+                btn.innerText = "Copied!";
+                btn.style.background = "var(--success)";
+                setTimeout(() => {
+                    btn.innerText = origText;
+                    btn.style.background = "rgba(255,255,255,0.1)";
+                }, 1500);
+            }
+
+            // Fill all placeholders with the current origin
+            document.querySelectorAll(".server-origin-placeholder").forEach(el => {
+                el.innerText = window.location.origin;
+            });
 
             setInterval(updateAgentStatus, 3000);
             setInterval(loadProjects, 3000);
