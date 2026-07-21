@@ -912,6 +912,7 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
                 except Exception as e:
                     print(f"[Server] Failed to read/encode music file: {e}")
 
+    print(f"[Server] Prepared voice config payload to agent: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_payload.items()} }")
     # Send trigger message to the first available agent
     agent_ws = list(active_agents)[0]
     trigger_message = {
@@ -931,6 +932,7 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
             "music_local_path": music_local_path
         }
     }
+    print(f"[Server] Triggering pipeline with message type: {trigger_message['type']} - payload keys: {list(trigger_message['payload'].keys())}")
     await agent_ws.send_text(json.dumps(trigger_message))
     return {"message": "Pipeline run triggered on Taka-Agent", "story_id": story_id, "chapter_id": chapter_id}
 

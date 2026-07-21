@@ -149,6 +149,7 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         elif mode == "design" and voice_config.get("voice_instruct"):
             cmd += ["--instruct", voice_config["voice_instruct"]]
 
+    print(f"[Agent] Executing OmniVoice CLI command: {' '.join(cmd)}")
     try:
         res = subprocess.run(cmd, check=True, capture_output=True, text=True)
         print(f"[Agent] Generated OmniVoice audio at {out}")
@@ -229,6 +230,9 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
                     print(f"[Agent] Failed to read ref_text.txt: {ex}")
 
     provider = merged_config.get("provider", "edge").lower()
+    print(f"[Agent] Routing TTS generation. provider={provider}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in merged_config.items() if k != 'ref_audio_b64'} }")
+    if voice_id:
+        print(f"[Agent] Resolved local voice profile for voice_id='{voice_id}': ref_audio_path='{merged_config.get('ref_audio_path')}', ref_text='{merged_config.get('ref_text')}'")
     
     if provider == "omnivoice":
         await asyncio.to_thread(tts_omnivoice, text, out, merged_config)
@@ -791,6 +795,7 @@ async def main():
                         project_path_str = payload.get("project_path")
                         voice_config = payload.get("voice_config")
                         pipeline_type = payload.get("pipeline_type", "story")
+                        print(f"[Agent] Received run_pipeline message. project_name={project_name}, pipeline_type={pipeline_type}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_config.items() if k != 'ref_audio_b64'} if voice_config else None}")
                         art_style = payload.get("art_style")
                         use_watermark = payload.get("use_watermark", True)
                         use_subtitles = payload.get("use_subtitles", True)
