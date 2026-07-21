@@ -72,7 +72,7 @@ def fetch_postgres_document(chapter_id: str) -> str:
     if POSTGRES_URI:
         try:
             import psycopg2
-            conn = psycopg2.connect(POSTGRES_URI)
+            conn = psycopg2.connect(POSTGRES_URI, connect_timeout=3)
             conn.autocommit = True
             with conn.cursor() as cur:
                 cur.execute(
@@ -105,7 +105,7 @@ def fetch_story_chapters(story_id: str) -> list:
     if POSTGRES_URI:
         try:
             import psycopg2
-            conn = psycopg2.connect(POSTGRES_URI)
+            conn = psycopg2.connect(POSTGRES_URI, connect_timeout=3)
             conn.autocommit = True
             with conn.cursor() as cur:
                 cur.execute(
