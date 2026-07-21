@@ -281,12 +281,27 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
         story_id = path_obj.parent.name
         chapter_id = path_obj.name
         project_dir = AGENT_DIR / "projects" / story_id / chapter_id
+        
+        existing_story = None
+        if (project_dir / "story.txt").exists():
+            try:
+                with open(project_dir / "story.txt", "r", encoding="utf-8") as f:
+                    existing_story = f.read()
+            except Exception:
+                pass
+
+        if force_rerun:
+            print(f"[Agent] force_rerun enabled: Deleting entire project folder {project_dir}")
+            if project_dir.exists():
+                shutil.rmtree(project_dir, ignore_errors=True)
+
         project_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save story.txt if sent by server
-        if story_text:
+        # Save story.txt if sent by server or if it already existed
+        story_to_save = story_text or existing_story
+        if story_to_save:
             with open(project_dir / "story.txt", "w", encoding="utf-8") as f:
-                f.write(story_text)
+                f.write(story_to_save)
                 
         # Save project_config.json
         config_data = {
@@ -298,12 +313,6 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             json.dump(config_data, f, ensure_ascii=False, indent=2)
         
         # 1. Setup folders and clean old folders completely to ensure no leftover files
-        if force_rerun:
-            for folder in ("audio", "images"):
-                fpath = project_dir / folder
-                if fpath.exists():
-                    shutil.rmtree(fpath, ignore_errors=True)
-
         for sub in ("text", "audio", "images", "videos"):
             (project_dir / sub).mkdir(parents=True, exist_ok=True)
             
@@ -489,9 +498,25 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
         story_id = path_obj.parent.name
         chapter_id = path_obj.name
         project_dir = AGENT_DIR / "projects" / story_id / chapter_id
+        
+        # Keep list of existing music files to restore
+        existing_music = []
+        if project_dir.exists():
+            for item in project_dir.iterdir():
+                if item.is_file() and item.suffix.lower() in [".mp3", ".wav", ".m4a"]:
+                    try:
+                        existing_music.append((item.name, item.read_bytes()))
+                    except Exception:
+                        pass
+
+        if force_rerun:
+            print(f"[Agent] force_rerun enabled: Deleting entire project folder {project_dir}")
+            if project_dir.exists():
+                shutil.rmtree(project_dir, ignore_errors=True)
+
         project_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save music file if sent by server or local path
+        # Save music file if sent by server or local path, or restore if it existed
         if music_local_path and os.path.exists(music_local_path):
             suffix = pathlib.Path(music_local_path).suffix or ".mp3"
             shutil.copy(music_local_path, project_dir / f"music{suffix}")
@@ -499,6 +524,10 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
             import base64
             with open(project_dir / music_filename, "wb") as f:
                 f.write(base64.b64decode(music_b64))
+        else:
+            for name, data in existing_music:
+                with open(project_dir / name, "wb") as f:
+                    f.write(data)
                 
         # Save project_config.json
         config_data = {
@@ -510,12 +539,6 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
             json.dump(config_data, f, ensure_ascii=False, indent=2)
         
         # 1. Setup folders and clean old folders completely
-        if force_rerun:
-            for folder in ("audio", "images"):
-                fpath = project_dir / folder
-                if fpath.exists():
-                    shutil.rmtree(fpath, ignore_errors=True)
-
         for sub in ("text", "audio", "images", "videos"):
             (project_dir / sub).mkdir(parents=True, exist_ok=True)
             

@@ -775,16 +775,6 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
     is_music = "projects/music" in str(project_dir)
 
     audio_clip = AudioFileClip(str(audio_mp3 if audio_mp3.exists() else audio_wav))
-    if not is_music:
-        audio_clip = audio_clip.subclip(0, audio_clip.duration - 0.1)
-        audio_clip = audio_clip.audio_fadein(0.05).audio_fadeout(0.05)
-        audio_clip = concatenate_audioclips(
-            [
-                AudioClip(lambda t: 0, duration=0.5),
-                audio_clip,
-                AudioClip(lambda t: 0, duration=0.5),
-            ]
-        )
 
     # Load project_config.json if it exists
     config_path = project_dir / "project_config.json"
@@ -807,8 +797,8 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
         img_resized.save(str(img_path))
 
     image_clip = ImageClip(str(img_path)).set_duration(audio_clip.duration)
-    is_music = "projects/music" in str(project_dir)
-    image_clip = apply_ken_burns_effect(image_clip, idx, is_music=is_music)
+    # Always apply waveform (is_music=True) to display bouncing audio equalizer
+    image_clip = apply_ken_burns_effect(image_clip, idx, is_music=True)
 
     # Pick the best available font with Vietnamese support
     font_path = "Arial"
