@@ -140,7 +140,12 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
     ]
     try:
         import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
     except ImportError:
         device = "cpu"
     cmd += ["--device", device]
