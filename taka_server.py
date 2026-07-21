@@ -696,13 +696,45 @@ async def inspect_db(q: str = "da-nguyet-ky"):
                 except Exception:
                     pass
                 search_results = [f"Error: {e}"]
+
+            # 5. List all knowledge bases
+            kb_list = []
+            try:
+                cur.execute("SELECT id, name, description FROM knowledge_bases LIMIT 20;")
+                kb_list = [{"id": r[0], "name": r[1], "description": r[2]} for r in cur.fetchall()]
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                kb_list = [f"Error: {e}"]
+
+            # 6. List some files
+            file_list = []
+            try:
+                cur.execute("SELECT id, name, file_type, size FROM files LIMIT 20;")
+                file_list = [{"id": r[0], "name": r[1], "file_type": r[2], "size": r[3]} for r in cur.fetchall()]
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                file_list = [f"Error: {e}"]
         finally:
             try:
                 cur.close()
             except Exception:
                 pass
                 
-        return {"ok": True, "tables": tables, "samples": samples, "story_ids": story_ids, "search_results": search_results}
+        return {
+            "ok": True, 
+            "tables": tables, 
+            "samples": samples, 
+            "story_ids": story_ids, 
+            "search_results": search_results,
+            "knowledge_bases": kb_list,
+            "files": file_list
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
     finally:
