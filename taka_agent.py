@@ -27,13 +27,18 @@ config = configparser.ConfigParser()
 config.read(_CONFIG_PATH, encoding="utf-8")
 
 import getpass
+import uuid
+import hashlib
+import socket
 
 def get_default_workspace_id():
     try:
         user = getpass.getuser().lower()
-        clean_user = "".join(c for c in user if c.isalnum() or c in ("-", "_")).strip()
-        if clean_user:
-            return clean_user
+        clean_user = "".join(c for c in user if c.isalnum() or c in ("-", "_")).strip() or "user"
+        mac = uuid.getnode()
+        hostname = socket.gethostname()
+        dev_hash = hashlib.md5(f"{mac}-{hostname}".encode()).hexdigest()[:6]
+        return f"{clean_user}_{dev_hash}"
     except Exception:
         pass
     return "default_workspace"

@@ -438,8 +438,13 @@ async def get_install_script_ps1(request: Request, workspace_id: str = "default_
 $SERVER_URL = "{server_url}"
 $WORKSPACE_ID = "{workspace_id}"
 if (-not $WORKSPACE_ID -or $WORKSPACE_ID -eq "default_workspace") {{
-    $WORKSPACE_ID = $env:USERNAME.ToLower()
-    $WORKSPACE_ID = $WORKSPACE_ID -replace '[^a-zA-Z0-9_-]', ''
+    $uName = $env:USERNAME.ToLower() -replace '[^a-zA-Z0-9_-]', ''
+    if (-not $uName) {{ $uName = "user" }}
+    $hName = $env:COMPUTERNAME
+    $md5 = [System.Security.Cryptography.MD5]::Create()
+    $hashBytes = $md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$hName-$uName"))
+    $devHash = ([BitConverter]::ToString($hashBytes).Replace("-","").ToLower()).Substring(0, 6)
+    $WORKSPACE_ID = "${{uName}}_${{devHash}}"
 }}
 
 Write-Host "=====================================================" -ForegroundColor Cyan
