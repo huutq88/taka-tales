@@ -567,6 +567,21 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
         
     return {"ok": True, "project_name": clean_name}
 
+@app.get("/v1/test-db")
+async def test_db_connection():
+    if not POSTGRES_URI:
+        return {"ok": False, "error": "POSTGRES_URI environment variable is not set or is empty."}
+    try:
+        import psycopg2
+        conn = psycopg2.connect(POSTGRES_URI, connect_timeout=3)
+        with conn.cursor() as cur:
+            cur.execute("SELECT version();")
+            ver = cur.fetchone()
+        conn.close()
+        return {"ok": True, "postgres_version": ver[0]}
+    except Exception as e:
+        return {"ok": False, "error": f"Postgres connection failed: {str(e)}"}
+
 @app.get("/v1/projects")
 async def list_projects():
     stories = []

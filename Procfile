@@ -1,1 +1,2 @@
-web: python taka_server.py
+web: python -u taka_server.py
+
