@@ -15,6 +15,11 @@ from websockets.exceptions import ConnectionClosed
 
 # Resolve base directory (where taka_agent.py is located)
 AGENT_DIR = pathlib.Path(__file__).resolve().parent
+AGENT_DATA_DIR = pathlib.Path.home() / ".taka-agent"
+AGENT_PROJECTS_DIR = AGENT_DATA_DIR / "projects"
+AGENT_PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+AGENT_VOICES_DIR = AGENT_DATA_DIR / "voices"
+AGENT_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Load config
 _CONFIG_PATH = AGENT_DIR / "config.ini"
@@ -295,7 +300,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
         path_obj = pathlib.Path(project_path_str)
         story_id = path_obj.parent.name
         chapter_id = path_obj.name
-        project_dir = AGENT_DIR / "projects" / story_id / chapter_id
+        project_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
         
         existing_story = None
         if (project_dir / "story.txt").exists():
@@ -512,7 +517,7 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
         path_obj = pathlib.Path(project_path_str)
         story_id = path_obj.parent.name
         chapter_id = path_obj.name
-        project_dir = AGENT_DIR / "projects" / story_id / chapter_id
+        project_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
         
         # Keep list of existing music files to restore
         existing_music = []
@@ -810,20 +815,17 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
 
 
 def start_local_media_server():
-    """Start a lightweight HTTP server on port 8766 serving AGENT_DIR / 'projects'."""
+    """Start a lightweight HTTP server on port 8766 serving AGENT_PROJECTS_DIR."""
     import http.server
     import socketserver
     import threading
     
-    projects_dir = AGENT_DIR / "projects"
+    projects_dir = AGENT_PROJECTS_DIR
     projects_dir.mkdir(parents=True, exist_ok=True)
 
     class CORSHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
-            p_dir = pathlib.Path.home() / ".taka-agent" / "projects"
-            if not p_dir.exists():
-                p_dir = AGENT_DIR / "projects"
-            super().__init__(*args, directory=str(p_dir), **kwargs)
+            super().__init__(*args, directory=str(projects_dir), **kwargs)
 
         def translate_path(self, path):
             filepath = pathlib.Path(super().translate_path(path))
@@ -1018,10 +1020,7 @@ async def main():
                         story_folders = []
                         local_files = {}
                         
-                        projects_dir = pathlib.Path.home() / ".taka-agent" / "projects"
-                        if not projects_dir.exists():
-                            projects_dir = AGENT_DIR / "projects"
-                            
+                        projects_dir = AGENT_PROJECTS_DIR
                         if projects_dir.exists():
                             for item in projects_dir.iterdir():
                                 if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1":
@@ -1049,10 +1048,7 @@ async def main():
                         story_id = payload.get("story_id", "")
                         chapter_id = payload.get("chapter_id", "")
                         
-                        projects_dir = pathlib.Path.home() / ".taka-agent" / "projects"
-                        if not projects_dir.exists():
-                            projects_dir = AGENT_DIR / "projects"
-                            
+                        projects_dir = AGENT_PROJECTS_DIR
                         ch_dir = projects_dir / story_id / chapter_id
                         has_video = (ch_dir / "final.mp4").exists() or (ch_dir / f"{story_id}_{chapter_id}.mp4").exists()
                         
@@ -1084,10 +1080,7 @@ async def main():
                         chapter_id = payload.get("chapter_id", "")
                         file_path = payload.get("file_path", "")
                         
-                        projects_dir = pathlib.Path.home() / ".taka-agent" / "projects"
-                        if not projects_dir.exists():
-                            projects_dir = AGENT_DIR / "projects"
-                            
+                        projects_dir = AGENT_PROJECTS_DIR
                         base_dir = (projects_dir / story_id / chapter_id).resolve()
                         target_file = (base_dir / file_path).resolve()
                         
@@ -1150,9 +1143,7 @@ async def main():
                     elif msg_type == "list_voices_request":
                         request_id = message.get("request_id")
                         voices_list = []
-                        voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
-                        if not voices_base.exists():
-                            voices_base = AGENT_DIR / "voices"
+                        voices_base = AGENT_VOICES_DIR
                         if voices_base.exists():
                             for item in voices_base.iterdir():
                                 if item.is_dir():
@@ -1178,8 +1169,7 @@ async def main():
                         local_path = payload.get("local_path", "")
                         ref_audio_b64 = payload.get("ref_audio_b64")
                         
-                        voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
-                        voices_base.mkdir(parents=True, exist_ok=True)
+                        voices_base = AGENT_VOICES_DIR
                         voice_dir = voices_base / voice_id
                         voice_dir.mkdir(parents=True, exist_ok=True)
                         
@@ -1214,9 +1204,7 @@ async def main():
                     elif msg_type == "create_project_request":
                         request_id = message.get("request_id")
                         story_id = payload.get("story_id")
-                        projects_base = pathlib.Path.home() / ".taka-agent" / "projects"
-                        if not projects_base.exists():
-                            projects_base = AGENT_DIR / "projects"
+                        projects_base = AGENT_PROJECTS_DIR
                         story_dir = projects_base / story_id
                         story_dir.mkdir(parents=True, exist_ok=True)
                         await websocket.send(json.dumps({
@@ -1231,9 +1219,7 @@ async def main():
                         local_path = payload.get("local_path", "")
                         music_b64 = payload.get("music_b64")
                         
-                        projects_base = pathlib.Path.home() / ".taka-agent" / "projects"
-                        if not projects_base.exists():
-                            projects_base = AGENT_DIR / "projects"
+                        projects_base = AGENT_PROJECTS_DIR
                         project_dir = projects_base / "music" / project_name
                         if project_dir.exists():
                             import shutil
