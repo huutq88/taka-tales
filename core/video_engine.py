@@ -840,17 +840,22 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
 
     is_music = "projects/music" in str(project_dir)
     audio_path = audio_mp3 if audio_mp3.exists() else audio_wav
-    audio_clip = AudioFileClip(str(audio_path))
+    
     if not is_music:
-        audio_clip = audio_clip.subclip(0, audio_clip.duration - 0.1)
-        audio_clip = audio_clip.audio_fadein(0.05).audio_fadeout(0.05)
-        audio_clip = concatenate_audioclips(
-            [
-                AudioClip(lambda t: 0, duration=0.5),
-                audio_clip,
-                AudioClip(lambda t: 0, duration=0.5),
-            ]
-        )
+        from pydub import AudioSegment
+        audio_seg = AudioSegment.from_file(str(audio_path))
+        # Fade in 50ms, fade out 50ms
+        audio_seg = audio_seg.fade_in(50).fade_out(50)
+        # Create 0.5s silence segment matching same parameters
+        silence = AudioSegment.silent(duration=500, frame_rate=audio_seg.frame_rate)
+        # Concatenate silence + audio + silence
+        padded_audio = silence + audio_seg + silence
+        
+        temp_audio_path = project_dir / f"audio/processed_voiceover{idx}.wav"
+        padded_audio.export(str(temp_audio_path), format="wav")
+        audio_clip = AudioFileClip(str(temp_audio_path))
+    else:
+        audio_clip = AudioFileClip(str(audio_path))
 
     # Load project_config.json if it exists
     config_path = project_dir / "project_config.json"
