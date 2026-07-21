@@ -176,28 +176,6 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
 
     raise HTTPException(status_code=404, detail="Media file not found")
 
-@app.post("/v1/projects/{story_id}/{chapter_id}/upload")
-async def upload_chapter_file(
-    story_id: str, 
-    chapter_id: str, 
-    file_path: str = Form(...), 
-    file: UploadFile = File(...)
-):
-    chapter_dir = (PROJECTS_DIR / story_id / chapter_id).resolve()
-    target_file = (chapter_dir / file_path).resolve()
-    
-    try:
-        target_file.relative_to(chapter_dir)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
-        
-    target_file.parent.mkdir(parents=True, exist_ok=True)
-    content = await file.read()
-    with open(target_file, "wb") as f:
-        f.write(content)
-        
-    return {"status": "success", "file_path": file_path, "size": len(content)}
-
 # WebSocket endpoint for agent connection
 @app.websocket("/v1/system/agent/ws")
 async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default"):
