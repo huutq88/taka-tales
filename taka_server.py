@@ -1809,6 +1809,124 @@ async def dashboard():
                 color: var(--text);
                 text-shadow: 0 0 10px rgba(255,255,255,0.4);
             }
+
+            .step-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid var(--border);
+                font-size: 0.85rem;
+                cursor: not-allowed;
+                opacity: 0.3;
+                transition: all 0.2s ease;
+                user-select: none;
+            }
+
+            .step-btn.active {
+                opacity: 1;
+                cursor: pointer;
+                background: rgba(139, 92, 246, 0.15);
+                border-color: rgba(139, 92, 246, 0.4);
+            }
+
+            .step-btn.active:hover {
+                background: var(--primary);
+                border-color: var(--primary);
+                transform: scale(1.15);
+                box-shadow: 0 0 8px var(--primary-glow);
+                color: #fff;
+            }
+
+            .step-btn.running {
+                opacity: 1;
+                cursor: wait;
+                border-color: var(--warning);
+                background: rgba(245, 158, 11, 0.1);
+                animation: pulse-border 1.5s infinite ease-in-out;
+            }
+
+            @keyframes pulse-border {
+                0% { border-color: rgba(245, 158, 11, 0.3); box-shadow: 0 0 2px rgba(245, 158, 11, 0.2); }
+                50% { border-color: rgba(245, 158, 11, 1); box-shadow: 0 0 8px rgba(245, 158, 11, 0.5); }
+                100% { border-color: rgba(245, 158, 11, 0.3); box-shadow: 0 0 2px rgba(245, 158, 11, 0.2); }
+            }
+
+            /* Preview Modal Glassmorphism */
+            .preview-modal {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.6);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                z-index: 10000;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .preview-modal-content {
+                background: rgba(30, 30, 40, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 16px;
+                padding: 2rem;
+                max-width: 800px;
+                width: 90%;
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+                position: relative;
+                text-align: center;
+            }
+
+            .preview-modal-close {
+                position: absolute;
+                top: 1rem;
+                right: 1.2rem;
+                font-size: 1.5rem;
+                cursor: pointer;
+                color: var(--text-muted);
+                transition: color 0.2s ease;
+            }
+
+            .preview-modal-close:hover {
+                color: var(--danger);
+            }
+
+            .preview-media-container {
+                margin-top: 1.5rem;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .preview-media-container video {
+                max-width: 100%;
+                max-height: 60vh;
+                border-radius: 8px;
+                border: 1px solid var(--border);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            }
+
+            .preview-media-container img {
+                max-width: 100%;
+                max-height: 60vh;
+                border-radius: 8px;
+                border: 1px solid var(--border);
+                object-fit: contain;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            }
+
+            .preview-media-container audio {
+                width: 100%;
+                max-width: 500px;
+                margin-top: 1rem;
+            }
         </style>
     </head>
     <body>
@@ -2731,10 +2849,6 @@ async def dashboard():
                         card.className = "fragment-card";
                         if (i === current) card.classList.add("active");
                         
-                        let voiceDone = false;
-                        let imgDone = false;
-                        let clipDone = false;
-                        
                         let voiceActive = false;
                         let imgActive = false;
                         let clipActive = false;
@@ -2742,32 +2856,65 @@ async def dashboard():
                         let runStatus = status.status;
 
                         if (runStatus === "generating_audio") {
-                            voiceDone = i < current;
                             voiceActive = (i === current);
                         } else if (runStatus === "generating_images") {
-                            voiceDone = true;
-                            imgDone = i < current;
                             imgActive = (i === current);
                         } else if (runStatus === "compiling_clips") {
-                            voiceDone = true;
-                            imgDone = true;
-                            clipDone = i < current;
                             clipActive = (i === current);
-                        } else if (runStatus === "assembling_final_video" || runStatus === "completed") {
-                            voiceDone = true;
-                            imgDone = true;
-                            clipDone = true;
                         }
+
+                        let audioUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.mp3`;
+                        let imageUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.png`;
+                        let videoUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/videos/video${i}.mp4`;
 
                         card.innerHTML = `
                             <h4>Frag #${i}</h4>
                             <div class="step-indicator">
-                                <span class="step-dot ${voiceDone ? 'done' : (voiceActive ? 'active' : '')}" title="TTS (Voice)"></span>
-                                <span class="step-dot ${imgDone ? 'done' : (imgActive ? 'active' : '')}" title="Image Gen"></span>
-                                <span class="step-dot ${clipDone ? 'done' : (clipActive ? 'active' : '')}" title="Stitch Clip"></span>
+                                <span class="step-btn ${voiceActive ? 'running' : ''}" id="preview-audio-${i}" title="Play Audio Voiceover">🎵</span>
+                                <span class="step-btn ${imgActive ? 'running' : ''}" id="preview-image-${i}" title="Show Generated Image">🖼️</span>
+                                <span class="step-btn ${clipActive ? 'running' : ''}" id="preview-video-${i}" title="Play Video Clip">🎥</span>
                             </div>
                         `;
                         grid.appendChild(card);
+
+                        getMediaExists(audioUrl).then(exists => {
+                            let btn = document.getElementById(`preview-audio-${i}`);
+                            if (btn) {
+                                if (exists) {
+                                    btn.classList.add("active");
+                                    btn.onclick = () => playAudioPreview(audioUrl, i);
+                                } else if (!voiceActive) {
+                                    btn.classList.remove("active");
+                                    btn.classList.add("disabled");
+                                }
+                            }
+                        });
+
+                        getMediaExists(imageUrl).then(exists => {
+                            let btn = document.getElementById(`preview-image-${i}`);
+                            if (btn) {
+                                if (exists) {
+                                    btn.classList.add("active");
+                                    btn.onclick = () => showImagePreview(imageUrl, i);
+                                } else if (!imgActive) {
+                                    btn.classList.remove("active");
+                                    btn.classList.add("disabled");
+                                }
+                            }
+                        });
+
+                        getMediaExists(videoUrl).then(exists => {
+                            let btn = document.getElementById(`preview-video-${i}`);
+                            if (btn) {
+                                if (exists) {
+                                    btn.classList.add("active");
+                                    btn.onclick = () => playVideoPreview(videoUrl, i);
+                                } else if (!clipActive) {
+                                    btn.classList.remove("active");
+                                    btn.classList.add("disabled");
+                                }
+                            }
+                        });
                     }
 
                     // Video Output Preview
@@ -2904,7 +3051,85 @@ async def dashboard():
                     alert("Error: " + e);
                 }
             }
+
+            const LOCAL_MEDIA_ORIGIN = "http://127.0.0.1:8766";
+            let mediaExistsCache = {};
+
+            async function getMediaExists(url) {
+                if (mediaExistsCache[url] === true) {
+                    return true;
+                }
+                if (mediaExistsCache[url] === "checking") {
+                    return false;
+                }
+                mediaExistsCache[url] = "checking";
+                try {
+                    let res = await fetch(url, { method: "HEAD" });
+                    if (res.ok) {
+                        mediaExistsCache[url] = true;
+                        return true;
+                    } else {
+                        mediaExistsCache[url] = false;
+                        return false;
+                    }
+                } catch(e) {
+                    mediaExistsCache[url] = false;
+                    return false;
+                }
+            }
+
+            function showPreviewModal(title, contentHtml) {
+                document.getElementById("preview-modal-title").innerText = title;
+                document.getElementById("preview-modal-media").innerHTML = contentHtml;
+                document.getElementById("preview-modal").style.display = "flex";
+            }
+
+            function closePreviewModal(event) {
+                if (event) event.stopPropagation();
+                let container = document.getElementById("preview-modal-media");
+                let media = container.querySelector("video, audio");
+                if (media) {
+                    media.pause();
+                }
+                document.getElementById("preview-modal").style.display = "none";
+                container.innerHTML = "";
+            }
+
+            function playAudioPreview(url, fragIdx) {
+                showPreviewModal(`Frag #${fragIdx} - Audio Voiceover`, `
+                    <audio controls autoplay style="width:100%; max-width:500px; margin-top:1rem;">
+                        <source src="${url}" type="audio/mpeg">
+                        Your browser does not support the audio element.
+                    </audio>
+                `);
+            }
+
+            function showImagePreview(url, fragIdx) {
+                showPreviewModal(`Frag #${fragIdx} - Generated Image`, `
+                    <img src="${url}" alt="Frag #${fragIdx} Image" style="max-width:100%; max-height:60vh; border-radius:8px;">
+                `);
+            }
+
+            function playVideoPreview(url, fragIdx) {
+                showPreviewModal(`Frag #${fragIdx} - Video segment`, `
+                    <video controls autoplay style="max-width:100%; max-height:60vh; border-radius:8px;">
+                        <source src="${url}" type="video/mp4">
+                        Your browser does not support the video element.
+                    </video>
+                `);
+            }
         </script>
+
+        <!-- Preview Modal Overlay -->
+        <div id="preview-modal" class="preview-modal" onclick="closePreviewModal(event)">
+            <div class="preview-modal-content" onclick="event.stopPropagation()">
+                <span class="preview-modal-close" onclick="closePreviewModal(event)">&times;</span>
+                <h3 id="preview-modal-title" style="margin-top: 0; color: var(--primary-light);">Preview</h3>
+                <div class="preview-media-container" id="preview-modal-media">
+                    <!-- Dynamic preview element goes here -->
+                </div>
+            </div>
+        </div>
     </body>
     </html>
     """

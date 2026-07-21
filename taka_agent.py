@@ -809,8 +809,47 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
             print(f"[Agent] Failed to send error status: {send_err}")
 
 
+def start_local_media_server():
+    """Start a lightweight HTTP server on port 8766 serving AGENT_DIR / 'projects'."""
+    import http.server
+    import socketserver
+    import threading
+    
+    projects_dir = AGENT_DIR / "projects"
+    projects_dir.mkdir(parents=True, exist_ok=True)
+
+    class CORSHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(projects_dir), **kwargs)
+            
+        def end_headers(self):
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', '*')
+            super().end_headers()
+            
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self.end_headers()
+
+    port = 8766
+    
+    def run_server():
+        socketserver.TCPServer.allow_reuse_address = True
+        try:
+            with socketserver.TCPServer(("", port), CORSHTTPRequestHandler) as httpd:
+                print(f"[Agent] Local media server started on port {port}. Root: {projects_dir}")
+                httpd.serve_forever()
+        except Exception as e:
+            print(f"[Agent] Local media server port {port} error: {e} (might already be running).")
+
+    t = threading.Thread(target=run_server, daemon=True)
+    t.start()
+
+
 async def main():
     global active_websocket
+    start_local_media_server()
     print(f"[Agent] Starting Taka-Agent. Connecting to server {ws_url}...")
     
     while True:
