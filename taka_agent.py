@@ -75,7 +75,7 @@ async def check_environment() -> dict:
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.2.4"
+        "agent_version": "0.2.5"
     }
 
 async def setup_omnivoice():
@@ -834,6 +834,154 @@ async def main():
                             "type": "select_file_response",
                             "request_id": request_id,
                             "payload": {"path": selected_path}
+                        }))
+                    elif msg_type == "list_projects_request":
+                        request_id = message.get("request_id")
+                        story_folders = []
+                        local_files = {}
+                        
+                        projects_dir = AGENT_DIR / "projects"
+                        if projects_dir.exists():
+                            for item in projects_dir.iterdir():
+                                if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1":
+                                    story_folders.append(item.name)
+                                    for ch_dir in item.iterdir():
+                                        if ch_dir.is_dir() and not ch_dir.name.startswith("."):
+                                            ch_id = ch_dir.name
+                                            key = f"{item.name}/{ch_id}"
+                                            local_files[key] = {
+                                                "has_story": (ch_dir / "story.txt").exists(),
+                                                "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
+                                            }
+                        await websocket.send(json.dumps({
+                            "type": "list_projects_response",
+                            "request_id": request_id,
+                            "payload": {
+                                "story_folders": story_folders,
+                                "local_files": local_files
+                            }
+                        }))
+
+                    elif msg_type == "list_voices_request":
+                        request_id = message.get("request_id")
+                        voices_list = []
+                        voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
+                        if not voices_base.exists():
+                            voices_base = AGENT_DIR / "voices"
+                        if voices_base.exists():
+                            for item in voices_base.iterdir():
+                                if item.is_dir():
+                                    voice_id = item.name
+                                    has_audio = (item / "ref.wav").exists() or (item / "local_path.txt").exists()
+                                    has_text = (item / "ref_text.txt").exists()
+                                    voices_list.append({
+                                        "id": voice_id,
+                                        "name": voice_id,
+                                        "has_audio": has_audio,
+                                        "has_text": has_text
+                                    })
+                        await websocket.send(json.dumps({
+                            "type": "list_voices_response",
+                            "request_id": request_id,
+                            "payload": {"voices": voices_list}
+                        }))
+
+                    elif msg_type == "save_voice_request":
+                        request_id = message.get("request_id")
+                        voice_id = payload.get("voice_id")
+                        ref_text = payload.get("ref_text", "")
+                        local_path = payload.get("local_path", "")
+                        ref_audio_b64 = payload.get("ref_audio_b64")
+                        
+                        voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
+                        voices_base.mkdir(parents=True, exist_ok=True)
+                        voice_dir = voices_base / voice_id
+                        voice_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        if ref_audio_b64:
+                            import base64
+                            with open(voice_dir / "ref.wav", "wb") as buffer:
+                                buffer.write(base64.b64decode(ref_audio_b64))
+                            local_path_file = voice_dir / "local_path.txt"
+                            if local_path_file.exists():
+                                local_path_file.unlink()
+                        elif local_path.strip():
+                            with open(voice_dir / "local_path.txt", "w", encoding="utf-8") as f:
+                                f.write(local_path.strip())
+                            ref_audio = voice_dir / "ref.wav"
+                            if ref_audio.exists():
+                                ref_audio.unlink()
+                                
+                        if ref_text.strip():
+                            with open(voice_dir / "ref_text.txt", "w", encoding="utf-8") as f:
+                                f.write(ref_text.strip())
+                        else:
+                            ref_text_file = voice_dir / "ref_text.txt"
+                            if ref_text_file.exists():
+                                ref_text_file.unlink()
+                                
+                        await websocket.send(json.dumps({
+                            "type": "save_voice_response",
+                            "request_id": request_id,
+                            "payload": {"ok": True}
+                        }))
+
+                    elif msg_type == "create_project_request":
+                        request_id = message.get("request_id")
+                        story_id = payload.get("story_id")
+                        story_dir = AGENT_DIR / "projects" / story_id
+                        story_dir.mkdir(parents=True, exist_ok=True)
+                        await websocket.send(json.dumps({
+                            "type": "create_project_response",
+                            "request_id": request_id,
+                            "payload": {"ok": True}
+                        }))
+
+                    elif msg_type == "create_music_project_request":
+                        request_id = message.get("request_id")
+                        project_name = payload.get("project_name")
+                        local_path = payload.get("local_path", "")
+                        music_b64 = payload.get("music_b64")
+                        
+                        project_dir = AGENT_DIR / "projects" / "music" / project_name
+                        if project_dir.exists():
+                            import shutil
+                            shutil.rmtree(project_dir)
+                        project_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        if music_b64:
+                            import base64
+                            music_filename = payload.get("music_filename") or "music.mp3"
+                            ext = pathlib.Path(music_filename).suffix or ".mp3"
+                            audio_path = project_dir / f"music{ext}"
+                            with open(audio_path, "wb") as buffer:
+                                buffer.write(base64.b64decode(music_b64))
+                        elif local_path.strip():
+                            with open(project_dir / "local_music_path.txt", "w", encoding="utf-8") as f:
+                                f.write(local_path.strip())
+                                
+                        await websocket.send(json.dumps({
+                            "type": "create_music_project_response",
+                            "request_id": request_id,
+                            "payload": {"ok": True}
+                        }))
+
+                    elif msg_type == "delete_voice_request":
+                        request_id = message.get("request_id")
+                        voice_id = payload.get("voice_id")
+                        
+                        voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
+                        if not voices_base.exists():
+                            voices_base = AGENT_DIR / "voices"
+                            
+                        voice_dir = voices_base / voice_id
+                        if voice_dir.exists() and voice_dir.is_dir():
+                            import shutil
+                            shutil.rmtree(voice_dir)
+                        await websocket.send(json.dumps({
+                            "type": "delete_voice_response",
+                            "request_id": request_id,
+                            "payload": {"ok": True}
                         }))
                         
         except ConnectionClosed:

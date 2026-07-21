@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.2.4"
+AGENT_VERSION = "0.2.5"
 
 BASE_DIR = pathlib.Path(__file__).parent
 DATA_DIR_ENV = os.environ.get("TAKA_DATA_DIR")
@@ -31,6 +31,33 @@ active_agents: Set[WebSocket] = set()
 agent_status: Dict[str, dict] = {}
 project_jobs: Dict[str, dict] = {}  # project_name -> job state
 pending_file_selects: Dict[str, dict] = {}
+pending_agent_requests: Dict[str, dict] = {}
+
+async def tunnel_request_to_agent(message_type: str, payload: dict, timeout: float = 10.0) -> Optional[dict]:
+    if not active_agents:
+        return None
+    import uuid
+    request_id = str(uuid.uuid4())
+    event = asyncio.Event()
+    pending_agent_requests[request_id] = {"event": event, "result": None}
+    
+    agent_ws = list(active_agents)[0]
+    # Keep request_id at the root for easier parsing
+    request_message = {
+        "type": message_type,
+        "request_id": request_id,
+        "payload": payload
+    }
+    
+    try:
+        await agent_ws.send_text(json.dumps(request_message))
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+        return pending_agent_requests[request_id]["result"]
+    except Exception as e:
+        print(f"[Server] Tunnel request {message_type} failed: {e}")
+        return None
+    finally:
+        pending_agent_requests.pop(request_id, None)
 
 # Resolve Postgres connection URI (Prioritize env variable, then config fallback)
 import configparser
@@ -163,6 +190,11 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default")
                 if request_id in pending_file_selects:
                     pending_file_selects[request_id]["path"] = selected_path
                     pending_file_selects[request_id]["event"].set()
+            elif msg_type and msg_type.endswith("_response"):
+                request_id = data.get("request_id")
+                if request_id in pending_agent_requests:
+                    pending_agent_requests[request_id]["result"] = payload
+                    pending_agent_requests[request_id]["event"].set()
     except WebSocketDisconnect:
         print(f"[Server] Taka-Agent disconnected: {workspace_id}")
     finally:
@@ -525,77 +557,92 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
 
 @app.get("/v1/projects")
 async def list_projects():
-    if not PROJECTS_DIR.exists():
-        return []
-    
     stories = []
-    for item in PROJECTS_DIR.iterdir():
-        # Exclude hidden files, files, and the old test_project_1
-        if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1":
-            story_id = item.name
+    story_ids = []
+    agent_files = {}
+    
+    if active_agents:
+        res = await tunnel_request_to_agent("list_projects_request", {}, timeout=5.0)
+        if res:
+            story_ids = res.get("story_folders", [])
+            agent_files = res.get("local_files", {})
+            print(f"[Server] Fetched project folders from Agent: {story_ids}")
             
-            if story_id == "music":
-                chapters = []
-                for ch_dir in item.iterdir():
+    if not active_agents or not story_ids:
+        # Fallback to local server Projects directory
+        if PROJECTS_DIR.exists():
+            story_ids = [item.name for item in PROJECTS_DIR.iterdir() if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1"]
+            for s_id in story_ids:
+                s_dir = PROJECTS_DIR / s_id
+                for ch_dir in s_dir.iterdir():
                     if ch_dir.is_dir() and not ch_dir.name.startswith("."):
                         ch_id = ch_dir.name
-                        ch_title = ch_id.replace("-", " ").replace("_", " ").title()
-                        story_file = ch_dir / "story.txt"
-                        final_file = ch_dir / "final.mp4"
-                        
-                        job_key = f"music/{ch_id}"
-                        job_state = project_jobs.get(job_key, {"status": "idle"})
-                        
-                        if final_file.exists() and job_state.get("status") == "idle":
-                            job_state["status"] = "completed"
-                            
-                        chapters.append({
-                            "id": ch_id,
-                            "title": ch_title,
-                            "has_story": story_file.exists(),
-                            "has_video": final_file.exists(),
-                            "status": job_state.get("status", "idle"),
-                            "progress": job_state,
-                            "is_music": True
-                        })
-                stories.append({
-                    "story_id": "music",
-                    "chapters": chapters
-                })
-                continue
-                
-            db_chapters = fetch_story_chapters(story_id)
-            
+                        key = f"{s_id}/{ch_id}"
+                        agent_files[key] = {
+                            "has_story": (ch_dir / "story.txt").exists(),
+                            "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{s_id}_{ch_id}.mp4").exists()
+                        }
+
+    for story_id in story_ids:
+        if story_id == "music":
             chapters = []
-            for ch in db_chapters:
-                ch_id = ch["id"]
-                ch_title = ch["title"]
-                ch_dir = item / ch_id
+            music_keys = [k for k in agent_files.keys() if k.startswith("music/")]
+            for key in music_keys:
+                ch_id = key.split("/", 1)[1]
+                ch_title = ch_id.replace("-", " ").replace("_", " ").title()
                 
-                story_file = ch_dir / "story.txt"
-                final_file = ch_dir / "final.mp4"
-                
-                # Retrieve job state under "story_id/chapter_id"
-                job_key = f"{story_id}/{ch_id}"
+                job_key = f"music/{ch_id}"
                 job_state = project_jobs.get(job_key, {"status": "idle"})
                 
-                if final_file.exists() and job_state.get("status") == "idle":
+                has_story = agent_files[key].get("has_story", False)
+                has_video = agent_files[key].get("has_video", False)
+                if has_video and job_state.get("status") == "idle":
                     job_state["status"] = "completed"
-                
+                    
                 chapters.append({
                     "id": ch_id,
                     "title": ch_title,
-                    "has_story": story_file.exists(),
-                    "has_video": final_file.exists(),
+                    "has_story": has_story,
+                    "has_video": has_video,
                     "status": job_state.get("status", "idle"),
-                    "progress": job_state
+                    "progress": job_state,
+                    "is_music": True
                 })
-                
             stories.append({
-                "story_id": story_id,
-                "chapters": chapters
+                "story_id": "music",
+                "chapters": sorted(chapters, key=lambda x: x["id"])
             })
+            continue
             
+        db_chapters = fetch_story_chapters(story_id)
+        chapters = []
+        for ch in db_chapters:
+            ch_id = ch["id"]
+            ch_title = ch["title"]
+            key = f"{story_id}/{ch_id}"
+            
+            job_key = f"{story_id}/{ch_id}"
+            job_state = project_jobs.get(job_key, {"status": "idle"})
+            
+            has_story = agent_files.get(key, {}).get("has_story", False)
+            has_video = agent_files.get(key, {}).get("has_video", False)
+            
+            if has_video and job_state.get("status") == "idle":
+                job_state["status"] = "completed"
+                
+            chapters.append({
+                "id": ch_id,
+                "title": ch_title,
+                "has_story": has_story,
+                "has_video": has_video,
+                "status": job_state.get("status", "idle"),
+                "progress": job_state
+            })
+        stories.append({
+            "story_id": story_id,
+            "chapters": chapters
+        })
+        
     return stories
 
 @app.get("/v1/projects/{story_id}/{chapter_id}/status")
@@ -640,6 +687,14 @@ async def get_voice_defaults():
 @app.get("/v1/voices")
 async def list_voices():
     voices_list = []
+    if active_agents:
+        res = await tunnel_request_to_agent("list_voices_request", {}, timeout=5.0)
+        if res and "voices" in res:
+            voices_list = res["voices"]
+            print(f"[Server] Fetched voices list from Agent: {[v['id'] for v in voices_list]}")
+            return sorted(voices_list, key=lambda x: x["id"])
+            
+    # Fallback to local server folder
     if VOICES_DIR.exists():
         for item in VOICES_DIR.iterdir():
             if item.is_dir():
@@ -666,49 +721,61 @@ async def create_voice(
     clean_id = "".join(c for c in voice_id if c.isalnum() or c in ("-", "_")).strip()
     if not clean_id:
         raise HTTPException(status_code=400, detail="Invalid Voice ID format")
-    
+        
+    file_b64 = None
+    if file is not None and file.filename:
+        try:
+            import base64
+            file_content = await file.read()
+            file_b64 = base64.b64encode(file_content).decode("utf-8")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read upload file: {e}")
+            
+    # Send save command to Agent if connected
+    if active_agents:
+        tunnel_payload = {
+            "voice_id": clean_id,
+            "ref_text": ref_text,
+            "local_path": local_path,
+            "ref_audio_b64": file_b64
+        }
+        res = await tunnel_request_to_agent("save_voice_request", tunnel_payload, timeout=10.0)
+        print(f"[Server] Saved voice profile on Agent: {res}")
+        
+    # Fallback/also save on Server local disk
     voice_dir = VOICES_DIR / clean_id
     voice_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save audio file or local path
-    if file is not None and file.filename:
-        audio_path = voice_dir / "ref.wav"
-        try:
-            with open(audio_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            # Remove local_path.txt if exists
-            local_path_file = voice_dir / "local_path.txt"
-            if local_path_file.exists():
-                local_path_file.unlink()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save audio file: {str(e)}")
-    elif local_path.strip():
+    if file_b64:
+        import base64
+        with open(voice_dir / "ref.wav", "wb") as buffer:
+            buffer.write(base64.b64decode(file_b64))
         local_path_file = voice_dir / "local_path.txt"
-        try:
-            with open(local_path_file, "w", encoding="utf-8") as f:
-                f.write(local_path.strip())
-            # Remove ref.wav if exists
-            audio_path = voice_dir / "ref.wav"
-            if audio_path.exists():
-                audio_path.unlink()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save local path: {str(e)}")
-    else:
-        raise HTTPException(status_code=400, detail="Either a reference audio file upload or a local path is required.")
-        
-    # Save transcription text
-    text_path = voice_dir / "ref_text.txt"
-    try:
-        with open(text_path, "w", encoding="utf-8") as f:
+        if local_path_file.exists():
+            local_path_file.unlink()
+    elif local_path.strip():
+        with open(voice_dir / "local_path.txt", "w", encoding="utf-8") as f:
+            f.write(local_path.strip())
+        ref_audio = voice_dir / "ref.wav"
+        if ref_audio.exists():
+            ref_audio.unlink()
+            
+    if ref_text.strip():
+        with open(voice_dir / "ref_text.txt", "w", encoding="utf-8") as f:
             f.write(ref_text.strip())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save transcription text: {str(e)}")
-        
+    else:
+        ref_text_file = voice_dir / "ref_text.txt"
+        if ref_text_file.exists():
+            ref_text_file.unlink()
+            
     return {"ok": True, "voice_id": clean_id}
 
 @app.delete("/v1/voices/{voice_id}")
 async def delete_voice(voice_id: str):
     clean_id = "".join(c for c in voice_id if c.isalnum() or c in ("-", "_")).strip()
+    
+    if active_agents:
+        await tunnel_request_to_agent("delete_voice_request", {"voice_id": clean_id})
+        
     voice_dir = VOICES_DIR / clean_id
     if voice_dir.exists() and voice_dir.is_dir():
         try:
