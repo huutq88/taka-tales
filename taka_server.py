@@ -653,16 +653,11 @@ async def inspect_db():
             except Exception as e:
                 tables = [f"Error: {e}"]
             
-            # 2. Get some sample data from agent_documents and documents
+            # 2. Get columns
             for t in ["agent_documents", "documents"]:
                 try:
-                    cur.execute(f"SELECT * FROM {t} LIMIT 5;")
-                    colnames = [desc[0] for desc in cur.description]
-                    rows = cur.fetchall()
-                    samples[t] = {
-                        "columns": colnames,
-                        "rows": [[str(val) for val in r] for r in rows]
-                    }
+                    cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{t}';")
+                    samples[t] = [r[0] for r in cur.fetchall()]
                 except Exception as e:
                     samples[t] = f"Error: {e}"
             
