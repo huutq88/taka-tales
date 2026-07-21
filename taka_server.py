@@ -116,19 +116,36 @@ def fetch_story_chapters(story_id: str) -> list:
     ]
 
 # Serve output videos and media
-@app.get("/media/{story_id}/{chapter_id}/final.mp4")
-async def get_final_video(story_id: str, chapter_id: str):
-    video_path = PROJECTS_DIR / story_id / chapter_id / "final.mp4"
-    if not video_path.exists():
-        raise HTTPException(status_code=404, detail="Final video not found")
-    return FileResponse(str(video_path))
+@app.api_route("/media/{story_id}/{chapter_id}/{file_path:path}", methods=["GET", "HEAD"])
+async def get_project_media(story_id: str, chapter_id: str, file_path: str):
+    base_dir = (PROJECTS_DIR / story_id / chapter_id).resolve()
+    target_file = (base_dir / file_path).resolve()
+    
+    try:
+        target_file.relative_to(base_dir)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+        
+    if not target_file.exists():
+        # Fallback check for image extension variations (.jpg, .jpeg, .png, .webp)
+        p = pathlib.Path(file_path)
+        if p.parent.name == "images" or "images/" in file_path:
+            stem = p.stem
+            parent = base_dir / p.parent
+            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                alt_img = parent / f"{stem}{ext}"
+                if alt_img.exists():
+                    return FileResponse(str(alt_img))
 
-@app.get("/media/{story_id}/{chapter_id}/images/{image_name}")
-async def get_project_image(story_id: str, chapter_id: str, image_name: str):
-    image_path = PROJECTS_DIR / story_id / chapter_id / "images" / image_name
-    if not image_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
-    return FileResponse(str(image_path))
+        # Fallback check for final video name variations
+        if file_path == "final.mp4":
+            alt_target = base_dir / f"{story_id}_{chapter_id}.mp4"
+            if alt_target.exists():
+                return FileResponse(str(alt_target))
+
+        raise HTTPException(status_code=404, detail="Media file not found")
+        
+    return FileResponse(str(target_file))
 
 # WebSocket endpoint for agent connection
 @app.websocket("/v1/system/agent/ws")
@@ -3043,7 +3060,7 @@ async def dashboard():
                 }
             }
 
-            const LOCAL_MEDIA_ORIGIN = "http://127.0.0.1:8766";
+            const LOCAL_MEDIA_ORIGIN = "/media";
             let mediaExistsCache = {};
 
             async function getMediaExists(url) {
@@ -3059,10 +3076,19 @@ async def dashboard():
                     if (res.ok) {
                         mediaExistsCache[url] = true;
                         return true;
-                    } else {
-                        mediaExistsCache[url] = false;
-                        return false;
                     }
+                    if (url.startsWith("/media/")) {
+                        let localFallback = url.replace("/media", "http://127.0.0.1:8766");
+                        try {
+                            let resLocal = await fetch(localFallback, { method: "HEAD" });
+                            if (resLocal.ok) {
+                                mediaExistsCache[url] = true;
+                                return true;
+                            }
+                        } catch (errLocal) {}
+                    }
+                    mediaExistsCache[url] = false;
+                    return false;
                 } catch(e) {
                     mediaExistsCache[url] = false;
                     return false;
