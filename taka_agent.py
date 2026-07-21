@@ -850,10 +850,64 @@ def start_local_media_server():
                     
             return str(filepath)
 
+        def do_GET(self):
+            path = self.translate_path(self.path)
+            fpath = pathlib.Path(path)
+            if not fpath.exists() or not fpath.is_file():
+                self.send_error(404, "File not found")
+                return
+
+            file_size = fpath.stat().st_size
+            range_header = self.headers.get('Range')
+
+            if range_header and range_header.startswith('bytes='):
+                try:
+                    ranges = range_header.split('=')[1].split('-')
+                    start = int(ranges[0]) if ranges[0] else 0
+                    end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else file_size - 1
+                    if start >= file_size:
+                        self.send_error(416, "Requested Range Not Satisfiable")
+                        return
+                    end = min(end, file_size - 1)
+                    length = end - start + 1
+
+                    import mimetypes
+                    ctype, _ = mimetypes.guess_type(str(fpath))
+                    if not ctype and str(fpath).endswith('.mp4'):
+                        ctype = 'video/mp4'
+
+                    self.send_response(206)
+                    self.send_header('Content-Type', ctype or 'application/octet-stream')
+                    self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
+                    self.send_header('Content-Length', str(length))
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+                    self.send_header('Access-Control-Allow-Headers', '*')
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.end_headers()
+
+                    with open(fpath, 'rb') as f:
+                        f.seek(start)
+                        chunk_size = 64 * 1024
+                        bytes_to_send = length
+                        while bytes_to_send > 0:
+                            read_size = min(chunk_size, bytes_to_send)
+                            data = f.read(read_size)
+                            if not data:
+                                break
+                            self.wfile.write(data)
+                            bytes_to_send -= len(data)
+                    return
+                except Exception as ex:
+                    pass
+
+            return super().do_GET()
+
         def end_headers(self):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
             self.send_header('Access-Control-Allow-Headers', '*')
+            self.send_header('Accept-Ranges', 'bytes')
             super().end_headers()
 
         def do_OPTIONS(self):

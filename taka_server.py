@@ -2466,6 +2466,8 @@ async def dashboard():
             async function selectChapter(storyId, chapterId, title) {
                 currentStory = storyId;
                 currentChapter = chapterId;
+                let vc = document.getElementById("video-preview-container");
+                if (vc) vc.dataset.loadedUrl = "";
                 
                 document.querySelectorAll(".chapter-item").forEach(item => {
                     item.classList.remove("active");
@@ -2991,21 +2993,26 @@ async def dashboard():
                     let videoElement = document.getElementById("final-video");
                     if (status.status === "completed" || status.status === "idle") {
                         let videoUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/final.mp4`;
-                        let check = await getMediaExists(videoUrl);
-                        if (check) {
-                            videoContainer.style.display = "block";
-                            let downloadBtn = document.getElementById("download-video-btn");
-                            if (downloadBtn) {
-                                downloadBtn.href = videoUrl;
+                        if (videoContainer.dataset.loadedUrl !== videoUrl) {
+                            let check = await getMediaExists(videoUrl);
+                            if (check) {
+                                videoContainer.dataset.loadedUrl = videoUrl;
+                                videoContainer.style.display = "block";
+                                let downloadBtn = document.getElementById("download-video-btn");
+                                if (downloadBtn) {
+                                    downloadBtn.href = videoUrl;
+                                }
+                                if (videoElement.src !== videoUrl) {
+                                    videoElement.src = videoUrl;
+                                    videoElement.load();
+                                }
+                            } else {
+                                videoContainer.dataset.loadedUrl = "";
+                                videoContainer.style.display = "none";
                             }
-                            if (videoElement.src !== videoUrl) {
-                                videoElement.src = videoUrl;
-                                videoElement.load();
-                            }
-                        } else {
-                            videoContainer.style.display = "none";
                         }
                     } else {
+                        videoContainer.dataset.loadedUrl = "";
                         videoContainer.style.display = "none";
                     }
 
