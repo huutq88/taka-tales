@@ -493,8 +493,38 @@ foreach ($p in $searchPaths) {{
 }}
 
 if (-not $PYTHON_EXE) {{
-    Write-Host "ERROR: Python 3 was not found on your system." -ForegroundColor Red
-    Write-Host "Please install Python 3.10+ from https://www.python.org/downloads/ and make sure to check 'Add Python to PATH' during installation." -ForegroundColor Yellow
+    Write-Host "Python 3 was not found. Automatically installing Python 3.10..." -ForegroundColor Yellow
+    if (Get-Command winget -ErrorAction SilentlyContinue) {{
+        Write-Host "Installing Python via Windows Package Manager (winget)..." -ForegroundColor Yellow
+        winget install -e --id Python.Python.3.10 --scope user --accept-source-agreements --accept-package-agreements
+    }} else {{
+        Write-Host "Downloading official Python installer..." -ForegroundColor Yellow
+        $pyUrl = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe"
+        Invoke-WebRequest -Uri $pyUrl -OutFile "$env:TEMP\python_setup.exe"
+        Write-Host "Installing Python 3.10 in background..." -ForegroundColor Yellow
+        Start-Process "$env:TEMP\python_setup.exe" -ArgumentList "/passive", "InstallAllUsers=1", "PrependPath=1", "Include_pip=1" -Wait
+        Remove-Item "$env:TEMP\python_setup.exe" -Force -ErrorAction SilentlyContinue
+    }}
+
+    # Refresh PATH environment variable in current session
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+    # Re-search Python executable
+    foreach ($p in $searchPaths) {{
+        try {{
+            $ver = & $p --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and $ver -match "Python 3\.") {{
+                $PYTHON_EXE = $p
+                Write-Host "Found freshly installed Python: $ver" -ForegroundColor Green
+                break
+            }}
+        }} catch {{}}
+    }}
+}}
+
+if (-not $PYTHON_EXE) {{
+    Write-Host "ERROR: Could not complete automatic Python installation." -ForegroundColor Red
+    Write-Host "Please download Python 3.10 manually from https://www.python.org/downloads/ (check 'Add Python to PATH') and re-run." -ForegroundColor Yellow
     exit 1
 }}
 
