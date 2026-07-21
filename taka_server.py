@@ -2701,22 +2701,40 @@ async def dashboard():
                         card.className = "fragment-card";
                         if (i === current) card.classList.add("active");
                         
-                        let voiceDone = i < current;
-                        let imgDone = i < current;
-                        let clipDone = i < current;
+                        let voiceDone = false;
+                        let imgDone = false;
+                        let clipDone = false;
+                        
+                        let voiceActive = false;
+                        let imgActive = false;
+                        let clipActive = false;
 
-                        if (i === current && status.fragment_status) {
-                            let fStep = status.fragment_status.step;
-                            if (fStep === "image") voiceDone = true;
-                            if (fStep === "clip") { voiceDone = true; imgDone = true; }
+                        let runStatus = status.status;
+
+                        if (runStatus === "generating_audio") {
+                            voiceDone = i < current;
+                            voiceActive = (i === current);
+                        } else if (runStatus === "generating_images") {
+                            voiceDone = true;
+                            imgDone = i < current;
+                            imgActive = (i === current);
+                        } else if (runStatus === "compiling_clips") {
+                            voiceDone = true;
+                            imgDone = true;
+                            clipDone = i < current;
+                            clipActive = (i === current);
+                        } else if (runStatus === "assembling_final_video" || runStatus === "completed") {
+                            voiceDone = true;
+                            imgDone = true;
+                            clipDone = true;
                         }
 
                         card.innerHTML = `
                             <h4>Frag #${i}</h4>
                             <div class="step-indicator">
-                                <span class="step-dot ${voiceDone ? 'done' : (i === current && status.fragment_status && status.fragment_status.step === 'tts' ? 'active' : '')}" title="TTS (Voice)"></span>
-                                <span class="step-dot ${imgDone ? 'done' : (i === current && status.fragment_status && status.fragment_status.step === 'image' ? 'active' : '')}" title="Image Gen"></span>
-                                <span class="step-dot ${clipDone ? 'done' : (i === current && status.fragment_status && status.fragment_status.step === 'clip' ? 'active' : '')}" title="Stitch Clip"></span>
+                                <span class="step-dot ${voiceDone ? 'done' : (voiceActive ? 'active' : '')}" title="TTS (Voice)"></span>
+                                <span class="step-dot ${imgDone ? 'done' : (imgActive ? 'active' : '')}" title="Image Gen"></span>
+                                <span class="step-dot ${clipDone ? 'done' : (clipActive ? 'active' : '')}" title="Stitch Clip"></span>
                             </div>
                         `;
                         grid.appendChild(card);
