@@ -62,62 +62,15 @@ async def tunnel_request_to_agent(message_type: str, payload: dict, timeout: flo
     finally:
         pending_agent_requests.pop(request_id, None)
 
-# Resolve Postgres connection URI (Prioritize env variable, then config fallback)
+# Config Parser helper
 import configparser
 _CONFIG_PATH = BASE_DIR / "config.ini"
 config = configparser.ConfigParser()
 if _CONFIG_PATH.exists():
     config.read(_CONFIG_PATH, encoding="utf-8")
-POSTGRES_URI = os.getenv("POSTGRES_URI") or config.get("LORE_KEEPER", "POSTGRES_URI", fallback=None)
 
-def get_postgres_connection():
-    if not POSTGRES_URI:
-        return None
-    from urllib.parse import urlparse
-    import pg8000.dbapi
-    res = urlparse(POSTGRES_URI)
-    database = res.path[1:] if res.path else None
-    return pg8000.dbapi.connect(
-        user=res.username,
-        password=res.password,
-        host=res.hostname,
-        port=res.port or 5432,
-        database=database,
-        timeout=3
-    )
-
-def fetch_postgres_document(chapter_id: str) -> str:
-    """Queries Postgres directly, and falls back to Lore-Keeper API if Postgres is not connected/fails."""
-    conn = None
-    try:
-        conn = get_postgres_connection()
-        if conn:
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    "SELECT d.content FROM agent_documents ad "
-                    "JOIN documents d ON ad.document_id = d.id "
-                    "WHERE ad.id::text = %s",
-                    (chapter_id,)
-                )
-                row = cur.fetchone()
-                if row and row[0]:
-                    return row[0]
-            finally:
-                try:
-                    cur.close()
-                except Exception:
-                    pass
-    except Exception as e:
-        print(f"[Server] Direct Postgres query failed: {e}. Falling back to Lore-Keeper API...")
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    # Fallback to Lore-Keeper REST API
+def fetch_chapter_content(chapter_id: str) -> str:
+    """Fetches chapter content directly from the Lore-Keeper HTTP API."""
     try:
         url = f"{LORE_KEEPER_URL}/api/chapters/{chapter_id}"
         resp = requests.get(url, timeout=10)
@@ -128,7 +81,7 @@ def fetch_postgres_document(chapter_id: str) -> str:
         else:
             raise ValueError("Invalid response format from Lore-Keeper API")
     except Exception as api_err:
-        raise RuntimeError(f"Failed to fetch chapter content from both Postgres and Lore-Keeper API: {api_err}")
+        raise RuntimeError(f"Failed to fetch chapter content from Lore-Keeper API: {api_err}")
 
 def fetch_story_chapters(story_id: str) -> list:
     """Fetches story chapters directly from the Lore-Keeper HTTP API."""
@@ -578,146 +531,7 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
         
     return {"ok": True, "project_name": clean_name}
 
-@app.get("/v1/test-db")
-async def test_db_connection():
-    if not POSTGRES_URI:
-        return {"ok": False, "error": "POSTGRES_URI environment variable is not set or is empty."}
-    conn = None
-    try:
-        conn = get_postgres_connection()
-        if not conn:
-            return {"ok": False, "error": "Failed to initialize postgres connection."}
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT version();")
-            ver = cur.fetchone()
-        finally:
-            try:
-                cur.close()
-            except Exception:
-                pass
-        return {"ok": True, "postgres_version": ver[0]}
-    except Exception as e:
-        return {"ok": False, "error": f"Postgres connection failed: {str(e)}"}
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
-@app.get("/v1/inspect-db")
-async def inspect_db(q: str = "da-nguyet-ky"):
-    conn = None
-    try:
-        from fastapi.concurrency import run_in_threadpool
-        conn = await run_in_threadpool(get_postgres_connection)
-        if not conn:
-            return {"ok": False, "error": "No database connection"}
-        cur = conn.cursor()
-        tables = []
-        samples = {}
-        story_ids = []
-        search_results = []
-        try:
-            # 1. Get all table names
-            try:
-                cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
-                tables = [r[0] for r in cur.fetchall()]
-            except Exception as e:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                tables = [f"Error: {e}"]
-            
-            # 2. Get columns
-            for t in ["agent_documents", "documents"]:
-                try:
-                    cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{t}';")
-                    samples[t] = [r[0] for r in cur.fetchall()]
-                except Exception as e:
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-                    samples[t] = f"Error: {e}"
-            
-            # 3. Check distinct story_ids in agent_documents
-            try:
-                cur.execute("SELECT DISTINCT story_id::text FROM agent_documents;")
-                story_ids = [r[0] for r in cur.fetchall()]
-            except Exception as e:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                story_ids = [f"Error: {e}"]
-
-            # 4. Search for query string in documents
-            try:
-                cur.execute(
-                    "SELECT id, title, slug, filename, metadata::text FROM documents "
-                    "WHERE id = %s OR title ILIKE %s OR slug ILIKE %s OR filename ILIKE %s OR metadata::text ILIKE %s "
-                    "LIMIT 10;",
-                    (q, f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%")
-                )
-                search_results = [{"id": r[0], "title": r[1], "slug": r[2], "filename": r[3], "metadata": r[4][:200] if r[4] else None} for r in cur.fetchall()]
-            except Exception as e:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                search_results = [f"Error: {e}"]
-
-            # 5. List all knowledge bases
-            kb_list = []
-            try:
-                cur.execute("SELECT id, name, description FROM knowledge_bases LIMIT 20;")
-                kb_list = [{"id": r[0], "name": r[1], "description": r[2]} for r in cur.fetchall()]
-            except Exception as e:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                kb_list = [f"Error: {e}"]
-
-            # 6. List some files
-            file_list = []
-            try:
-                cur.execute("SELECT id, name, file_type, size FROM files LIMIT 20;")
-                file_list = [{"id": r[0], "name": r[1], "file_type": r[2], "size": r[3]} for r in cur.fetchall()]
-            except Exception as e:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                file_list = [f"Error: {e}"]
-        finally:
-            try:
-                cur.close()
-            except Exception:
-                pass
-                
-        return {
-            "ok": True, 
-            "tables": tables, 
-            "samples": samples, 
-            "story_ids": story_ids, 
-            "search_results": search_results,
-            "knowledge_bases": kb_list,
-            "files": file_list,
-            "env_keys": list(os.environ.keys()),
-            "lore_keeper_url": os.environ.get("LORE_KEEPER_URL", "https://lore-keeper.taka.zone")
-        }
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 @app.get("/v1/projects")
 async def list_projects():
@@ -970,9 +784,9 @@ async def get_project_fragments(story_id: str, chapter_id: str):
     else:
         try:
             from fastapi.concurrency import run_in_threadpool
-            content = await run_in_threadpool(fetch_postgres_document, chapter_id)
+            content = await run_in_threadpool(fetch_chapter_content, chapter_id)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch content from database: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to fetch content from Lore-Keeper: {str(e)}")
 
     if not content.strip():
         return []
@@ -1054,17 +868,17 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
     project_dir.mkdir(parents=True, exist_ok=True)
     story_file = project_dir / "story.txt"
 
-    # Fetch content from Postgres/Lore-Keeper (Only if not a music project)
+    # Fetch content from Lore-Keeper (Only if not a music project)
     if story_id != "music":
         try:
-            print(f"[Server] Fetching story content for chapter_id={chapter_id} from Postgres...")
+            print(f"[Server] Fetching story content for chapter_id={chapter_id} from Lore-Keeper...")
             from fastapi.concurrency import run_in_threadpool
-            content = await run_in_threadpool(fetch_postgres_document, chapter_id)
+            content = await run_in_threadpool(fetch_chapter_content, chapter_id)
             with open(story_file, "w", encoding="utf-8") as f:
                 f.write(content)
             print(f"[Server] Successfully wrote story content to {story_file}")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch content from Postgres: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to fetch content from Lore-Keeper: {str(e)}")
 
         if not story_file.exists():
             raise HTTPException(status_code=404, detail="story.txt not found. Failed to write chapter content.")
