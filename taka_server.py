@@ -89,7 +89,8 @@ def fetch_postgres_document(chapter_id: str) -> str:
     try:
         conn = get_postgres_connection()
         if conn:
-            with conn.cursor() as cur:
+            cur = conn.cursor()
+            try:
                 cur.execute(
                     "SELECT d.content FROM agent_documents ad "
                     "JOIN documents d ON ad.document_id = d.id "
@@ -99,6 +100,11 @@ def fetch_postgres_document(chapter_id: str) -> str:
                 row = cur.fetchone()
                 if row and row[0]:
                     return row[0]
+            finally:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
     except Exception as e:
         print(f"[Server] Direct Postgres query failed: {e}. Falling back to Lore-Keeper API...")
     finally:
@@ -127,7 +133,8 @@ def fetch_story_chapters(story_id: str) -> list:
     try:
         conn = get_postgres_connection()
         if conn:
-            with conn.cursor() as cur:
+            cur = conn.cursor()
+            try:
                 cur.execute(
                     "SELECT ad.id, d.title FROM agent_documents ad "
                     "JOIN documents d ON ad.document_id = d.id "
@@ -137,6 +144,11 @@ def fetch_story_chapters(story_id: str) -> list:
                 rows = cur.fetchall()
                 if rows:
                     return [{"id": str(r[0]), "title": r[1]} for r in rows]
+            finally:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
     except Exception as e:
         print(f"[Server] Direct Postgres chapters query failed: {e}. Falling back to Lore-Keeper API...")
     finally:
@@ -602,9 +614,15 @@ async def test_db_connection():
         conn = get_postgres_connection()
         if not conn:
             return {"ok": False, "error": "Failed to initialize postgres connection."}
-        with conn.cursor() as cur:
+        cur = conn.cursor()
+        try:
             cur.execute("SELECT version();")
             ver = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
         return {"ok": True, "postgres_version": ver[0]}
     except Exception as e:
         return {"ok": False, "error": f"Postgres connection failed: {str(e)}"}
