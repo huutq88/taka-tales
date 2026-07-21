@@ -145,20 +145,12 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
             if alt_video.exists() and alt_video.is_file():
                 found_local = alt_video
 
-    if found_local:
-        if request.method == "HEAD":
-            import mimetypes
-            ctype, _ = mimetypes.guess_type(str(found_local))
-            return Response(status_code=200, headers={"Content-Type": ctype or "application/octet-stream", "Content-Length": str(found_local.stat().st_size)})
-        return FileResponse(str(found_local))
-
     # If file not found on server disk, tunnel request to connected WebSocket agent
-    if active_agents:
+    if not found_local and active_agents:
         res = await tunnel_request_to_agent("get_media_file_request", {"story_id": story_id, "chapter_id": chapter_id, "file_path": file_path}, timeout=15.0)
         if res and isinstance(res, dict) and res.get("exists") and res.get("content_b64"):
             import base64
             content_bytes = base64.b64decode(res["content_b64"])
-            content_type = res.get("content_type", "application/octet-stream")
             
             # Save file to server disk cache for future fast serves
             try:
@@ -167,12 +159,58 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(save_path, "wb") as sf:
                     sf.write(content_bytes)
+                found_local = save_path
             except Exception as cache_err:
                 print(f"[Server] Failed to cache tunneled media file: {cache_err}")
 
-            if request.method == "HEAD":
-                return Response(status_code=200, headers={"Content-Type": content_type, "Content-Length": str(len(content_bytes))})
-            return Response(content=content_bytes, media_type=content_type)
+    if found_local and found_local.exists():
+        import mimetypes
+        ctype, _ = mimetypes.guess_type(str(found_local))
+        if not ctype:
+            if str(found_local).endswith(".mp4"):
+                ctype = "video/mp4"
+            elif str(found_local).endswith(".wav"):
+                ctype = "audio/wav"
+            elif str(found_local).endswith(".mp3"):
+                ctype = "audio/mpeg"
+            else:
+                ctype = "application/octet-stream"
+
+        file_size = found_local.stat().st_size
+
+        if request.method == "HEAD":
+            return Response(status_code=200, headers={
+                "Content-Type": ctype,
+                "Content-Length": str(file_size),
+                "Accept-Ranges": "bytes"
+            })
+
+        range_header = request.headers.get("range")
+        if range_header and range_header.startswith("bytes="):
+            try:
+                ranges = range_header.split("=")[1].split("-")
+                start = int(ranges[0]) if ranges[0] else 0
+                end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else file_size - 1
+                if start < file_size:
+                    end = min(end, file_size - 1)
+                    length = end - start + 1
+                    with open(found_local, "rb") as f:
+                        f.seek(start)
+                        chunk = f.read(length)
+                    return Response(
+                        content=chunk,
+                        status_code=206,
+                        headers={
+                            "Content-Type": ctype,
+                            "Content-Range": f"bytes {start}-{end}/{file_size}",
+                            "Content-Length": str(length),
+                            "Accept-Ranges": "bytes"
+                        }
+                    )
+            except Exception:
+                pass
+
+        return FileResponse(str(found_local), media_type=ctype, headers={"Accept-Ranges": "bytes"})
 
     raise HTTPException(status_code=404, detail="Media file not found")
 
@@ -2066,7 +2104,7 @@ async def dashboard():
                             </a>
                         </div>
                         <div style="display: flex; justify-content: center;">
-                            <video id="final-video" controls style="width: 100%; max-width: 320px; max-height: 450px; border-radius: 10px; border: 1px solid var(--border); background: #000; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+                            <video id="final-video" controls style="width: 100%; max-width: 280px; aspect-ratio: 9 / 16; border-radius: 10px; border: 1px solid var(--border); background: #000; box-shadow: 0 8px 24px rgba(0,0,0,0.5); object-fit: contain;">
                                 Your browser does not support the video tag.
                             </video>
                         </div>
@@ -3209,7 +3247,7 @@ async def dashboard():
 
             function playVideoPreview(url, fragIdx) {
                 showPreviewModal(`Frag #${fragIdx} - Video segment`, `
-                    <video src="${url}" controls autoplay style="max-width:100%; max-height:60vh; border-radius:8px; background:#000;">
+                    <video src="${url}" controls autoplay style="width: 100%; max-width: 280px; aspect-ratio: 9 / 16; max-height: 60vh; border-radius: 8px; background: #000; object-fit: contain;">
                         Your browser does not support the video element.
                     </video>
                 `);
