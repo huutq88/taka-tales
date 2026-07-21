@@ -592,7 +592,7 @@ def generate_procedural_waveform_frames(target_w: int, target_h: int) -> list:
     import math
     frames = []
     num_frames = 100
-    num_bars = 50
+    num_bars = 40
     bar_width = max(2, int(target_w / (num_bars * 1.5)))
     spacing = max(1, int(bar_width * 0.3))
     total_bars_width = num_bars * bar_width + (num_bars - 1) * spacing
@@ -603,71 +603,137 @@ def generate_procedural_waveform_frames(target_w: int, target_h: int) -> list:
         draw = ImageDraw.Draw(img)
         
         for i in range(num_bars):
-            # Center-heavy distribution (bell-like shape)
             dist_from_center = abs(i - (num_bars / 2)) / (num_bars / 2)
-            bell = math.exp(-4.0 * (dist_from_center ** 2)) # gaussian bell curve
+            bell = math.exp(-3.0 * (dist_from_center ** 2)) # gaussian bell curve
             
             # Oscillating waves
-            w1 = math.sin(f * 0.12 + i * 0.25)
-            w2 = math.cos(f * 0.08 - i * 0.15)
-            oscillation = 0.2 + 0.8 * abs(0.6 * w1 + 0.4 * w2)
+            w1 = math.sin(f * 0.15 + i * 0.2)
+            w2 = math.cos(f * 0.1 - i * 0.1)
+            oscillation = 0.15 + 0.85 * abs(0.6 * w1 + 0.4 * w2)
             
-            height_factor = bell * oscillation * 0.85
-            bar_h = max(3, int(target_h * height_factor))
+            height_factor = bell * oscillation * 0.8
+            bar_h = max(2, int(target_h * height_factor))
             
             x0 = start_x + i * (bar_width + spacing)
-            y0 = target_h - bar_h
+            y0 = (target_h - bar_h) // 2
             x1 = x0 + bar_width
-            y1 = target_h
+            y1 = y0 + bar_h
             
-            # Cyan-to-magenta-to-yellow neon color mapping
-            t_color = i / (num_bars - 1)
-            if t_color < 0.5:
-                factor = t_color * 2.0
-                r = int(255 * factor)
-                g = int(230 * (1.0 - factor))
-                b = int(255 * (1.0 - factor) + 180 * factor)
-            else:
-                factor = (t_color - 0.5) * 2.0
-                r = int(255 * (1.0 - factor) + 100 * factor)
-                g = int(50 * factor)
-                b = int(180 * (1.0 - factor) + 255 * factor)
-                
-            draw.rectangle([x0, y0, x1, y1], fill=(r, g, b, 230))
+            # Clean semi-transparent white bars as requested
+            draw.rectangle([x0, y0, x1, y1], fill=(255, 255, 255, 220))
             
         frames.append(img)
     return frames
 
-def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False) -> ImageClip:
+def generate_audio_waveform_frames(audio_path: str, target_w: int, target_h: int, fps: int = 12, num_frames: int = 100) -> list:
+    from PIL import Image as PILImage, ImageDraw
+    import numpy as np
+    from pydub import AudioSegment
+    import math
+    
+    try:
+        audio = AudioSegment.from_file(audio_path)
+        audio = audio.set_channels(1)
+        duration_ms = len(audio)
+        frame_duration_ms = duration_ms / num_frames
+        
+        num_bars = 40
+        bar_width = max(2, int(target_w / (num_bars * 1.5)))
+        spacing = max(1, int(bar_width * 0.3))
+        total_bars_width = num_bars * bar_width + (num_bars - 1) * spacing
+        start_x = (target_w - total_bars_width) // 2
+        
+        samples = np.array(audio.get_array_of_samples(), dtype=float)
+        sample_rate = audio.frame_rate
+        total_samples = len(samples)
+        
+        frames = []
+        for f in range(num_frames):
+            img = PILImage.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            
+            frame_start_ms = f * frame_duration_ms
+            frame_end_ms = (f + 1) * frame_duration_ms
+            
+            start_idx = int((frame_start_ms / 1000.0) * sample_rate)
+            end_idx = int((frame_end_ms / 1000.0) * sample_rate)
+            
+            start_idx = max(0, min(total_samples - 1, start_idx))
+            end_idx = max(start_idx + 1, min(total_samples, end_idx))
+            
+            frame_samples = samples[start_idx:end_idx]
+            if len(frame_samples) == 0:
+                frame_samples = np.array([0.0])
+                
+            frame_rms = np.sqrt(np.mean(frame_samples ** 2)) if len(frame_samples) > 0 else 0.0
+            max_possible_val = 24000.0 # visual ceiling for dynamic range
+            normalized_rms = min(1.0, frame_rms / max_possible_val)
+            
+            for i in range(num_bars):
+                chunk_len = len(frame_samples) // num_bars
+                if chunk_len > 4:
+                    chunk = frame_samples[i * chunk_len : (i + 1) * chunk_len]
+                    bar_rms = np.sqrt(np.mean(chunk ** 2))
+                    bar_norm = min(1.0, bar_rms / max_possible_val)
+                else:
+                    bar_norm = normalized_rms
+                
+                bar_norm = 0.03 + 0.97 * bar_norm
+                dist_from_center = abs(i - (num_bars / 2)) / (num_bars / 2)
+                bell = math.exp(-3.0 * (dist_from_center ** 2))
+                
+                height_factor = bar_norm * bell * 0.9
+                bar_h = max(2, int(target_h * height_factor))
+                
+                x0 = start_x + i * (bar_width + spacing)
+                y0 = (target_h - bar_h) // 2
+                x1 = x0 + bar_width
+                y1 = y0 + bar_h
+                
+                draw.rectangle([x0, y0, x1, y1], fill=(255, 255, 255, 220))
+                
+            frames.append(img)
+        print(f"[Video Engine] Generated {len(frames)} audio waveform frames successfully (white)")
+        return frames
+    except Exception as e:
+        print(f"[Video Engine] Error generating real audio waveform: {e}. Falling back...")
+        return generate_procedural_waveform_frames(target_w, target_h)
+
+def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, audio_path: pathlib.Path = None) -> ImageClip:
     duration = clip.duration
     w, h = clip.size
     import numpy as np
     from PIL import Image as PILImage
 
-    # Load waveform.gif if is_music is enabled
+    # Load waveform.gif or generate dynamic audio waveform frames
     waveform_frames = []
-    if is_music:
-        gif_path = pathlib.Path(__file__).parent.parent / "waveform.gif"
-        if gif_path.exists():
-            try:
-                gif = PILImage.open(str(gif_path))
-                bbox = (293, 384, 1660, 704) # Pre-measured bbox
-                target_w = int(0.70 * w)
-                target_h = int(320 * (target_w / 1367))
-                
-                for frame_idx in range(getattr(gif, "n_frames", 1)):
-                    gif.seek(frame_idx)
-                    frame_img = gif.convert("RGBA")
-                    cropped = frame_img.crop(bbox)
-                    resized = cropped.resize((target_w, target_h), PILImage.Resampling.LANCZOS)
-                    waveform_frames.append(resized)
-            except Exception as e:
-                print(f"[Video Engine] Error loading waveform.gif in Ken Burns: {e}")
-        else:
-            # Fallback to dynamic neon waveform frames
+    if is_music or True:
+        if audio_path and audio_path.exists():
             target_w = int(0.70 * w)
             target_h = int(180 * (target_w / 1367))
-            waveform_frames = generate_procedural_waveform_frames(target_w, target_h)
+            waveform_frames = generate_audio_waveform_frames(str(audio_path), target_w, target_h, fps=FPS, num_frames=int(duration * FPS))
+        else:
+            gif_path = pathlib.Path(__file__).parent.parent / "waveform.gif"
+            if gif_path.exists():
+                try:
+                    gif = PILImage.open(str(gif_path))
+                    bbox = (293, 384, 1660, 704) # Pre-measured bbox
+                    target_w = int(0.70 * w)
+                    target_h = int(320 * (target_w / 1367))
+                    
+                    for frame_idx in range(getattr(gif, "n_frames", 1)):
+                        gif.seek(frame_idx)
+                        frame_img = gif.convert("RGBA")
+                        cropped = frame_img.crop(bbox)
+                        resized = cropped.resize((target_w, target_h), PILImage.Resampling.LANCZOS)
+                        waveform_frames.append(resized)
+                except Exception as e:
+                    print(f"[Video Engine] Error loading waveform.gif in Ken Burns: {e}")
+            else:
+                # Fallback to dynamic white waveform frames
+                target_w = int(0.70 * w)
+                target_h = int(180 * (target_w / 1367))
+                waveform_frames = generate_procedural_waveform_frames(target_w, target_h)
 
     # Initialize falling particles if EFFECT_TYPE is enabled
     particles = []
@@ -753,7 +819,7 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False) ->
             
         # Draw waveform
         if waveform_frames:
-            wave_idx = int(t * 20) % len(waveform_frames)
+            wave_idx = min(len(waveform_frames) - 1, int(t * FPS))
             wave_img = waveform_frames[wave_idx]
             x_pos = (w - wave_img.width) // 2
             y_pos = (h * 6.6) // 8
@@ -773,8 +839,18 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
     audio_mp3 = project_dir / f"audio/voiceover{idx}.mp3"
 
     is_music = "projects/music" in str(project_dir)
-
-    audio_clip = AudioFileClip(str(audio_mp3 if audio_mp3.exists() else audio_wav))
+    audio_path = audio_mp3 if audio_mp3.exists() else audio_wav
+    audio_clip = AudioFileClip(str(audio_path))
+    if not is_music:
+        audio_clip = audio_clip.subclip(0, audio_clip.duration - 0.1)
+        audio_clip = audio_clip.audio_fadein(0.05).audio_fadeout(0.05)
+        audio_clip = concatenate_audioclips(
+            [
+                AudioClip(lambda t: 0, duration=0.5),
+                audio_clip,
+                AudioClip(lambda t: 0, duration=0.5),
+            ]
+        )
 
     # Load project_config.json if it exists
     config_path = project_dir / "project_config.json"
@@ -797,8 +873,8 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
         img_resized.save(str(img_path))
 
     image_clip = ImageClip(str(img_path)).set_duration(audio_clip.duration)
-    # Always apply waveform (is_music=True) to display bouncing audio equalizer
-    image_clip = apply_ken_burns_effect(image_clip, idx, is_music=True)
+    # Always apply waveform (is_music=True) with correct audio_path to display actual audio levels
+    image_clip = apply_ken_burns_effect(image_clip, idx, is_music=True, audio_path=audio_path)
 
     # Pick the best available font with Vietnamese support
     font_path = "Arial"
@@ -974,18 +1050,20 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
         return frames
 
     txt_clips = []
-    current_time = 0.0
+    start_offset = 0.0 if is_music else 0.5
+    active_speech_duration = total_duration if is_music else (total_duration - 1.0)
+    current_time = start_offset
     waveform_frames = load_waveform_frames(IMAGE_WIDTH, IMAGE_HEIGHT)
 
     for i, sub in enumerate(subtitles):
         if total_words > 0:
-            sub_duration = (sub_word_counts[i] / total_words) * total_duration
+            sub_duration = (sub_word_counts[i] / total_words) * active_speech_duration
         else:
-            sub_duration = total_duration
+            sub_duration = active_speech_duration
 
         sub_duration = max(0.5, sub_duration)
         if i == len(subtitles) - 1:
-            sub_duration = max(sub_duration, total_duration - current_time)
+            sub_duration = max(sub_duration, (start_offset + active_speech_duration) - current_time)
 
         words_list = sub.split()
         num_words = len(words_list)
