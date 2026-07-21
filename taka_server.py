@@ -117,7 +117,7 @@ def fetch_story_chapters(story_id: str) -> list:
 
 # Serve output videos and media
 @app.api_route("/media/{story_id}/{chapter_id}/{file_path:path}", methods=["GET", "HEAD"])
-async def get_project_media(story_id: str, chapter_id: str, file_path: str):
+async def get_project_media(request: Request, story_id: str, chapter_id: str, file_path: str):
     base_dir = (PROJECTS_DIR / story_id / chapter_id).resolve()
     target_file = (base_dir / file_path).resolve()
     
@@ -126,26 +126,55 @@ async def get_project_media(story_id: str, chapter_id: str, file_path: str):
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
         
-    if not target_file.exists():
-        # Fallback check for image extension variations (.jpg, .jpeg, .png, .webp)
+    found_local = None
+    if target_file.exists() and target_file.is_file():
+        found_local = target_file
+    else:
+        # Check local disk fallbacks for image extensions & final video
         p = pathlib.Path(file_path)
         if p.parent.name == "images" or "images/" in file_path:
             stem = p.stem
             parent = base_dir / p.parent
             for ext in [".jpg", ".jpeg", ".png", ".webp"]:
                 alt_img = parent / f"{stem}{ext}"
-                if alt_img.exists():
-                    return FileResponse(str(alt_img))
+                if alt_img.exists() and alt_img.is_file():
+                    found_local = alt_img
+                    break
+        if not found_local and file_path == "final.mp4":
+            alt_video = base_dir / f"{story_id}_{chapter_id}.mp4"
+            if alt_video.exists() and alt_video.is_file():
+                found_local = alt_video
 
-        # Fallback check for final video name variations
-        if file_path == "final.mp4":
-            alt_target = base_dir / f"{story_id}_{chapter_id}.mp4"
-            if alt_target.exists():
-                return FileResponse(str(alt_target))
+    if found_local:
+        if request.method == "HEAD":
+            import mimetypes
+            ctype, _ = mimetypes.guess_type(str(found_local))
+            return Response(status_code=200, headers={"Content-Type": ctype or "application/octet-stream", "Content-Length": str(found_local.stat().st_size)})
+        return FileResponse(str(found_local))
 
-        raise HTTPException(status_code=404, detail="Media file not found")
-        
-    return FileResponse(str(target_file))
+    # If file not found on server disk, tunnel request to connected WebSocket agent
+    if active_agents:
+        res = await tunnel_request_to_agent("get_media_file_request", {"story_id": story_id, "chapter_id": chapter_id, "file_path": file_path}, timeout=15.0)
+        if res and isinstance(res, dict) and res.get("exists") and res.get("content_b64"):
+            import base64
+            content_bytes = base64.b64decode(res["content_b64"])
+            content_type = res.get("content_type", "application/octet-stream")
+            
+            # Save file to server disk cache for future fast serves
+            try:
+                save_name = res.get("filename") or pathlib.Path(file_path).name
+                save_path = (base_dir / file_path).parent / save_name
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(save_path, "wb") as sf:
+                    sf.write(content_bytes)
+            except Exception as cache_err:
+                print(f"[Server] Failed to cache tunneled media file: {cache_err}")
+
+            if request.method == "HEAD":
+                return Response(status_code=200, headers={"Content-Type": content_type, "Content-Length": str(len(content_bytes))})
+            return Response(content=content_bytes, media_type=content_type)
+
+    raise HTTPException(status_code=404, detail="Media file not found")
 
 # WebSocket endpoint for agent connection
 @app.websocket("/v1/system/agent/ws")

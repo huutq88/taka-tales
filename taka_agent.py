@@ -995,6 +995,76 @@ async def main():
                             "payload": status_res
                         }))
 
+                    elif msg_type == "get_media_file_request":
+                        request_id = message.get("request_id")
+                        payload = message.get("payload", {})
+                        story_id = payload.get("story_id", "")
+                        chapter_id = payload.get("chapter_id", "")
+                        file_path = payload.get("file_path", "")
+                        
+                        projects_dir = pathlib.Path.home() / ".taka-agent" / "projects"
+                        if not projects_dir.exists():
+                            projects_dir = AGENT_DIR / "projects"
+                            
+                        base_dir = (projects_dir / story_id / chapter_id).resolve()
+                        target_file = (base_dir / file_path).resolve()
+                        
+                        found_file = None
+                        if target_file.exists() and target_file.is_file():
+                            found_file = target_file
+                        else:
+                            p = pathlib.Path(file_path)
+                            if p.parent.name == "images" or "images/" in file_path:
+                                stem = p.stem
+                                parent = base_dir / p.parent
+                                for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                                    alt_img = parent / f"{stem}{ext}"
+                                    if alt_img.exists() and alt_img.is_file():
+                                        found_file = alt_img
+                                        break
+                            if not found_file and file_path == "final.mp4":
+                                alt_video = base_dir / f"{story_id}_{chapter_id}.mp4"
+                                if alt_video.exists() and alt_video.is_file():
+                                    found_file = alt_video
+
+                        if found_file:
+                            import base64
+                            import mimetypes
+                            content_type, _ = mimetypes.guess_type(str(found_file))
+                            if not content_type:
+                                if str(found_file).endswith(".mp4"):
+                                    content_type = "video/mp4"
+                                elif str(found_file).endswith(".jpg") or str(found_file).endswith(".jpeg"):
+                                    content_type = "image/jpeg"
+                                elif str(found_file).endswith(".png"):
+                                    content_type = "image/png"
+                                elif str(found_file).endswith(".wav"):
+                                    content_type = "audio/wav"
+                                elif str(found_file).endswith(".mp3"):
+                                    content_type = "audio/mpeg"
+                                else:
+                                    content_type = "application/octet-stream"
+
+                            try:
+                                with open(found_file, "rb") as f:
+                                    data_b64 = base64.b64encode(f.read()).decode("utf-8")
+                                res_payload = {
+                                    "exists": True,
+                                    "content_b64": data_b64,
+                                    "content_type": content_type,
+                                    "filename": found_file.name
+                                }
+                            except Exception as read_err:
+                                res_payload = {"exists": False, "error": str(read_err)}
+                        else:
+                            res_payload = {"exists": False}
+
+                        await websocket.send(json.dumps({
+                            "type": "get_media_file_response",
+                            "request_id": request_id,
+                            "payload": res_payload
+                        }))
+
                     elif msg_type == "list_voices_request":
                         request_id = message.get("request_id")
                         voices_list = []
