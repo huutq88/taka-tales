@@ -961,6 +961,40 @@ async def main():
                             }
                         }))
 
+                    elif msg_type == "get_chapter_status_request":
+                        request_id = message.get("request_id")
+                        payload = message.get("payload", {})
+                        story_id = payload.get("story_id", "")
+                        chapter_id = payload.get("chapter_id", "")
+                        
+                        projects_dir = pathlib.Path.home() / ".taka-agent" / "projects"
+                        if not projects_dir.exists():
+                            projects_dir = AGENT_DIR / "projects"
+                            
+                        ch_dir = projects_dir / story_id / chapter_id
+                        has_video = (ch_dir / "final.mp4").exists() or (ch_dir / f"{story_id}_{chapter_id}.mp4").exists()
+                        
+                        max_frags = 0
+                        for sub_dir in ["images", "audio", "videos", "text"]:
+                            d = ch_dir / sub_dir
+                            if d.exists() and d.is_dir():
+                                count = len([f for f in d.iterdir() if not f.name.startswith(".")])
+                                if count > max_frags:
+                                    max_frags = count
+                                    
+                        status_res = {
+                            "status": "completed" if has_video else "idle",
+                            "total_fragments": max_frags,
+                            "current_fragment": max_frags if has_video else 0,
+                            "has_video": has_video
+                        }
+                        
+                        await websocket.send(json.dumps({
+                            "type": "get_chapter_status_response",
+                            "request_id": request_id,
+                            "payload": status_res
+                        }))
+
                     elif msg_type == "list_voices_request":
                         request_id = message.get("request_id")
                         voices_list = []

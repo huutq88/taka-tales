@@ -659,8 +659,17 @@ async def list_projects():
 async def get_project_status(story_id: str, chapter_id: str):
     job_key = f"{story_id}/{chapter_id}"
     job_state = project_jobs.get(job_key, {"status": "idle"}).copy()
-    chapter_dir = PROJECTS_DIR / story_id / chapter_id
     
+    # If active agent connected via WebSocket, query real-time chapter status & files from agent
+    if active_agents and job_state.get("status") in ("idle", "completed", None):
+        res = await tunnel_request_to_agent("get_chapter_status_request", {"story_id": story_id, "chapter_id": chapter_id}, timeout=3.0)
+        if res and isinstance(res, dict):
+            for k, v in res.items():
+                if v is not None:
+                    job_state[k] = v
+            return job_state
+
+    chapter_dir = PROJECTS_DIR / story_id / chapter_id
     final_file = chapter_dir / "final.mp4"
     if not final_file.exists():
         final_file = chapter_dir / f"{story_id}_{chapter_id}.mp4"
