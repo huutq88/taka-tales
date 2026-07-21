@@ -692,7 +692,8 @@ async def list_projects():
             })
             continue
             
-        db_chapters = fetch_story_chapters(story_id)
+        from fastapi.concurrency import run_in_threadpool
+        db_chapters = await run_in_threadpool(fetch_story_chapters, story_id)
         chapters = []
         for ch in db_chapters:
             ch_id = ch["id"]
@@ -882,7 +883,8 @@ async def get_project_fragments(story_id: str, chapter_id: str):
                         break
     else:
         try:
-            content = fetch_postgres_document(chapter_id)
+            from fastapi.concurrency import run_in_threadpool
+            content = await run_in_threadpool(fetch_postgres_document, chapter_id)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to fetch content from database: {str(e)}")
 
@@ -970,7 +972,8 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
     if story_id != "music":
         try:
             print(f"[Server] Fetching story content for chapter_id={chapter_id} from Postgres...")
-            content = fetch_postgres_document(chapter_id)
+            from fastapi.concurrency import run_in_threadpool
+            content = await run_in_threadpool(fetch_postgres_document, chapter_id)
             with open(story_file, "w", encoding="utf-8") as f:
                 f.write(content)
             print(f"[Server] Successfully wrote story content to {story_file}")
