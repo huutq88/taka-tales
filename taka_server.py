@@ -12,6 +12,9 @@ import shutil
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
 AGENT_VERSION = "0.3.0"
 
+LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "https://lore-keeper.taka.zone"
+LORE_KEEPER_URL = LORE_KEEPER_URL.rstrip("/")
+
 BASE_DIR = pathlib.Path(__file__).parent
 DATA_DIR_ENV = os.environ.get("TAKA_DATA_DIR")
 if DATA_DIR_ENV:
@@ -116,7 +119,7 @@ def fetch_postgres_document(chapter_id: str) -> str:
 
     # Fallback to Lore-Keeper REST API
     try:
-        url = f"https://lore-keeper.taka.zone/api/chapters/{chapter_id}"
+        url = f"{LORE_KEEPER_URL}/api/chapters/{chapter_id}"
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -160,7 +163,7 @@ def fetch_story_chapters(story_id: str) -> list:
 
     # Fallback to Lore-Keeper REST API
     try:
-        url = f"https://lore-keeper.taka.zone/api/stories/{story_id}/chapters"
+        url = f"{LORE_KEEPER_URL}/api/stories/{story_id}/chapters"
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
