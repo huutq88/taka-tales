@@ -75,7 +75,7 @@ async def check_environment() -> dict:
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.2.7"
+        "agent_version": "0.2.8"
     }
 
 async def setup_omnivoice():
@@ -138,6 +138,12 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         "--language", language,
         "--output", str(out)
     ]
+    try:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        device = "cpu"
+    cmd += ["--device", device]
     
     # Add voice cloning or voice design flags if voice_config matches
     if voice_config:
@@ -267,7 +273,7 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         finally:
             video_engine.VOICE = orig_voice
 
-async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_subtitles: bool = True, story_text: str = None):
+async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_subtitles: bool = True, story_text: str = None, force_rerun: bool = False):
     """Executes the full Taka-Tales pipeline and reports progress in real time."""
     try:
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
@@ -292,6 +298,12 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             json.dump(config_data, f, ensure_ascii=False, indent=2)
         
         # 1. Setup folders and clean old folders completely to ensure no leftover files
+        if force_rerun:
+            for folder in ("audio", "images"):
+                fpath = project_dir / folder
+                if fpath.exists():
+                    shutil.rmtree(fpath, ignore_errors=True)
+
         for sub in ("text", "audio", "images", "videos"):
             (project_dir / sub).mkdir(parents=True, exist_ok=True)
             
@@ -300,9 +312,6 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             if fpath.exists():
                 shutil.rmtree(fpath)
             fpath.mkdir(parents=True, exist_ok=True)
-
-        for folder in ("audio", "images"):
-            (project_dir / folder).mkdir(parents=True, exist_ok=True)
 
         final_video = project_dir / f"{project_name}.mp4"
         server_final = project_dir / "final.mp4"
@@ -472,7 +481,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             print(f"[Agent] Failed to send error status: {send_err}")
 
 
-async def run_music_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = False, use_subtitles: bool = False, use_whisper: bool = False, music_b64: str = None, music_filename: str = None, music_local_path: str = None):
+async def run_music_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = False, use_subtitles: bool = False, use_whisper: bool = False, music_b64: str = None, music_filename: str = None, music_local_path: str = None, force_rerun: bool = False):
     """Executes the music-to-video pipeline by transcribing audio and generating images/subtitles."""
     try:
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
@@ -501,6 +510,12 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
             json.dump(config_data, f, ensure_ascii=False, indent=2)
         
         # 1. Setup folders and clean old folders completely
+        if force_rerun:
+            for folder in ("audio", "images"):
+                fpath = project_dir / folder
+                if fpath.exists():
+                    shutil.rmtree(fpath, ignore_errors=True)
+
         for sub in ("text", "audio", "images", "videos"):
             (project_dir / sub).mkdir(parents=True, exist_ok=True)
             
@@ -803,16 +818,17 @@ async def main():
                         use_watermark = payload.get("use_watermark", True)
                         use_subtitles = payload.get("use_subtitles", True)
                         use_whisper = payload.get("use_whisper", False)
+                        force_rerun = payload.get("force_rerun", False)
                         
                         # Process project asynchronously in the background
                         if pipeline_type == "music":
                             music_b64 = payload.get("music_b64")
                             music_filename = payload.get("music_filename")
                             music_local_path = payload.get("music_local_path")
-                            asyncio.create_task(run_music_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, use_whisper, music_b64, music_filename, music_local_path))
+                            asyncio.create_task(run_music_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, use_whisper, music_b64, music_filename, music_local_path, force_rerun))
                         else:
                             story_text = payload.get("story_text")
-                            asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text))
+                            asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text, force_rerun))
                     elif msg_type == "select_file_request":
                         request_id = message.get("request_id")
                         prompt = payload.get("prompt", "Select a file")

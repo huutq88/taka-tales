@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.2.7"
+AGENT_VERSION = "0.2.8"
 
 BASE_DIR = pathlib.Path(__file__).parent
 DATA_DIR_ENV = os.environ.get("TAKA_DATA_DIR")
@@ -2400,7 +2400,7 @@ async def dashboard():
                 renderStoryFragments(kw);
             }
 
-            async function submitVoiceConfig(event) {
+             async function submitVoiceConfig(event) {
                 event.preventDefault();
                 closeVoiceConfig();
                 
@@ -2410,6 +2410,7 @@ async def dashboard():
                 let limitFragments = parseInt(document.getElementById("vc-limit-fragments").value) || 0;
                 let useWatermark = document.getElementById("story-use-watermark").checked;
                 let useSubtitles = document.getElementById("story-use-subtitles").checked;
+                let forceRerun = document.getElementById("story-force-rerun").checked;
 
                 let voiceConfig = {
                     provider: "omnivoice",
@@ -2442,7 +2443,8 @@ async def dashboard():
                             voice_config: voiceConfig,
                             art_style: artStyle,
                             use_watermark: useWatermark,
-                            use_subtitles: useSubtitles
+                            use_subtitles: useSubtitles,
+                            force_rerun: forceRerun
                         })
                     });
                     if (!res.ok) {
@@ -2806,6 +2808,7 @@ async def dashboard():
                 let useWatermark = document.getElementById("music-use-watermark").checked;
                 let useSubtitles = document.getElementById("music-use-subtitles").checked;
                 let useWhisper = document.getElementById("music-use-whisper").checked;
+                let forceRerun = document.getElementById("music-force-rerun").checked;
                 
                 let localPath = pathInput.value.trim();
                 let isUpload = musicFile && localPath.startsWith("Staged Upload:");
@@ -2851,7 +2854,8 @@ async def dashboard():
                                 art_style: artStyle,
                                 use_watermark: useWatermark,
                                 use_subtitles: useSubtitles,
-                                use_whisper: useWhisper
+                                use_whisper: useWhisper,
+                                force_rerun: forceRerun
                             })
                         });
                         if (runRes.ok) {
