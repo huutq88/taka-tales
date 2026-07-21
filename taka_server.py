@@ -1829,16 +1829,18 @@ async def dashboard():
             .step-btn.active {
                 opacity: 1;
                 cursor: pointer;
-                background: rgba(139, 92, 246, 0.15);
-                border-color: rgba(139, 92, 246, 0.4);
+                background: linear-gradient(135deg, rgba(139, 92, 246, 0.45), rgba(59, 130, 246, 0.45));
+                border: 1px solid rgba(167, 139, 250, 0.9);
+                box-shadow: 0 0 10px rgba(139, 92, 246, 0.6), 0 0 4px rgba(255, 255, 255, 0.4);
+                filter: brightness(1.25);
             }
 
             .step-btn.active:hover {
-                background: var(--primary);
-                border-color: var(--primary);
-                transform: scale(1.15);
-                box-shadow: 0 0 8px var(--primary-glow);
-                color: #fff;
+                background: linear-gradient(135deg, #8b5cf6, #6366f1);
+                border-color: #a78bfa;
+                transform: scale(1.25);
+                box-shadow: 0 0 15px rgba(139, 92, 246, 0.9), 0 0 8px rgba(255, 255, 255, 0.8);
+                filter: brightness(1.4);
             }
 
             .step-btn.running {
