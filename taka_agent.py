@@ -221,22 +221,25 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
             ref_audio_file = voice_dir / "ref.wav"
             ref_text_file = voice_dir / "ref_text.txt"
             
-            if not merged_config.get("ref_audio_path"):
-                if local_path_file.exists():
-                    try:
-                        with open(local_path_file, "r", encoding="utf-8") as f:
-                            merged_config["ref_audio_path"] = f.read().strip()
-                    except Exception as ex:
-                        print(f"[Agent] Failed to read local_path.txt: {ex}")
-                elif ref_audio_file.exists():
-                    merged_config["ref_audio_path"] = str(ref_audio_file)
+            if local_path_file.exists():
+                try:
+                    with open(local_path_file, "r", encoding="utf-8") as f:
+                        merged_config["ref_audio_path"] = f.read().strip()
+                except Exception as ex:
+                    print(f"[Agent] Failed to read local_path.txt: {ex}")
+            elif ref_audio_file.exists():
+                merged_config["ref_audio_path"] = str(ref_audio_file)
+            else:
+                merged_config["ref_audio_path"] = None
             
-            if not merged_config.get("ref_text") and ref_text_file.exists():
+            if ref_text_file.exists():
                 try:
                     with open(ref_text_file, "r", encoding="utf-8") as f:
                         merged_config["ref_text"] = f.read().strip()
                 except Exception as ex:
                     print(f"[Agent] Failed to read ref_text.txt: {ex}")
+            else:
+                merged_config["ref_text"] = None
 
     provider = merged_config.get("provider", "edge").lower()
     print(f"[Agent] Routing TTS generation. provider={provider}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in merged_config.items() if k != 'ref_audio_b64'} }")
