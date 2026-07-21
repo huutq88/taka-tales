@@ -67,13 +67,28 @@ if _CONFIG_PATH.exists():
     config.read(_CONFIG_PATH, encoding="utf-8")
 POSTGRES_URI = os.getenv("POSTGRES_URI") or config.get("LORE_KEEPER", "POSTGRES_URI", fallback=None)
 
+def get_postgres_connection():
+    if not POSTGRES_URI:
+        return None
+    from urllib.parse import urlparse
+    import pg8000.dbapi
+    res = urlparse(POSTGRES_URI)
+    database = res.path[1:] if res.path else None
+    return pg8000.dbapi.connect(
+        user=res.username,
+        password=res.password,
+        host=res.hostname,
+        port=res.port or 5432,
+        database=database,
+        timeout=3
+    )
+
 def fetch_postgres_document(chapter_id: str) -> str:
     """Queries Postgres directly, and falls back to Lore-Keeper API if Postgres is not connected/fails."""
-    if POSTGRES_URI:
-        try:
-            import psycopg2
-            conn = psycopg2.connect(POSTGRES_URI, connect_timeout=3)
-            conn.autocommit = True
+    conn = None
+    try:
+        conn = get_postgres_connection()
+        if conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT d.content FROM agent_documents ad "
@@ -84,8 +99,14 @@ def fetch_postgres_document(chapter_id: str) -> str:
                 row = cur.fetchone()
                 if row and row[0]:
                     return row[0]
-        except Exception as e:
-            print(f"[Server] Direct Postgres query failed: {e}. Falling back to Lore-Keeper API...")
+    except Exception as e:
+        print(f"[Server] Direct Postgres query failed: {e}. Falling back to Lore-Keeper API...")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     # Fallback to Lore-Keeper REST API
     try:
@@ -102,11 +123,10 @@ def fetch_postgres_document(chapter_id: str) -> str:
 
 def fetch_story_chapters(story_id: str) -> list:
     """Queries Postgres directly, and falls back to Lore-Keeper API if Postgres is not connected/fails."""
-    if POSTGRES_URI:
-        try:
-            import psycopg2
-            conn = psycopg2.connect(POSTGRES_URI, connect_timeout=3)
-            conn.autocommit = True
+    conn = None
+    try:
+        conn = get_postgres_connection()
+        if conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT ad.id, d.title FROM agent_documents ad "
@@ -117,8 +137,14 @@ def fetch_story_chapters(story_id: str) -> list:
                 rows = cur.fetchall()
                 if rows:
                     return [{"id": str(r[0]), "title": r[1]} for r in rows]
-        except Exception as e:
-            print(f"[Server] Direct Postgres chapters query failed: {e}. Falling back to Lore-Keeper API...")
+    except Exception as e:
+        print(f"[Server] Direct Postgres chapters query failed: {e}. Falling back to Lore-Keeper API...")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     # Fallback to Lore-Keeper REST API
     try:
@@ -571,16 +597,23 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
 async def test_db_connection():
     if not POSTGRES_URI:
         return {"ok": False, "error": "POSTGRES_URI environment variable is not set or is empty."}
+    conn = None
     try:
-        import psycopg2
-        conn = psycopg2.connect(POSTGRES_URI, connect_timeout=3)
+        conn = get_postgres_connection()
+        if not conn:
+            return {"ok": False, "error": "Failed to initialize postgres connection."}
         with conn.cursor() as cur:
             cur.execute("SELECT version();")
             ver = cur.fetchone()
-        conn.close()
         return {"ok": True, "postgres_version": ver[0]}
     except Exception as e:
         return {"ok": False, "error": f"Postgres connection failed: {str(e)}"}
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 @app.get("/v1/projects")
 async def list_projects():
