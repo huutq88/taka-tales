@@ -12,7 +12,7 @@ import shutil
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
 AGENT_VERSION = "0.3.0"
 
-LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "http://lore-keeper.railway.internal"
+LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "https://lore-keeper.taka.zone"
 LORE_KEEPER_URL = LORE_KEEPER_URL.rstrip("/")
 
 BASE_DIR = pathlib.Path(__file__).parent
