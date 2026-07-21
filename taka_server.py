@@ -434,14 +434,13 @@ echo "============================================="
 async def get_install_script_ps1(request: Request, workspace_id: str = "default_workspace"):
     server_url = str(request.base_url).rstrip('/')
     
-    import configparser
-    config = configparser.ConfigParser()
-    config.read("config.ini", encoding="utf-8")
-    ollama_model = config.get("IMAGE_PROMPT", "OLLAMA_MODEL", fallback="qwen2.5-coder:14b")
-    
     script_content = f"""
 $SERVER_URL = "{server_url}"
 $WORKSPACE_ID = "{workspace_id}"
+if (-not $WORKSPACE_ID -or $WORKSPACE_ID -eq "default_workspace") {{
+    $WORKSPACE_ID = $env:USERNAME.ToLower()
+    $WORKSPACE_ID = $WORKSPACE_ID -replace '[^a-zA-Z0-9_-]', ''
+}}
 
 Write-Host "=====================================================" -ForegroundColor Cyan
 Write-Host "   Taka Agent Installer v{AGENT_VERSION} (Windows PowerShell) " -ForegroundColor Cyan
@@ -467,33 +466,48 @@ Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/core/__init__.py" -Out
 Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/core/video_engine.py" -OutFile "core/video_engine.py"
 Invoke-RestMethod -Uri "$SERVER_URL/v1/system/agent/files/core/characters_descriptions.ini" -OutFile "core/characters_descriptions.ini"
 
-# 3. Configure config.ini with SERVER_URL and WORKSPACE_ID
-Write-Host "[3/6] Configuring config.ini..." -ForegroundColor Green
-# Find python command
-$PYTHON_CMD = "python"
-try {{
-    $version = & py --version 2>$null
-    if ($LASTEXITCODE -eq 0) {{ $PYTHON_CMD = "py" }}
-}} catch {{}}
+# 3. Locate Python Executable
+Write-Host "[3/6] Locating Python environment..." -ForegroundColor Green
+$PYTHON_EXE = $null
 
-& $PYTHON_CMD -c "
+$searchPaths = @(
+    "py",
+    "python",
+    "$env:LocalAppData\Programs\Python\Python311\python.exe",
+    "$env:LocalAppData\Programs\Python\Python310\python.exe",
+    "$env:LocalAppData\Programs\Python\Python312\python.exe",
+    "C:\Python311\python.exe",
+    "C:\Python310\python.exe",
+    "C:\Python312\python.exe"
+)
+
+foreach ($p in $searchPaths) {{
+    try {{
+        $ver = & $p --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and $ver -match "Python 3\.") {{
+            $PYTHON_EXE = $p
+            Write-Host "Found Python: $ver ($p)" -ForegroundColor Yellow
+            break
+        }}
+    }} catch {{}}
+}}
+
+if (-not $PYTHON_EXE) {{
+    Write-Host "ERROR: Python 3 was not found on your system." -ForegroundColor Red
+    Write-Host "Please install Python 3.10+ from https://www.python.org/downloads/ and make sure to check 'Add Python to PATH' during installation." -ForegroundColor Yellow
+    exit 1
+}}
+
+# Configure config.ini
+& $PYTHON_EXE -c "
 import configparser, uuid, hashlib, socket
-
-mac = uuid.getnode()
-hostname = socket.gethostname()
-device_hash = hashlib.md5((str(mac) + '-' + hostname).encode()).hexdigest()[:12]
-default_ws = 'device_' + device_hash
 
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
 if not config.has_section('TAKA_AGENT'):
     config.add_section('TAKA_AGENT')
 config.set('TAKA_AGENT', 'SERVER_URL', '$SERVER_URL')
-
-ws_id = '$WORKSPACE_ID'
-if ws_id == 'default_workspace' or not ws_id:
-    ws_id = default_ws
-config.set('TAKA_AGENT', 'WORKSPACE_ID', ws_id)
+config.set('TAKA_AGENT', 'WORKSPACE_ID', '$WORKSPACE_ID')
 
 with open('config.ini', 'w', encoding='utf-8') as f:
     config.write(f)
@@ -501,24 +515,40 @@ with open('config.ini', 'w', encoding='utf-8') as f:
 
 # 4. Set up virtual environment
 Write-Host "[4/6] Setting up Python virtual environment..." -ForegroundColor Green
-& $PYTHON_CMD -m venv env
+if (-not (Test-Path "env\Scripts\python.exe")) {{
+    & $PYTHON_EXE -m venv env
+}}
+
+$ENV_PYTHON = "$HOME\.taka-agent\env\Scripts\python.exe"
+$ENV_PIP = "$HOME\.taka-agent\env\Scripts\pip.exe"
 
 # 5. Install PyTorch and dependencies
 Write-Host "[5/6] Installing dependencies..." -ForegroundColor Green
 Write-Host "Installing PyTorch with CUDA support..." -ForegroundColor Yellow
-env\\Scripts\\pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-env\\Scripts\\pip install -r requirements.txt
-env\\Scripts\\pip install psycopg2-binary
+& $ENV_PIP install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+& $ENV_PIP install -r requirements.txt
+& $ENV_PIP install psycopg2-binary
 
 # 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
 Write-Host "[6/6] Pre-installing OmniVoice tool..." -ForegroundColor Green
 if (-not (Test-Path "tools\OmniVoice")) {{
-    Write-Host "Cloning OmniVoice repository..." -ForegroundColor Yellow
-    & git clone https://github.com/k2-fsa/OmniVoice tools/OmniVoice
+    New-Item -ItemType Directory -Force -Path "tools" | Out-Null
+    if (Get-Command git -ErrorAction SilentlyContinue) {{
+        Write-Host "Cloning OmniVoice repository via Git..." -ForegroundColor Yellow
+        & git clone https://github.com/k2-fsa/OmniVoice tools/OmniVoice
+    }} else {{
+        Write-Host "Git not found. Downloading OmniVoice zip archive..." -ForegroundColor Yellow
+        Invoke-WebRequest -Uri "https://github.com/k2-fsa/OmniVoice/archive/refs/heads/main.zip" -OutFile "tools\omnivoice.zip"
+        Expand-Archive -Path "tools\omnivoice.zip" -DestinationPath "tools" -Force
+        if (Test-Path "tools\OmniVoice-main") {{
+            Rename-Item -Path "tools\OmniVoice-main" -NewName "OmniVoice" -Force
+        }}
+        Remove-Item -Path "tools\omnivoice.zip" -Force -ErrorAction SilentlyContinue
+    }}
+
     if (Test-Path "tools\OmniVoice\requirements.txt") {{
         Write-Host "Installing OmniVoice requirements..." -ForegroundColor Yellow
-        & pip install -r tools/OmniVoice/requirements.txt
+        & $ENV_PIP install -r tools/OmniVoice/requirements.txt
     }}
 }} else {{
     Write-Host "OmniVoice is already pre-installed."
@@ -526,7 +556,7 @@ if (-not (Test-Path "tools\OmniVoice")) {{
 
 Write-Host "Pre-downloading AI models and NLTK assets (this may take a few minutes)..." -ForegroundColor Yellow
 try {{
-    & env\Scripts\python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True); from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice'); snapshot_download(repo_id='openai/whisper-small'); from keybert import KeyBERT; KeyBERT()"
+    & $ENV_PYTHON -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True); from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice'); snapshot_download(repo_id='openai/whisper-small'); from keybert import KeyBERT; KeyBERT()"
 }} catch {{
     Write-Host "Warning: Failed to pre-download some models, they will download on first run." -ForegroundColor Gray
 }}
@@ -535,7 +565,7 @@ Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "🎉 Taka Agent Installation Complete!" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent in the background..." -ForegroundColor Yellow
-Start-Process -FilePath "$HOME\.taka-agent\env\Scripts\python.exe" -ArgumentList "-u", "taka_agent.py" -WindowStyle Hidden -WorkingDirectory "$HOME\.taka-agent" -RedirectStandardOutput "$HOME\.taka-agent\agent.log" -RedirectStandardError "$HOME\.taka-agent\agent.log"
+Start-Process -FilePath $ENV_PYTHON -ArgumentList "-u", "taka_agent.py" -WindowStyle Hidden -WorkingDirectory "$HOME\.taka-agent" -RedirectStandardOutput "$HOME\.taka-agent\agent.log" -RedirectStandardError "$HOME\.taka-agent\agent_err.log"
 Write-Host "Agent is running. You can check logs in $HOME\.taka-agent\agent.log"
 Write-Host "=============================================" -ForegroundColor Cyan
 """
