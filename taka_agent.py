@@ -884,52 +884,49 @@ async def sync_local_projects_to_server():
     if not projects_dir.exists():
         return
 
-    import aiohttp
+    import requests
     if "taka.zone" in SERVER_URL or "https" in SERVER_URL:
         server_base = SERVER_URL.replace("http://", "https://").replace("ws://", "https://").replace("wss://", "https://")
     else:
         server_base = SERVER_URL.replace("ws://", "http://").replace("wss://", "https://")
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            for story_folder in projects_dir.iterdir():
-                if not story_folder.is_dir() or story_folder.name.startswith("."):
+    def do_sync():
+        for story_folder in projects_dir.iterdir():
+            if not story_folder.is_dir() or story_folder.name.startswith("."):
+                continue
+            story_id = story_folder.name
+            for chapter_folder in story_folder.iterdir():
+                if not chapter_folder.is_dir() or chapter_folder.name.startswith("."):
                     continue
-                story_id = story_folder.name
-                for chapter_folder in story_folder.iterdir():
-                    if not chapter_folder.is_dir() or chapter_folder.name.startswith("."):
-                        continue
-                    chapter_id = chapter_folder.name
-                    
-                    files_to_sync = []
-                    final_video = chapter_folder / "final.mp4"
-                    if not final_video.exists():
-                        final_video = chapter_folder / f"{story_id}_{chapter_id}.mp4"
-                    if final_video.exists():
-                        files_to_sync.append((final_video, "final.mp4"))
+                chapter_id = chapter_folder.name
+                
+                files_to_sync = []
+                final_video = chapter_folder / "final.mp4"
+                if not final_video.exists():
+                    final_video = chapter_folder / f"{story_id}_{chapter_id}.mp4"
+                if final_video.exists():
+                    files_to_sync.append((final_video, "final.mp4"))
 
-                    for sub_name in ["images", "audio", "videos"]:
-                        sub_dir = chapter_folder / sub_name
-                        if sub_dir.exists():
-                            for f in sub_dir.iterdir():
-                                if f.is_file() and not f.name.startswith("."):
-                                    files_to_sync.append((f, f"{sub_name}/{f.name}"))
+                for sub_name in ["images", "audio", "videos"]:
+                    sub_dir = chapter_folder / sub_name
+                    if sub_dir.exists():
+                        for f in sub_dir.iterdir():
+                            if f.is_file() and not f.name.startswith("."):
+                                files_to_sync.append((f, f"{sub_name}/{f.name}"))
 
-                    for local_file, rel_path in files_to_sync:
-                        try:
-                            upload_url = f"{server_base}/v1/projects/{story_id}/{chapter_id}/upload"
-                            data = aiohttp.FormData()
-                            data.add_field('file_path', rel_path)
-                            data.add_field('file', open(local_file, 'rb'), filename=local_file.name)
-                            async with session.post(upload_url, data=data, timeout=60, allow_redirects=True) as resp:
-                                if resp.status == 200:
-                                    print(f"[Agent Sync] Uploaded {story_id}/{chapter_id}/{rel_path} successfully.")
-                                else:
-                                    print(f"[Agent Sync] Upload {rel_path} status: {resp.status}")
-                        except Exception as err:
-                            print(f"[Agent Sync] Failed to upload {rel_path}: {err}")
-    except Exception as ex:
-        print(f"[Agent Sync] Error syncing projects: {ex}")
+                for local_file, rel_path in files_to_sync:
+                    try:
+                        upload_url = f"{server_base}/v1/projects/{story_id}/{chapter_id}/upload"
+                        with open(local_file, "rb") as fp:
+                            files = {"file": (local_file.name, fp)}
+                            data = {"file_path": rel_path}
+                            resp = requests.post(upload_url, data=data, files=files, timeout=60)
+                            if resp.status_code == 200:
+                                print(f"[Agent Sync] Uploaded {story_id}/{chapter_id}/{rel_path} successfully.")
+                    except Exception as err:
+                        print(f"[Agent Sync] Failed to upload {rel_path}: {err}")
+
+    await asyncio.to_thread(do_sync)
 
 
 async def main():
