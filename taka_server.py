@@ -684,6 +684,7 @@ class RunPipelineRequest(BaseModel):
     use_watermark: Optional[bool] = True
     use_subtitles: Optional[bool] = True
     use_whisper: Optional[bool] = False
+    force_rerun: Optional[bool] = False
 
 @app.get("/v1/voice/defaults")
 async def get_voice_defaults():
@@ -1009,6 +1010,7 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
             "use_watermark": request_data.use_watermark if request_data else True,
             "use_subtitles": request_data.use_subtitles if request_data else True,
             "use_whisper": request_data.use_whisper if request_data else False,
+            "force_rerun": request_data.force_rerun if request_data else False,
             "story_text": content if story_id != "music" else None,
             "music_b64": music_b64,
             "music_filename": music_filename,
