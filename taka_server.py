@@ -3141,7 +3141,7 @@ async def dashboard():
                 }
             }
 
-            const LOCAL_MEDIA_ORIGIN = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8766' : '/media';
+            const LOCAL_MEDIA_ORIGIN = 'http://127.0.0.1:8766';
             let mediaExistsCache = {};
 
             async function getMediaExists(url) {
