@@ -2863,7 +2863,8 @@ async def dashboard():
                             clipActive = (i === current);
                         }
 
-                        let audioUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.mp3`;
+                        let audioUrlWav = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.wav`;
+                        let audioUrlMp3 = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.mp3`;
                         let imageUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.png`;
                         let videoUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/videos/video${i}.mp4`;
 
@@ -2877,15 +2878,22 @@ async def dashboard():
                         `;
                         grid.appendChild(card);
 
-                        getMediaExists(audioUrl).then(exists => {
+                        getMediaExists(audioUrlWav).then(existsWav => {
                             let btn = document.getElementById(`preview-audio-${i}`);
                             if (btn) {
-                                if (exists) {
+                                if (existsWav) {
                                     btn.classList.add("active");
-                                    btn.onclick = () => playAudioPreview(audioUrl, i);
-                                } else if (!voiceActive) {
-                                    btn.classList.remove("active");
-                                    btn.classList.add("disabled");
+                                    btn.onclick = () => playAudioPreview(audioUrlWav, i);
+                                } else {
+                                    getMediaExists(audioUrlMp3).then(existsMp3 => {
+                                        if (existsMp3) {
+                                            btn.classList.add("active");
+                                            btn.onclick = () => playAudioPreview(audioUrlMp3, i);
+                                        } else if (!voiceActive) {
+                                            btn.classList.remove("active");
+                                            btn.classList.add("disabled");
+                                        }
+                                    });
                                 }
                             }
                         });
@@ -3098,6 +3106,7 @@ async def dashboard():
             function playAudioPreview(url, fragIdx) {
                 showPreviewModal(`Frag #${fragIdx} - Audio Voiceover`, `
                     <audio controls autoplay style="width:100%; max-width:500px; margin-top:1rem;">
+                        <source src="${url}" type="audio/wav">
                         <source src="${url}" type="audio/mpeg">
                         Your browser does not support the audio element.
                     </audio>
