@@ -875,6 +875,58 @@ def start_local_media_server():
     t.start()
 
 
+async def sync_local_projects_to_server():
+    """Sync completed local media files to the remote server so previews and videos stream directly."""
+    projects_dir = pathlib.Path.home() / ".taka-agent" / "projects"
+    if not projects_dir.exists():
+        projects_dir = AGENT_DIR / "projects"
+        
+    if not projects_dir.exists():
+        return
+
+    import aiohttp
+    server_base = SERVER_URL.replace("ws://", "http://").replace("wss://", "https://")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            for story_folder in projects_dir.iterdir():
+                if not story_folder.is_dir() or story_folder.name.startswith("."):
+                    continue
+                story_id = story_folder.name
+                for chapter_folder in story_folder.iterdir():
+                    if not chapter_folder.is_dir() or chapter_folder.name.startswith("."):
+                        continue
+                    chapter_id = chapter_folder.name
+                    
+                    files_to_sync = []
+                    final_video = chapter_folder / "final.mp4"
+                    if not final_video.exists():
+                        final_video = chapter_folder / f"{story_id}_{chapter_id}.mp4"
+                    if final_video.exists():
+                        files_to_sync.append((final_video, "final.mp4"))
+
+                    for sub_name in ["images", "audio", "videos"]:
+                        sub_dir = chapter_folder / sub_name
+                        if sub_dir.exists():
+                            for f in sub_dir.iterdir():
+                                if f.is_file() and not f.name.startswith("."):
+                                    files_to_sync.append((f, f"{sub_name}/{f.name}"))
+
+                    for local_file, rel_path in files_to_sync:
+                        try:
+                            upload_url = f"{server_base}/v1/projects/{story_id}/{chapter_id}/upload"
+                            data = aiohttp.FormData()
+                            data.add_field('file_path', rel_path)
+                            data.add_field('file', open(local_file, 'rb'), filename=local_file.name)
+                            async with session.post(upload_url, data=data, timeout=60) as resp:
+                                if resp.status == 200:
+                                    print(f"[Agent Sync] Uploaded {story_id}/{chapter_id}/{rel_path} successfully.")
+                        except Exception as err:
+                            print(f"[Agent Sync] Failed to upload {rel_path}: {err}")
+    except Exception as ex:
+        print(f"[Agent Sync] Error syncing projects: {ex}")
+
+
 async def main():
     global active_websocket
     start_local_media_server()
@@ -885,6 +937,7 @@ async def main():
             async with websockets.connect(ws_url, ping_interval=60, ping_timeout=60, max_size=100 * 1024 * 1024) as websocket:
                 print("[Agent] Connected to Taka Server successfully.")
                 active_websocket = websocket
+                asyncio.create_task(sync_local_projects_to_server())
                 
                 # Check environment
                 status = await check_environment()
