@@ -2874,6 +2874,11 @@ async def dashboard():
                 try {
                     let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/status`);
                     let status = await res.json();
+
+                    if (status.status === "completed" && timerId) {
+                        clearInterval(timerId);
+                        timerId = null;
+                    }
                     
                     let banner = document.getElementById("status-banner");
                     banner.innerText = status.status || "Idle";
@@ -2905,12 +2910,18 @@ async def dashboard():
 
                     // Dynamic fragments
                     let grid = document.getElementById("fragments-grid");
-                    grid.innerHTML = "";
+                    let buildCards = (grid.children.length !== total);
+                    if (buildCards) {
+                        grid.innerHTML = "";
+                    }
                     
                     for (let i = 0; i < total; i++) {
-                        let card = document.createElement("div");
-                        card.className = "fragment-card";
+                        let card = buildCards ? document.createElement("div") : grid.children[i];
+                        if (buildCards) {
+                            card.className = "fragment-card";
+                        }
                         if (i === current) card.classList.add("active");
+                        else card.classList.remove("active");
                         
                         let voiceActive = false;
                         let imgActive = false;
@@ -2931,15 +2942,17 @@ async def dashboard():
                         let imageUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.png`;
                         let videoUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/videos/video${i}.mp4`;
 
-                        card.innerHTML = `
-                            <h4>Frag #${i}</h4>
-                            <div class="step-indicator">
-                                <span class="step-btn ${voiceActive ? 'running' : ''}" id="preview-audio-${i}" title="Play Audio Voiceover">🎵</span>
-                                <span class="step-btn ${imgActive ? 'running' : ''}" id="preview-image-${i}" title="Show Generated Image">🖼️</span>
-                                <span class="step-btn ${clipActive ? 'running' : ''}" id="preview-video-${i}" title="Play Video Clip">🎥</span>
-                            </div>
-                        `;
-                        grid.appendChild(card);
+                        if (buildCards) {
+                            card.innerHTML = `
+                                <h4>Frag #${i}</h4>
+                                <div class="step-indicator">
+                                    <span class="step-btn ${voiceActive ? 'running' : ''}" id="preview-audio-${i}" title="Play Audio Voiceover">🎵</span>
+                                    <span class="step-btn ${imgActive ? 'running' : ''}" id="preview-image-${i}" title="Show Generated Image">🖼️</span>
+                                    <span class="step-btn ${clipActive ? 'running' : ''}" id="preview-video-${i}" title="Play Video Clip">🎥</span>
+                                </div>
+                            `;
+                            grid.appendChild(card);
+                        }
 
                         getMediaExists(audioUrlWav).then(existsWav => {
                             let btn = document.getElementById(`preview-audio-${i}`);
