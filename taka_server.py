@@ -12,7 +12,7 @@ import shutil
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
 AGENT_VERSION = "0.3.0"
 
-LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "https://lore-keeper.taka.zone"
+LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "http://lore-keeper.railway.internal:8000"
 LORE_KEEPER_URL = LORE_KEEPER_URL.rstrip("/")
 
 BASE_DIR = pathlib.Path(__file__).parent
@@ -131,37 +131,7 @@ def fetch_postgres_document(chapter_id: str) -> str:
         raise RuntimeError(f"Failed to fetch chapter content from both Postgres and Lore-Keeper API: {api_err}")
 
 def fetch_story_chapters(story_id: str) -> list:
-    """Queries Postgres directly, and falls back to Lore-Keeper API if Postgres is not connected/fails."""
-    conn = None
-    try:
-        conn = get_postgres_connection()
-        if conn:
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    "SELECT ad.id, d.title FROM agent_documents ad "
-                    "JOIN documents d ON ad.document_id = d.id "
-                    "WHERE ad.story_id::text = %s ORDER BY ad.id ASC",
-                    (story_id,)
-                )
-                rows = cur.fetchall()
-                if rows:
-                    return [{"id": str(r[0]), "title": r[1]} for r in rows]
-            finally:
-                try:
-                    cur.close()
-                except Exception:
-                    pass
-    except Exception as e:
-        print(f"[Server] Direct Postgres chapters query failed: {e}. Falling back to Lore-Keeper API...")
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    # Fallback to Lore-Keeper REST API
+    """Fetches story chapters directly from the Lore-Keeper HTTP API."""
     try:
         url = f"{LORE_KEEPER_URL}/api/stories/{story_id}/chapters"
         resp = requests.get(url, timeout=10)
@@ -172,7 +142,7 @@ def fetch_story_chapters(story_id: str) -> list:
         else:
             raise ValueError("Invalid response format from Lore-Keeper API")
     except Exception as api_err:
-        print(f"[Server] Failed to fetch story chapters from both Postgres and Lore-Keeper API: {api_err}")
+        print(f"[Server] Failed to fetch story chapters from Lore-Keeper API: {api_err}")
         return [
             {"id": f"chap_{story_id}_1", "title": f"Chương 1 (Mẫu - Lỗi kết nối: {str(api_err)[:20]})"},
             {"id": f"chap_{story_id}_2", "title": f"Chương 2 (Mẫu)"}
