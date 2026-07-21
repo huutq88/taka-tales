@@ -642,15 +642,20 @@ async def inspect_db():
         if not conn:
             return {"ok": False, "error": "No database connection"}
         cur = conn.cursor()
+        tables = []
+        samples = {}
+        story_ids = []
         try:
             # 1. Get all table names
-            cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
-            tables = [r[0] for r in cur.fetchall()]
+            try:
+                cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
+                tables = [r[0] for r in cur.fetchall()]
+            except Exception as e:
+                tables = [f"Error: {e}"]
             
             # 2. Get some sample data from agent_documents and documents
-            samples = {}
             for t in ["agent_documents", "documents"]:
-                if t in tables:
+                try:
                     cur.execute(f"SELECT * FROM {t} LIMIT 5;")
                     colnames = [desc[0] for desc in cur.description]
                     rows = cur.fetchall()
@@ -658,12 +663,15 @@ async def inspect_db():
                         "columns": colnames,
                         "rows": [[str(val) for val in r] for r in rows]
                     }
+                except Exception as e:
+                    samples[t] = f"Error: {e}"
             
             # 3. Check distinct story_ids in agent_documents
-            story_ids = []
-            if "agent_documents" in tables:
+            try:
                 cur.execute("SELECT DISTINCT story_id::text FROM agent_documents;")
                 story_ids = [r[0] for r in cur.fetchall()]
+            except Exception as e:
+                story_ids = [f"Error: {e}"]
         finally:
             try:
                 cur.close()
