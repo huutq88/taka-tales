@@ -1068,23 +1068,22 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
         words_list = sub.split()
         num_words = len(words_list)
 
-        # Simple local cache for current frame
-        last_t = None
-        last_frame = None
+        # Thread-safe local cache indexed by timestamp t
+        frame_cache = {}
 
         def get_frame_at_t(t):
-            nonlocal last_t, last_frame
-            if last_t == t and last_frame is not None:
-                return last_frame
+            if t in frame_cache:
+                return frame_cache[t]
                 
             highlight_idx = -1
             if num_words > 0 and sub_duration > 0:
-                active_duration = sub_duration * 0.8
+                # Dynamic active duration based on natural reading speed (approx 2.3 words/sec)
+                # to prevent crawling highlights on long instrumental/pause slides.
+                active_duration = min(sub_duration, max(0.5, num_words / 2.3))
                 highlight_idx = min(num_words - 1, int(t / active_duration * num_words))
             
             img_frame = _make_subtitle_frame(sub, highlight_idx)
-            last_t = t
-            last_frame = img_frame
+            frame_cache[t] = img_frame
             return img_frame
 
         def make_dynamic_sub_frame_rgb(t):
