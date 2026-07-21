@@ -75,7 +75,7 @@ async def check_environment() -> dict:
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.2.3"
+        "agent_version": "0.2.4"
     }
 
 async def setup_omnivoice():
@@ -121,14 +121,23 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         return
         
     script_path = scripts[0]
+    
+    # Resolve language
+    language = "vi"
+    if voice_config and voice_config.get("language"):
+        language = voice_config["language"]
+    else:
+        language = OMNIVOICE_LANG
+    if not language:
+        language = "vi"
+        
     cmd = [
         sys.executable, str(script_path),
         "--model", "k2-fsa/OmniVoice",
         "--text", text,
-        "--language", OMNIVOICE_LANG,
+        "--language", language,
         "--output", str(out)
     ]
-
     
     # Add voice cloning or voice design flags if voice_config matches
     if voice_config:
@@ -159,7 +168,8 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         "ref_audio_path": config.get("AUDIO", "OMNIVOICE_REF_AUDIO", fallback=None),
         "ref_text": config.get("AUDIO", "OMNIVOICE_REF_TEXT", fallback=None),
         "voice_instruct": config.get("AUDIO", "OMNIVOICE_INSTRUCT", fallback=None),
-        "voice_id": config.get("AUDIO", "VOICE", fallback=None)
+        "voice_id": config.get("AUDIO", "VOICE", fallback=None),
+        "language": config.get("OMNIVOICE", "LANGUAGE", fallback="vi")
     }
     
     # Merge custom voice_config over defaults
@@ -169,6 +179,55 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
             if v is not None and v != "":
                 merged_config[k] = v
                 
+    # If ref_audio_b64 is passed, save it to a local temp file
+    ref_audio_b64 = merged_config.get("ref_audio_b64")
+    if ref_audio_b64 and not merged_config.get("ref_audio_path"):
+        try:
+            import base64
+            voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
+            voices_base.mkdir(parents=True, exist_ok=True)
+            voice_id = merged_config.get("voice_id", "temp_voice")
+            voice_dir = voices_base / voice_id
+            voice_dir.mkdir(parents=True, exist_ok=True)
+            
+            ref_audio_file = voice_dir / "ref.wav"
+            with open(ref_audio_file, "wb") as f:
+                f.write(base64.b64decode(ref_audio_b64))
+            merged_config["ref_audio_path"] = str(ref_audio_file)
+            print(f"[Agent] Decoded and saved ref_audio_b64 to {ref_audio_file}")
+        except Exception as ex:
+            print(f"[Agent] Failed to decode ref_audio_b64: {ex}")
+
+    # Resolve local voice profile directory if voice_id is specified
+    voice_id = merged_config.get("voice_id")
+    if voice_id:
+        voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
+        if not voices_base.exists():
+            voices_base = AGENT_DIR / "voices"
+            
+        voice_dir = voices_base / voice_id
+        if voice_dir.exists():
+            local_path_file = voice_dir / "local_path.txt"
+            ref_audio_file = voice_dir / "ref.wav"
+            ref_text_file = voice_dir / "ref_text.txt"
+            
+            if not merged_config.get("ref_audio_path"):
+                if local_path_file.exists():
+                    try:
+                        with open(local_path_file, "r", encoding="utf-8") as f:
+                            merged_config["ref_audio_path"] = f.read().strip()
+                    except Exception as ex:
+                        print(f"[Agent] Failed to read local_path.txt: {ex}")
+                elif ref_audio_file.exists():
+                    merged_config["ref_audio_path"] = str(ref_audio_file)
+            
+            if not merged_config.get("ref_text") and ref_text_file.exists():
+                try:
+                    with open(ref_text_file, "r", encoding="utf-8") as f:
+                        merged_config["ref_text"] = f.read().strip()
+                except Exception as ex:
+                    print(f"[Agent] Failed to read ref_text.txt: {ex}")
+
     provider = merged_config.get("provider", "edge").lower()
     
     if provider == "omnivoice":

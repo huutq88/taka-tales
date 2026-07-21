@@ -10,7 +10,7 @@ import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
-AGENT_VERSION = "0.2.3"
+AGENT_VERSION = "0.2.4"
 
 BASE_DIR = pathlib.Path(__file__).parent
 DATA_DIR = pathlib.Path.home() / ".taka-agent"
@@ -842,6 +842,7 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
         voice_payload["voice_id"] = selected_voice_id
         voice_payload["start_fragment"] = vc.start_fragment or 0
         voice_payload["limit_fragments"] = vc.limit_fragments or 0
+        voice_payload["language"] = "vi"
         
         # Resolve voice profile from voices folder
         if selected_voice_id:
