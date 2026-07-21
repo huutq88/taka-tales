@@ -2058,17 +2058,18 @@ async def dashboard():
                         </div>
                     </div>
 
-                    <div id="video-preview-container" class="video-preview" style="display: none; margin-bottom: 2rem;">
-                        <h3 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
-                            <span>🎬 Final Output Video</span>
+                    <div id="video-preview-container" class="video-preview" style="display: none; margin-bottom: 2rem; background: var(--surface-hover); padding: 1.25rem; border-radius: 12px; border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="margin: 0; font-size: 1.1rem; color: var(--primary-light);">🎬 Final Output Video</h3>
                             <a id="download-video-btn" href="" download class="btn-submit" style="font-size: 0.8rem; padding: 0.4rem 0.9rem; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem; border-radius: 6px; font-weight: 600;">
                                 📥 Tải Video
                             </a>
-                        </h3>
-                        <video id="final-video" controls style="width: 100%; border-radius: 8px; border: 1px solid var(--border); background: #000;">
-                            <source src="" type="video/video/mp4">
-                            Your browser does not support the video tag.
-                        </video>
+                        </div>
+                        <div style="display: flex; justify-content: center;">
+                            <video id="final-video" controls style="width: 100%; max-width: 320px; max-height: 450px; border-radius: 10px; border: 1px solid var(--border); background: #000; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+                                Your browser does not support the video tag.
+                            </video>
+                        </div>
                     </div>
 
                     <h3 style="margin-top: 2rem; margin-bottom: 1rem;">Fragments Processing State</h3>
@@ -2989,15 +2990,15 @@ async def dashboard():
                     let videoContainer = document.getElementById("video-preview-container");
                     let videoElement = document.getElementById("final-video");
                     if (status.status === "completed" || status.status === "idle") {
-                        let videoUrl = `/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/final.mp4`;
-                        let check = await fetch(videoUrl, { method: "HEAD" });
-                        if (check.ok) {
+                        let videoUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/final.mp4`;
+                        let check = await getMediaExists(videoUrl);
+                        if (check) {
                             videoContainer.style.display = "block";
                             let downloadBtn = document.getElementById("download-video-btn");
                             if (downloadBtn) {
                                 downloadBtn.href = videoUrl;
                             }
-                            if (videoElement.src !== window.location.origin + videoUrl) {
+                            if (videoElement.src !== videoUrl) {
                                 videoElement.src = videoUrl;
                                 videoElement.load();
                             }
@@ -3174,9 +3175,7 @@ async def dashboard():
 
             function playAudioPreview(url, fragIdx) {
                 showPreviewModal(`Frag #${fragIdx} - Audio Voiceover`, `
-                    <audio controls autoplay style="width:100%; max-width:500px; margin-top:1rem;">
-                        <source src="${url}" type="audio/wav">
-                        <source src="${url}" type="audio/mpeg">
+                    <audio src="${url}" controls autoplay style="width:100%; max-width:500px; margin-top:1rem;">
                         Your browser does not support the audio element.
                     </audio>
                 `);
@@ -3190,8 +3189,7 @@ async def dashboard():
 
             function playVideoPreview(url, fragIdx) {
                 showPreviewModal(`Frag #${fragIdx} - Video segment`, `
-                    <video controls autoplay style="max-width:100%; max-height:60vh; border-radius:8px;">
-                        <source src="${url}" type="video/mp4">
+                    <video src="${url}" controls autoplay style="max-width:100%; max-height:60vh; border-radius:8px; background:#000;">
                         Your browser does not support the video element.
                     </video>
                 `);
