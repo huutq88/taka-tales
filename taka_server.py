@@ -633,6 +633,53 @@ async def test_db_connection():
             except Exception:
                 pass
 
+@app.get("/v1/inspect-db")
+async def inspect_db():
+    conn = None
+    try:
+        from fastapi.concurrency import run_in_threadpool
+        conn = await run_in_threadpool(get_postgres_connection)
+        if not conn:
+            return {"ok": False, "error": "No database connection"}
+        cur = conn.cursor()
+        try:
+            # 1. Get all table names
+            cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
+            tables = [r[0] for r in cur.fetchall()]
+            
+            # 2. Get some sample data from agent_documents and documents
+            samples = {}
+            for t in ["agent_documents", "documents"]:
+                if t in tables:
+                    cur.execute(f"SELECT * FROM {t} LIMIT 5;")
+                    colnames = [desc[0] for desc in cur.description]
+                    rows = cur.fetchall()
+                    samples[t] = {
+                        "columns": colnames,
+                        "rows": [[str(val) for val in r] for r in rows]
+                    }
+            
+            # 3. Check distinct story_ids in agent_documents
+            story_ids = []
+            if "agent_documents" in tables:
+                cur.execute("SELECT DISTINCT story_id::text FROM agent_documents;")
+                story_ids = [r[0] for r in cur.fetchall()]
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+                
+        return {"ok": True, "tables": tables, "samples": samples, "story_ids": story_ids}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 @app.get("/v1/projects")
 async def list_projects():
     stories = []
