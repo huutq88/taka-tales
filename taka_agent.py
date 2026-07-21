@@ -26,8 +26,26 @@ _CONFIG_PATH = AGENT_DIR / "config.ini"
 config = configparser.ConfigParser()
 config.read(_CONFIG_PATH, encoding="utf-8")
 
+import getpass
+
+def get_default_workspace_id():
+    try:
+        user = getpass.getuser().lower()
+        clean_user = "".join(c for c in user if c.isalnum() or c in ("-", "_")).strip()
+        if clean_user:
+            return clean_user
+    except Exception:
+        pass
+    return "default_workspace"
+
 SERVER_URL = config.get("TAKA_AGENT", "SERVER_URL", fallback="http://localhost:8080")
-WORKSPACE_ID = config.get("TAKA_AGENT", "WORKSPACE_ID", fallback="default_workspace")
+config_ws = config.get("TAKA_AGENT", "WORKSPACE_ID", fallback="").strip()
+if config_ws and config_ws != "default_workspace":
+    WORKSPACE_ID = config_ws
+else:
+    WORKSPACE_ID = get_default_workspace_id()
+
+print(f"[Agent] Starting agent with WORKSPACE_ID: '{WORKSPACE_ID}'")
 
 # Resolve tools and checkpoints relative to AGENT_DIR
 omnivoice_subpath = config.get("TAKA_AGENT", "OMNIVOICE_PATH", fallback="tools/OmniVoice")

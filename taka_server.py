@@ -30,22 +30,30 @@ VOICES_DIR = DATA_DIR / "voices"
 VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 # In-memory stores
-active_agents: Set[WebSocket] = set()
-agent_status: Dict[str, dict] = {}
-project_jobs: Dict[str, dict] = {}  # project_name -> job state
+agents_by_workspace: Dict[str, WebSocket] = {}  # workspace_id -> websocket
+agent_status: Dict[str, dict] = {}              # workspace_id -> status dict
+project_jobs: Dict[str, dict] = {}              # project_name -> job state
 pending_file_selects: Dict[str, dict] = {}
 pending_agent_requests: Dict[str, dict] = {}
 
-async def tunnel_request_to_agent(message_type: str, payload: dict, timeout: float = 10.0) -> Optional[dict]:
-    if not active_agents:
+def get_workspace_id_from_request(request: Request) -> str:
+    ws_id = request.headers.get("x-workspace-id") or request.query_params.get("workspace_id")
+    if not ws_id or ws_id == "null" or ws_id == "undefined":
+        return ""
+    return ws_id.strip()
+
+async def tunnel_request_to_agent(message_type: str, payload: dict, workspace_id: str = "", timeout: float = 10.0) -> Optional[dict]:
+    if not workspace_id:
         return None
+    agent_ws = agents_by_workspace.get(workspace_id)
+    if not agent_ws:
+        return None
+
     import uuid
     request_id = str(uuid.uuid4())
     event = asyncio.Event()
     pending_agent_requests[request_id] = {"event": event, "result": None}
     
-    agent_ws = list(active_agents)[0]
-    # Keep request_id at the root for easier parsing
     request_message = {
         "type": message_type,
         "request_id": request_id,
@@ -57,7 +65,7 @@ async def tunnel_request_to_agent(message_type: str, payload: dict, timeout: flo
         await asyncio.wait_for(event.wait(), timeout=timeout)
         return pending_agent_requests[request_id]["result"]
     except Exception as e:
-        print(f"[Server] Tunnel request {message_type} failed: {e}")
+        print(f"[Server] Tunnel request {message_type} for workspace '{workspace_id}' failed: {e}")
         return None
     finally:
         pending_agent_requests.pop(request_id, None)
@@ -146,8 +154,9 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
                 found_local = alt_video
 
     # If file not found on server disk, tunnel request to connected WebSocket agent
-    if not found_local and active_agents:
-        res = await tunnel_request_to_agent("get_media_file_request", {"story_id": story_id, "chapter_id": chapter_id, "file_path": file_path}, timeout=15.0)
+    ws_id = get_workspace_id_from_request(request)
+    if not found_local:
+        res = await tunnel_request_to_agent("get_media_file_request", {"story_id": story_id, "chapter_id": chapter_id, "file_path": file_path}, workspace_id=ws_id, timeout=15.0)
         if res and isinstance(res, dict) and res.get("exists") and res.get("content_b64"):
             import base64
             content_bytes = base64.b64decode(res["content_b64"])
@@ -240,9 +249,9 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
 
 # WebSocket endpoint for agent connection
 @app.websocket("/v1/system/agent/ws")
-async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default"):
+async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default_workspace"):
     await websocket.accept()
-    active_agents.add(websocket)
+    agents_by_workspace[workspace_id] = websocket
     print(f"[Server] Taka-Agent connected. Workspace: {workspace_id}")
     try:
         while True:
@@ -284,23 +293,29 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default")
     except WebSocketDisconnect:
         print(f"[Server] Taka-Agent disconnected: {workspace_id}")
     finally:
-        active_agents.remove(websocket)
+        agents_by_workspace.pop(workspace_id, None)
         agent_status.pop(workspace_id, None)
 
+@app.get("/v1/agent/workspaces")
+async def list_active_workspaces():
+    return {
+        "active_workspaces": list(agents_by_workspace.keys()),
+        "agent_status": agent_status
+    }
+
 @app.get("/v1/agent/status")
-async def get_agent_status():
-    connected = len(active_agents) > 0
-    needs_update = False
-    agent_ver = None
-    if connected and agent_status:
-        first_agent = list(agent_status.values())[0]
-        agent_ver = first_agent.get("agent_version")
-        if agent_ver != AGENT_VERSION:
-            needs_update = True
-            
+async def get_agent_status(request: Request):
+    ws_id = get_workspace_id_from_request(request)
+    agent_ws = agents_by_workspace.get(ws_id)
+    connected = agent_ws is not None
+    st = agent_status.get(ws_id, {})
+    agent_ver = st.get("agent_version")
+    needs_update = (agent_ver != AGENT_VERSION) if connected else False
     return {
         "connected": connected,
-        "agents": agent_status,
+        "workspace_id": ws_id,
+        "active_workspaces": list(agents_by_workspace.keys()),
+        "agents": {ws_id: st} if st else {},
         "server_version": AGENT_VERSION,
         "needs_update": needs_update,
         "agent_version": agent_ver
@@ -656,19 +671,21 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
 
 
 @app.get("/v1/projects")
-async def list_projects():
+async def list_projects(request: Request):
+    ws_id = get_workspace_id_from_request(request)
     stories = []
     story_ids = []
     agent_files = {}
     
-    if active_agents:
-        res = await tunnel_request_to_agent("list_projects_request", {}, timeout=5.0)
+    agent_ws = agents_by_workspace.get(ws_id)
+    if agent_ws:
+        res = await tunnel_request_to_agent("list_projects_request", {}, workspace_id=ws_id, timeout=5.0)
         if res:
             story_ids = res.get("story_folders", [])
             agent_files = res.get("local_files", {})
-            print(f"[Server] Fetched project folders from Agent: {story_ids}")
+            print(f"[Server] Fetched project folders from Agent ({ws_id}): {story_ids}")
             
-    if not active_agents or not story_ids:
+    if not agent_ws or not story_ids:
         # Fallback to local server Projects directory
         if PROJECTS_DIR.exists():
             story_ids = [item.name for item in PROJECTS_DIR.iterdir() if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1"]
@@ -747,18 +764,18 @@ async def list_projects():
     return stories
 
 @app.get("/v1/projects/{story_id}/{chapter_id}/status")
-async def get_project_status(story_id: str, chapter_id: str):
+async def get_project_status(request: Request, story_id: str, chapter_id: str):
+    ws_id = get_workspace_id_from_request(request)
     job_key = f"{story_id}/{chapter_id}"
     job_state = project_jobs.get(job_key, {"status": "idle"}).copy()
     
     # If active agent connected via WebSocket, query real-time chapter status & files from agent
-    if active_agents and job_state.get("status") in ("idle", "completed", None):
-        res = await tunnel_request_to_agent("get_chapter_status_request", {"story_id": story_id, "chapter_id": chapter_id}, timeout=3.0)
-        if res and isinstance(res, dict):
-            for k, v in res.items():
-                if v is not None:
-                    job_state[k] = v
-            return job_state
+    res = await tunnel_request_to_agent("get_chapter_status_request", {"story_id": story_id, "chapter_id": chapter_id}, workspace_id=ws_id, timeout=3.0)
+    if res and isinstance(res, dict):
+        for k, v in res.items():
+            if v is not None:
+                job_state[k] = v
+        return job_state
 
     chapter_dir = PROJECTS_DIR / story_id / chapter_id
     final_file = chapter_dir / "final.mp4"
@@ -816,13 +833,15 @@ async def get_voice_defaults():
     }
 
 @app.get("/v1/voices")
-async def list_voices():
+async def list_voices(request: Request):
+    ws_id = get_workspace_id_from_request(request)
     voices_list = []
-    if active_agents:
-        res = await tunnel_request_to_agent("list_voices_request", {}, timeout=5.0)
+    agent_ws = agents_by_workspace.get(ws_id)
+    if agent_ws:
+        res = await tunnel_request_to_agent("list_voices_request", {}, workspace_id=ws_id, timeout=5.0)
         if res and "voices" in res:
             voices_list = res["voices"]
-            print(f"[Server] Fetched voices list from Agent: {[v['id'] for v in voices_list]}")
+            print(f"[Server] Fetched voices list from Agent ({ws_id}): {[v['id'] for v in voices_list]}")
             return sorted(voices_list, key=lambda x: x["id"])
             
     # Fallback to local server folder
@@ -842,11 +861,13 @@ async def list_voices():
 
 @app.post("/v1/voices")
 async def create_voice(
+    request: Request,
     voice_id: str = Form(...),
     ref_text: str = Form(""),
     local_path: str = Form(""),
     file: Optional[UploadFile] = File(None)
 ):
+    ws_id = get_workspace_id_from_request(request)
     if not voice_id.strip():
         raise HTTPException(status_code=400, detail="Voice ID cannot be empty")
     clean_id = "".join(c for c in voice_id if c.isalnum() or c in ("-", "_")).strip()
@@ -863,15 +884,16 @@ async def create_voice(
             raise HTTPException(status_code=500, detail=f"Failed to read upload file: {e}")
             
     # Send save command to Agent if connected
-    if active_agents:
+    agent_ws = agents_by_workspace.get(ws_id)
+    if agent_ws:
         tunnel_payload = {
             "voice_id": clean_id,
             "ref_text": ref_text,
             "local_path": local_path,
             "ref_audio_b64": file_b64
         }
-        res = await tunnel_request_to_agent("save_voice_request", tunnel_payload, timeout=10.0)
-        print(f"[Server] Saved voice profile on Agent: {res}")
+        res = await tunnel_request_to_agent("save_voice_request", tunnel_payload, workspace_id=ws_id, timeout=10.0)
+        print(f"[Server] Saved voice profile on Agent ({ws_id}): {res}")
         
     # Fallback/also save on Server local disk
     voice_dir = VOICES_DIR / clean_id
@@ -901,11 +923,13 @@ async def create_voice(
     return {"ok": True, "voice_id": clean_id}
 
 @app.delete("/v1/voices/{voice_id}")
-async def delete_voice(voice_id: str):
+async def delete_voice(request: Request, voice_id: str):
+    ws_id = get_workspace_id_from_request(request)
     clean_id = "".join(c for c in voice_id if c.isalnum() or c in ("-", "_")).strip()
     
-    if active_agents:
-        await tunnel_request_to_agent("delete_voice_request", {"voice_id": clean_id})
+    agent_ws = agents_by_workspace.get(ws_id)
+    if agent_ws:
+        await tunnel_request_to_agent("delete_voice_request", {"voice_id": clean_id}, workspace_id=ws_id)
         
     voice_dir = VOICES_DIR / clean_id
     if voice_dir.exists() and voice_dir.is_dir():
@@ -1011,9 +1035,11 @@ async def get_project_fragments(story_id: str, chapter_id: str):
     return [{"index": i, "text": f} for i, f in enumerate(fragments)]
 
 @app.post("/v1/projects/{story_id}/{chapter_id}/run")
-async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Optional[RunPipelineRequest] = None):
-    if not active_agents:
-        raise HTTPException(status_code=400, detail="No active Taka-Agent connected. Please start the agent first.")
+async def run_project_pipeline(request: Request, story_id: str, chapter_id: str, request_data: Optional[RunPipelineRequest] = None):
+    ws_id = get_workspace_id_from_request(request)
+    agent_ws = agents_by_workspace.get(ws_id)
+    if not agent_ws:
+        raise HTTPException(status_code=400, detail=f"No active Taka-Agent connected for workspace '{ws_id}'. Please start taka-agent on your computer.")
     
     project_dir = PROJECTS_DIR / story_id / chapter_id
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -1116,9 +1142,8 @@ async def run_project_pipeline(story_id: str, chapter_id: str, request_data: Opt
                 except Exception as e:
                     print(f"[Server] Failed to read/encode music file: {e}")
 
-    print(f"[Server] Prepared voice config payload to agent: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_payload.items()} }")
-    # Send trigger message to the first available agent
-    agent_ws = list(active_agents)[0]
+    print(f"[Server] Prepared voice config payload to agent ({ws_id}): { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_payload.items()} }")
+    # Send trigger message to target workspace agent
     trigger_message = {
         "type": "run_pipeline",
         "payload": {
@@ -2062,9 +2087,15 @@ async def dashboard():
                 <a id="nav-voices" onclick="showPage('voices')">Voices</a>
                 <a id="nav-music" onclick="openMusicDialog()">Music</a>
             </nav>
-            <div id="agent-badge" class="agent-badge">
-                <span class="badge-dot"></span>
-                <span id="agent-text">Agent Offline</span>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div id="workspace-badge" style="font-size: 0.8rem; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); padding: 0.35rem 0.8rem; border-radius: 20px; display: flex; align-items: center; gap: 0.4rem; cursor: pointer;" onclick="changeWorkspacePrompt()" title="Click to switch workspace">
+                    <span style="opacity: 0.6;">Workspace:</span>
+                    <strong id="workspace-id-text" style="color: var(--primary-light);">...</strong>
+                </div>
+                <div id="agent-badge" class="agent-badge">
+                    <span class="badge-dot"></span>
+                    <span id="agent-text">Agent Offline</span>
+                </div>
             </div>
         </header>
 
@@ -2366,6 +2397,51 @@ async def dashboard():
                 }
             });
 
+            function getWorkspaceId() {
+                let wsId = localStorage.getItem("taka_workspace_id");
+                if (!wsId || wsId === "null" || wsId === "undefined") {
+                    wsId = "";
+                }
+                return wsId;
+            }
+
+            function setWorkspaceId(wsId) {
+                if (wsId) {
+                    localStorage.setItem("taka_workspace_id", wsId.trim());
+                    let el = document.getElementById("workspace-id-text");
+                    if (el) el.innerText = wsId.trim();
+                    fetchStories();
+                    if (typeof fetchVoicesPage === "function") fetchVoicesPage();
+                    updateAgentStatus();
+                }
+            }
+
+            function changeWorkspacePrompt() {
+                let current = getWorkspaceId() || "default";
+                let newWs = prompt("Nhập Workspace ID (tên user máy tính của bạn):", current);
+                if (newWs && newWs.trim()) {
+                    setWorkspaceId(newWs.trim());
+                }
+            }
+
+            // Intercept window.fetch to automatically append X-Workspace-ID header
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {
+                options = options || {};
+                options.headers = options.headers || {};
+                let wsId = getWorkspaceId();
+                if (wsId) {
+                    if (options.headers instanceof Headers) {
+                        options.headers.set("X-Workspace-ID", wsId);
+                    } else if (Array.isArray(options.headers)) {
+                        options.headers.push(["X-Workspace-ID", wsId]);
+                    } else {
+                        options.headers["X-Workspace-ID"] = wsId;
+                    }
+                }
+                return originalFetch.call(this, url, options);
+            };
+
             let currentStory = "";
             let currentChapter = "";
             let timerId = null;
@@ -2380,6 +2456,14 @@ async def dashboard():
                     let welcomeStatus = document.getElementById("welcome-agent-status");
                     let welcomeText = document.getElementById("welcome-status-text");
                     let welcomeDot = document.getElementById("welcome-status-dot");
+
+                    if (data.workspace_id) {
+                        let wsEl = document.getElementById("workspace-id-text");
+                        if (wsEl) wsEl.innerText = data.workspace_id;
+                        if (!localStorage.getItem("taka_workspace_id") && data.workspace_id !== "default_workspace") {
+                            localStorage.setItem("taka_workspace_id", data.workspace_id);
+                        }
+                    }
 
                     if (data.connected) {
                         badge.classList.add("connected");
