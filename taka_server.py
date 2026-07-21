@@ -733,7 +733,9 @@ async def inspect_db(q: str = "da-nguyet-ky"):
             "story_ids": story_ids, 
             "search_results": search_results,
             "knowledge_bases": kb_list,
-            "files": file_list
+            "files": file_list,
+            "env_keys": list(os.environ.keys()),
+            "lore_keeper_url": os.environ.get("LORE_KEEPER_URL", "https://lore-keeper.taka.zone")
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
