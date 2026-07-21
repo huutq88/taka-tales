@@ -685,9 +685,9 @@ async def inspect_db(q: str = "da-nguyet-ky"):
             try:
                 cur.execute(
                     "SELECT id, title, slug, filename, metadata::text FROM documents "
-                    "WHERE title ILIKE %s OR slug ILIKE %s OR filename ILIKE %s OR metadata::text ILIKE %s "
+                    "WHERE id = %s OR title ILIKE %s OR slug ILIKE %s OR filename ILIKE %s OR metadata::text ILIKE %s "
                     "LIMIT 10;",
-                    (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%")
+                    (q, f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%")
                 )
                 search_results = [{"id": r[0], "title": r[1], "slug": r[2], "filename": r[3], "metadata": r[4][:200] if r[4] else None} for r in cur.fetchall()]
             except Exception as e:
