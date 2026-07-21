@@ -1879,7 +1879,12 @@ async def dashboard():
                     </div>
 
                     <div id="video-preview-container" class="video-preview" style="display: none; margin-bottom: 2rem;">
-                        <h3 style="margin-bottom: 1rem;">🎬 Final Output Video</h3>
+                        <h3 style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                            <span>🎬 Final Output Video</span>
+                            <a id="download-video-btn" href="" download class="btn-submit" style="font-size: 0.8rem; padding: 0.4rem 0.9rem; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem; border-radius: 6px; font-weight: 600;">
+                                📥 Tải Video
+                            </a>
+                        </h3>
                         <video id="final-video" controls style="width: 100%; border-radius: 8px; border: 1px solid var(--border); background: #000;">
                             <source src="" type="video/video/mp4">
                             Your browser does not support the video tag.
@@ -2756,6 +2761,10 @@ async def dashboard():
                         let check = await fetch(videoUrl, { method: "HEAD" });
                         if (check.ok) {
                             videoContainer.style.display = "block";
+                            let downloadBtn = document.getElementById("download-video-btn");
+                            if (downloadBtn) {
+                                downloadBtn.href = videoUrl;
+                            }
                             if (videoElement.src !== window.location.origin + videoUrl) {
                                 videoElement.src = videoUrl;
                                 videoElement.load();
