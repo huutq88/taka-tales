@@ -203,9 +203,21 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default")
 
 @app.get("/v1/agent/status")
 async def get_agent_status():
+    connected = len(active_agents) > 0
+    needs_update = False
+    agent_ver = None
+    if connected and agent_status:
+        first_agent = list(agent_status.values())[0]
+        agent_ver = first_agent.get("agent_version")
+        if agent_ver != AGENT_VERSION:
+            needs_update = True
+            
     return {
-        "connected": len(active_agents) > 0,
-        "agents": agent_status
+        "connected": connected,
+        "agents": agent_status,
+        "server_version": AGENT_VERSION,
+        "needs_update": needs_update,
+        "agent_version": agent_ver
     }
 
 @app.get("/v1/system/install-agent.sh", response_class=PlainTextResponse)
@@ -1265,17 +1277,32 @@ async def welcome_page():
                     let welcomeDot = document.getElementById("welcome-status-dot");
 
                     if (data.connected) {
-                        if (welcomeStatus) {
-                            welcomeStatus.style.background = "rgba(16, 185, 129, 0.1)";
-                            welcomeStatus.style.borderColor = "rgba(16, 185, 129, 0.2)";
-                            welcomeStatus.style.color = "#10b981";
-                        }
-                        if (welcomeText) {
-                            welcomeText.innerText = "Taka Agent connected successfully!";
-                        }
-                        if (welcomeDot) {
-                            welcomeDot.style.background = "#10b981";
-                            welcomeDot.style.boxShadow = "0 0 8px #10b981";
+                        if (data.needs_update) {
+                            if (welcomeStatus) {
+                                welcomeStatus.style.background = "rgba(245, 158, 11, 0.1)";
+                                welcomeStatus.style.borderColor = "rgba(245, 158, 11, 0.2)";
+                                welcomeStatus.style.color = "#f59e0b";
+                            }
+                            if (welcomeText) {
+                                welcomeText.innerHTML = `Taka Agent Connected (v${data.agent_version}) but an update is available (v${data.server_version})! Run the installer above to update.`;
+                            }
+                            if (welcomeDot) {
+                                welcomeDot.style.background = "#f59e0b";
+                                welcomeDot.style.boxShadow = "0 0 8px #f59e0b";
+                            }
+                        } else {
+                            if (welcomeStatus) {
+                                welcomeStatus.style.background = "rgba(16, 185, 129, 0.1)";
+                                welcomeStatus.style.borderColor = "rgba(16, 185, 129, 0.2)";
+                                welcomeStatus.style.color = "#10b981";
+                            }
+                            if (welcomeText) {
+                                welcomeText.innerText = "Taka Agent connected successfully!";
+                            }
+                            if (welcomeDot) {
+                                welcomeDot.style.background = "#10b981";
+                                welcomeDot.style.boxShadow = "0 0 8px #10b981";
+                            }
                         }
                     } else {
                         if (welcomeStatus) {
@@ -2104,19 +2131,37 @@ async def dashboard():
                         badge.classList.add("connected");
                         let info = Object.values(data.agents)[0] || {};
                         let version = info.agent_version || "";
-                        text.innerText = "Agent Connected " + version;
                         
-                        if (welcomeStatus) {
-                            welcomeStatus.style.background = "rgba(16, 185, 129, 0.1)";
-                            welcomeStatus.style.borderColor = "rgba(16, 185, 129, 0.2)";
-                            welcomeStatus.style.color = "#10b981";
-                        }
-                        if (welcomeText) {
-                            welcomeText.innerText = "Taka Agent connected successfully! Select a story chapter from the list on the left to start.";
-                        }
-                        if (welcomeDot) {
-                            welcomeDot.style.background = "#10b981";
-                            welcomeDot.style.boxShadow = "0 0 8px #10b981";
+                        if (data.needs_update) {
+                            text.innerHTML = `Agent Connected ${version} <span style="background: #f59e0b; color: #000; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-left: 0.5rem; display: inline-block;">Update Available (v${data.server_version})</span>`;
+                            
+                            if (welcomeStatus) {
+                                welcomeStatus.style.background = "rgba(245, 158, 11, 0.1)";
+                                welcomeStatus.style.borderColor = "rgba(245, 158, 11, 0.2)";
+                                welcomeStatus.style.color = "#f59e0b";
+                            }
+                            if (welcomeText) {
+                                welcomeText.innerHTML = `Taka Agent Connected (v${version}) but an update is available (v${data.server_version})! <a href="/v1/system/install-agent.sh" style="color: #f59e0b; font-weight: bold; text-decoration: underline;">Update Now</a>`;
+                            }
+                            if (welcomeDot) {
+                                welcomeDot.style.background = "#f59e0b";
+                                welcomeDot.style.boxShadow = "0 0 8px #f59e0b";
+                            }
+                        } else {
+                            text.innerText = "Agent Connected " + version;
+                            
+                            if (welcomeStatus) {
+                                welcomeStatus.style.background = "rgba(16, 185, 129, 0.1)";
+                                welcomeStatus.style.borderColor = "rgba(16, 185, 129, 0.2)";
+                                welcomeStatus.style.color = "#10b981";
+                            }
+                            if (welcomeText) {
+                                welcomeText.innerText = "Taka Agent connected successfully! Select a story chapter from the list on the left to start.";
+                            }
+                            if (welcomeDot) {
+                                welcomeDot.style.background = "#10b981";
+                                welcomeDot.style.boxShadow = "0 0 8px #10b981";
+                            }
                         }
                     } else {
                         badge.classList.remove("connected");
