@@ -885,7 +885,10 @@ async def sync_local_projects_to_server():
         return
 
     import aiohttp
-    server_base = SERVER_URL.replace("ws://", "http://").replace("wss://", "https://")
+    if "taka.zone" in SERVER_URL or "https" in SERVER_URL:
+        server_base = SERVER_URL.replace("http://", "https://").replace("ws://", "https://").replace("wss://", "https://")
+    else:
+        server_base = SERVER_URL.replace("ws://", "http://").replace("wss://", "https://")
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -918,9 +921,11 @@ async def sync_local_projects_to_server():
                             data = aiohttp.FormData()
                             data.add_field('file_path', rel_path)
                             data.add_field('file', open(local_file, 'rb'), filename=local_file.name)
-                            async with session.post(upload_url, data=data, timeout=60) as resp:
+                            async with session.post(upload_url, data=data, timeout=60, allow_redirects=True) as resp:
                                 if resp.status == 200:
                                     print(f"[Agent Sync] Uploaded {story_id}/{chapter_id}/{rel_path} successfully.")
+                                else:
+                                    print(f"[Agent Sync] Upload {rel_path} status: {resp.status}")
                         except Exception as err:
                             print(f"[Agent Sync] Failed to upload {rel_path}: {err}")
     except Exception as ex:
