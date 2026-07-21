@@ -75,7 +75,7 @@ async def check_environment() -> dict:
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.2.6"
+        "agent_version": "0.2.7"
     }
 
 async def setup_omnivoice():
@@ -151,7 +151,10 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
 
     print(f"[Agent] Executing OmniVoice CLI command: {' '.join(cmd)}")
     try:
-        res = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        import os
+        sub_env = os.environ.copy()
+        sub_env["PYTHONPATH"] = str(OMNIVOICE_PATH)
+        res = subprocess.run(cmd, check=True, capture_output=True, text=True, env=sub_env, cwd=str(OMNIVOICE_PATH))
         print(f"[Agent] Generated OmniVoice audio at {out}")
         if res.stdout:
             print(f"[Agent] OmniVoice stdout: {res.stdout}")
