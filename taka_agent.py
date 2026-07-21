@@ -882,7 +882,7 @@ async def main():
     
     while True:
         try:
-            async with websockets.connect(ws_url, ping_interval=60, ping_timeout=60) as websocket:
+            async with websockets.connect(ws_url, ping_interval=60, ping_timeout=60, max_size=100 * 1024 * 1024) as websocket:
                 print("[Agent] Connected to Taka Server successfully.")
                 active_websocket = websocket
                 
