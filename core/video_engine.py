@@ -1068,40 +1068,13 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
         words_list = sub.split()
         num_words = len(words_list)
 
-        # Thread-safe local cache indexed by timestamp t
-        frame_cache = {}
-
-        def get_frame_at_t(t):
-            if t in frame_cache:
-                return frame_cache[t]
-                
-            highlight_idx = -1
-            if num_words > 0 and sub_duration > 0:
-                # Dynamic active duration based on natural reading speed (approx 2.3 words/sec)
-                # to prevent crawling highlights on long instrumental/pause slides.
-                active_duration = min(sub_duration, max(0.5, num_words / 2.3))
-                highlight_idx = min(num_words - 1, int(t / active_duration * num_words))
-            
-            img_frame = _make_subtitle_frame(sub, highlight_idx)
-            frame_cache[t] = img_frame
-            return img_frame
-
-        def make_dynamic_sub_frame_rgb(t):
-            img_frame = get_frame_at_t(t)
-            import numpy as np
-            return np.array(img_frame.convert("RGB"))
-
-        def make_dynamic_sub_frame_mask(t):
-            img_frame = get_frame_at_t(t)
-            import numpy as np
-            alpha = np.array(img_frame)[:, :, 3]
-            return alpha.astype(float) / 255.0
-
-        sub_clip = (VideoClip(make_dynamic_sub_frame_rgb, duration=sub_duration)
+        # Render static subtitle frame once (no karaoke highlighting)
+        img_frame = _make_subtitle_frame(sub, highlight_word_idx=-1)
+        import numpy as np
+        img_array = np.array(img_frame)
+        sub_clip = (ImageClip(img_array)
+                    .set_duration(sub_duration)
                     .set_start(current_time))
-        mask_clip = (VideoClip(make_dynamic_sub_frame_mask, ismask=True, duration=sub_duration)
-                     .set_start(current_time))
-        sub_clip.mask = mask_clip
 
         txt_clips.append(sub_clip)
         current_time += sub_duration
