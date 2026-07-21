@@ -587,6 +587,57 @@ def get_processed_watermark() -> str | None:
     except Exception as e:
         print(f"Error processing watermark: {e}")
         return None
+def generate_procedural_waveform_frames(target_w: int, target_h: int) -> list:
+    from PIL import Image as PILImage, ImageDraw
+    import math
+    frames = []
+    num_frames = 100
+    num_bars = 50
+    bar_width = max(2, int(target_w / (num_bars * 1.5)))
+    spacing = max(1, int(bar_width * 0.3))
+    total_bars_width = num_bars * bar_width + (num_bars - 1) * spacing
+    start_x = (target_w - total_bars_width) // 2
+    
+    for f in range(num_frames):
+        img = PILImage.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        for i in range(num_bars):
+            # Center-heavy distribution (bell-like shape)
+            dist_from_center = abs(i - (num_bars / 2)) / (num_bars / 2)
+            bell = math.exp(-4.0 * (dist_from_center ** 2)) # gaussian bell curve
+            
+            # Oscillating waves
+            w1 = math.sin(f * 0.12 + i * 0.25)
+            w2 = math.cos(f * 0.08 - i * 0.15)
+            oscillation = 0.2 + 0.8 * abs(0.6 * w1 + 0.4 * w2)
+            
+            height_factor = bell * oscillation * 0.85
+            bar_h = max(3, int(target_h * height_factor))
+            
+            x0 = start_x + i * (bar_width + spacing)
+            y0 = target_h - bar_h
+            x1 = x0 + bar_width
+            y1 = target_h
+            
+            # Cyan-to-magenta-to-yellow neon color mapping
+            t_color = i / (num_bars - 1)
+            if t_color < 0.5:
+                factor = t_color * 2.0
+                r = int(255 * factor)
+                g = int(230 * (1.0 - factor))
+                b = int(255 * (1.0 - factor) + 180 * factor)
+            else:
+                factor = (t_color - 0.5) * 2.0
+                r = int(255 * (1.0 - factor) + 100 * factor)
+                g = int(50 * factor)
+                b = int(180 * (1.0 - factor) + 255 * factor)
+                
+            draw.rectangle([x0, y0, x1, y1], fill=(r, g, b, 230))
+            
+        frames.append(img)
+    return frames
+
 def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False) -> ImageClip:
     duration = clip.duration
     w, h = clip.size
@@ -612,6 +663,11 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False) ->
                     waveform_frames.append(resized)
             except Exception as e:
                 print(f"[Video Engine] Error loading waveform.gif in Ken Burns: {e}")
+        else:
+            # Fallback to dynamic neon waveform frames
+            target_w = int(0.70 * w)
+            target_h = int(180 * (target_w / 1367))
+            waveform_frames = generate_procedural_waveform_frames(target_w, target_h)
 
     # Initialize falling particles if EFFECT_TYPE is enabled
     particles = []
@@ -716,16 +772,19 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
     audio_wav = project_dir / f"audio/voiceover{idx}.wav"
     audio_mp3 = project_dir / f"audio/voiceover{idx}.mp3"
 
+    is_music = "projects/music" in str(project_dir)
+
     audio_clip = AudioFileClip(str(audio_mp3 if audio_mp3.exists() else audio_wav))
-    audio_clip = audio_clip.subclip(0, audio_clip.duration - 0.1)
-    audio_clip = audio_clip.audio_fadein(0.05).audio_fadeout(0.05)
-    audio_clip = concatenate_audioclips(
-        [
-            AudioClip(lambda t: 0, duration=0.5),
-            audio_clip,
-            AudioClip(lambda t: 0, duration=0.5),
-        ]
-    )
+    if not is_music:
+        audio_clip = audio_clip.subclip(0, audio_clip.duration - 0.1)
+        audio_clip = audio_clip.audio_fadein(0.05).audio_fadeout(0.05)
+        audio_clip = concatenate_audioclips(
+            [
+                AudioClip(lambda t: 0, duration=0.5),
+                audio_clip,
+                AudioClip(lambda t: 0, duration=0.5),
+            ]
+        )
 
     # Load project_config.json if it exists
     config_path = project_dir / "project_config.json"
@@ -918,6 +977,10 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
                 print(f"[Video Engine] Loaded {len(frames)} frames from waveform.gif (resized to {target_w}x{target_h})")
             except Exception as e:
                 print(f"[Video Engine] Error loading waveform.gif: {e}")
+        else:
+            target_w = int(0.70 * target_width)
+            target_h = int(180 * (target_w / 1367))
+            frames = generate_procedural_waveform_frames(target_w, target_h)
         return frames
 
     txt_clips = []
@@ -948,7 +1011,8 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
                 
             highlight_idx = -1
             if num_words > 0 and sub_duration > 0:
-                highlight_idx = min(num_words - 1, int(t / sub_duration * num_words))
+                active_duration = sub_duration * 0.8
+                highlight_idx = min(num_words - 1, int(t / active_duration * num_words))
             
             img_frame = _make_subtitle_frame(sub, highlight_idx)
             last_t = t
