@@ -13,7 +13,11 @@ app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
 AGENT_VERSION = "0.2.4"
 
 BASE_DIR = pathlib.Path(__file__).parent
-DATA_DIR = pathlib.Path.home() / ".taka-agent"
+DATA_DIR_ENV = os.environ.get("TAKA_DATA_DIR")
+if DATA_DIR_ENV:
+    DATA_DIR = pathlib.Path(DATA_DIR_ENV).resolve()
+else:
+    DATA_DIR = pathlib.Path.home() / ".taka-agent"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 PROJECTS_DIR = DATA_DIR / "projects"
