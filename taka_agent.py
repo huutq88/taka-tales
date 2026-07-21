@@ -820,14 +820,42 @@ def start_local_media_server():
 
     class CORSHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(projects_dir), **kwargs)
-            
+            p_dir = pathlib.Path.home() / ".taka-agent" / "projects"
+            if not p_dir.exists():
+                p_dir = AGENT_DIR / "projects"
+            super().__init__(*args, directory=str(p_dir), **kwargs)
+
+        def translate_path(self, path):
+            filepath = pathlib.Path(super().translate_path(path))
+            if filepath.exists() and filepath.is_file():
+                return str(filepath)
+                
+            # If not found, check image extension fallbacks (.jpg, .jpeg, .png, .webp)
+            if filepath.parent.name == "images" or "images" in filepath.parts:
+                stem = filepath.stem
+                parent = filepath.parent
+                for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                    alt_img = parent / f"{stem}{ext}"
+                    if alt_img.exists() and alt_img.is_file():
+                        return str(alt_img)
+                        
+            # Check video name fallback
+            if filepath.name == "final.mp4":
+                chapter_dir = filepath.parent
+                story_id = chapter_dir.parent.name
+                chapter_id = chapter_dir.name
+                alt_video = chapter_dir / f"{story_id}_{chapter_id}.mp4"
+                if alt_video.exists() and alt_video.is_file():
+                    return str(alt_video)
+                    
+            return str(filepath)
+
         def end_headers(self):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
             self.send_header('Access-Control-Allow-Headers', '*')
             super().end_headers()
-            
+
         def do_OPTIONS(self):
             self.send_response(200)
             self.end_headers()
