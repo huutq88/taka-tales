@@ -634,7 +634,7 @@ async def test_db_connection():
                 pass
 
 @app.get("/v1/inspect-db")
-async def inspect_db():
+async def inspect_db(q: str = "da-nguyet-ky"):
     conn = None
     try:
         from fastapi.concurrency import run_in_threadpool
@@ -645,6 +645,7 @@ async def inspect_db():
         tables = []
         samples = {}
         story_ids = []
+        search_results = []
         try:
             # 1. Get all table names
             try:
@@ -667,13 +668,25 @@ async def inspect_db():
                 story_ids = [r[0] for r in cur.fetchall()]
             except Exception as e:
                 story_ids = [f"Error: {e}"]
+
+            # 4. Search for query string in documents
+            try:
+                cur.execute(
+                    "SELECT id, title, slug, filename, metadata::text FROM documents "
+                    "WHERE title ILIKE %s OR slug ILIKE %s OR filename ILIKE %s OR metadata::text ILIKE %s "
+                    "LIMIT 10;",
+                    (f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%")
+                )
+                search_results = [{"id": r[0], "title": r[1], "slug": r[2], "filename": r[3], "metadata": r[4][:200] if r[4] else None} for r in cur.fetchall()]
+            except Exception as e:
+                search_results = [f"Error: {e}"]
         finally:
             try:
                 cur.close()
             except Exception:
                 pass
                 
-        return {"ok": True, "tables": tables, "samples": samples, "story_ids": story_ids}
+        return {"ok": True, "tables": tables, "samples": samples, "story_ids": story_ids, "search_results": search_results}
     except Exception as e:
         return {"ok": False, "error": str(e)}
     finally:
