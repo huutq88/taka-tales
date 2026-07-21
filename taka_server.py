@@ -652,6 +652,10 @@ async def inspect_db(q: str = "da-nguyet-ky"):
                 cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
                 tables = [r[0] for r in cur.fetchall()]
             except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 tables = [f"Error: {e}"]
             
             # 2. Get columns
@@ -660,6 +664,10 @@ async def inspect_db(q: str = "da-nguyet-ky"):
                     cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{t}';")
                     samples[t] = [r[0] for r in cur.fetchall()]
                 except Exception as e:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
                     samples[t] = f"Error: {e}"
             
             # 3. Check distinct story_ids in agent_documents
@@ -667,6 +675,10 @@ async def inspect_db(q: str = "da-nguyet-ky"):
                 cur.execute("SELECT DISTINCT story_id::text FROM agent_documents;")
                 story_ids = [r[0] for r in cur.fetchall()]
             except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 story_ids = [f"Error: {e}"]
 
             # 4. Search for query string in documents
@@ -679,6 +691,10 @@ async def inspect_db(q: str = "da-nguyet-ky"):
                 )
                 search_results = [{"id": r[0], "title": r[1], "slug": r[2], "filename": r[3], "metadata": r[4][:200] if r[4] else None} for r in cur.fetchall()]
             except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 search_results = [f"Error: {e}"]
         finally:
             try:
