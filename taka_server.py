@@ -2410,7 +2410,7 @@ async def dashboard():
                 let limitFragments = parseInt(document.getElementById("vc-limit-fragments").value) || 0;
                 let useWatermark = document.getElementById("story-use-watermark").checked;
                 let useSubtitles = document.getElementById("story-use-subtitles").checked;
-                let forceRerun = document.getElementById("story-force-rerun").checked;
+                let forceRerun = document.getElementById("story-force-rerun") ? document.getElementById("story-force-rerun").checked : false;
 
                 let voiceConfig = {
                     provider: "omnivoice",
@@ -2808,7 +2808,7 @@ async def dashboard():
                 let useWatermark = document.getElementById("music-use-watermark").checked;
                 let useSubtitles = document.getElementById("music-use-subtitles").checked;
                 let useWhisper = document.getElementById("music-use-whisper").checked;
-                let forceRerun = document.getElementById("music-force-rerun").checked;
+                let forceRerun = document.getElementById("music-force-rerun") ? document.getElementById("music-force-rerun").checked : false;
                 
                 let localPath = pathInput.value.trim();
                 let isUpload = musicFile && localPath.startsWith("Staged Upload:");
