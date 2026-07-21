@@ -12,7 +12,7 @@ import shutil
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
 AGENT_VERSION = "0.3.0"
 
-LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "https://lore-keeper.taka.zone"
+LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "http://lore-keeper:8080"
 LORE_KEEPER_URL = LORE_KEEPER_URL.rstrip("/")
 
 BASE_DIR = pathlib.Path(__file__).parent
@@ -70,36 +70,50 @@ if _CONFIG_PATH.exists():
     config.read(_CONFIG_PATH, encoding="utf-8")
 
 def fetch_chapter_content(chapter_id: str) -> str:
-    """Fetches chapter content directly from the Lore-Keeper HTTP API."""
-    try:
-        url = f"{LORE_KEEPER_URL}/api/chapters/{chapter_id}"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("ok") and "chapter" in data:
-            return data["chapter"]["content"]
-        else:
-            raise ValueError("Invalid response format from Lore-Keeper API")
-    except Exception as api_err:
-        raise RuntimeError(f"Failed to fetch chapter content from Lore-Keeper API: {api_err}")
+    """Fetches chapter content directly from the Lore-Keeper HTTP API with fallback to public domain."""
+    urls_to_try = [LORE_KEEPER_URL]
+    if "taka.zone" not in LORE_KEEPER_URL:
+        urls_to_try.append("https://lore-keeper.taka.zone")
+        
+    last_err = None
+    for base_url in urls_to_try:
+        try:
+            url = f"{base_url.rstrip('/')}/api/chapters/{chapter_id}"
+            resp = requests.get(url, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("ok") and "chapter" in data:
+                return data["chapter"]["content"]
+        except Exception as api_err:
+            last_err = api_err
+            continue
+
+    raise RuntimeError(f"Failed to fetch chapter content from Lore-Keeper API: {last_err}")
 
 def fetch_story_chapters(story_id: str) -> list:
-    """Fetches story chapters directly from the Lore-Keeper HTTP API."""
-    try:
-        url = f"{LORE_KEEPER_URL}/api/stories/{story_id}/chapters"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("ok") and "chapters" in data:
-            return [{"id": ch["id"], "title": ch["title"]} for ch in data["chapters"]]
-        else:
-            raise ValueError("Invalid response format from Lore-Keeper API")
-    except Exception as api_err:
-        print(f"[Server] Failed to fetch story chapters from Lore-Keeper API: {api_err}")
-        return [
-            {"id": f"chap_{story_id}_1", "title": f"Chương 1 (Mẫu - Lỗi kết nối: {str(api_err)[:20]})"},
-            {"id": f"chap_{story_id}_2", "title": f"Chương 2 (Mẫu)"}
-        ]
+    """Fetches story chapters directly from the Lore-Keeper HTTP API with fallback to public domain."""
+    urls_to_try = [LORE_KEEPER_URL]
+    if "taka.zone" not in LORE_KEEPER_URL:
+        urls_to_try.append("https://lore-keeper.taka.zone")
+        
+    last_err = None
+    for base_url in urls_to_try:
+        try:
+            url = f"{base_url.rstrip('/')}/api/stories/{story_id}/chapters"
+            resp = requests.get(url, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("ok") and "chapters" in data:
+                return [{"id": ch["id"], "title": ch["title"]} for ch in data["chapters"]]
+        except Exception as api_err:
+            last_err = api_err
+            continue
+
+    print(f"[Server] Failed to fetch story chapters from Lore-Keeper API: {last_err}")
+    return [
+        {"id": f"chap_{story_id}_1", "title": f"Chương 1 (Mẫu - Lỗi kết nối: {str(last_err)[:20]})"},
+        {"id": f"chap_{story_id}_2", "title": f"Chương 2 (Mẫu)"}
+    ]
 
 # Serve output videos and media
 @app.get("/media/{story_id}/{chapter_id}/final.mp4")
