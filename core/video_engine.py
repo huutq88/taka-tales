@@ -1093,7 +1093,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
     video = CompositeVideoClip([image_clip.set_audio(audio_clip)] + extra_clips + txt_clips)
     out = project_dir / f"videos/video{idx}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
-    video.write_videofile(str(out), fps=FPS, codec="libx264", logger=None)
+    video.write_videofile(str(out), fps=FPS, codec="libx264", audio_codec="aac", logger=None)
 
 
 def concat_clips(project_dir: pathlib.Path, start_idx: int = None, end_idx: int = None) -> List[VideoFileClip]:
@@ -1125,7 +1125,7 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
             print(f"[Warning] Background music path not found: {bg_path}")
 
     out = project_dir / f"{project_name}.mp4"
-    final.write_videofile(str(out), fps=FPS, codec="libx264")
+    final.write_videofile(str(out), fps=FPS, codec="libx264", audio_codec="aac")
 
 
 def transcribe_audio_file(audio_path: pathlib.Path) -> List[Dict[str, any]]:
