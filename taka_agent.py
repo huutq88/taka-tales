@@ -75,7 +75,7 @@ async def check_environment() -> dict:
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.2.5"
+        "agent_version": "0.2.6"
     }
 
 async def setup_omnivoice():
@@ -840,7 +840,10 @@ async def main():
                         story_folders = []
                         local_files = {}
                         
-                        projects_dir = AGENT_DIR / "projects"
+                        projects_dir = pathlib.Path.home() / ".taka-agent" / "projects"
+                        if not projects_dir.exists():
+                            projects_dir = AGENT_DIR / "projects"
+                            
                         if projects_dir.exists():
                             for item in projects_dir.iterdir():
                                 if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1":
@@ -929,7 +932,10 @@ async def main():
                     elif msg_type == "create_project_request":
                         request_id = message.get("request_id")
                         story_id = payload.get("story_id")
-                        story_dir = AGENT_DIR / "projects" / story_id
+                        projects_base = pathlib.Path.home() / ".taka-agent" / "projects"
+                        if not projects_base.exists():
+                            projects_base = AGENT_DIR / "projects"
+                        story_dir = projects_base / story_id
                         story_dir.mkdir(parents=True, exist_ok=True)
                         await websocket.send(json.dumps({
                             "type": "create_project_response",
@@ -943,7 +949,10 @@ async def main():
                         local_path = payload.get("local_path", "")
                         music_b64 = payload.get("music_b64")
                         
-                        project_dir = AGENT_DIR / "projects" / "music" / project_name
+                        projects_base = pathlib.Path.home() / ".taka-agent" / "projects"
+                        if not projects_base.exists():
+                            projects_base = AGENT_DIR / "projects"
+                        project_dir = projects_base / "music" / project_name
                         if project_dir.exists():
                             import shutil
                             shutil.rmtree(project_dir)
