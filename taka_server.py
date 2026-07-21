@@ -151,17 +151,41 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
         if res and isinstance(res, dict) and res.get("exists") and res.get("content_b64"):
             import base64
             content_bytes = base64.b64decode(res["content_b64"])
+            content_type = res.get("content_type", "application/octet-stream")
             
-            # Save file to server disk cache for future fast serves
-            try:
-                save_name = res.get("filename") or pathlib.Path(file_path).name
-                save_path = (base_dir / file_path).parent / save_name
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(save_path, "wb") as sf:
-                    sf.write(content_bytes)
-                found_local = save_path
-            except Exception as cache_err:
-                print(f"[Server] Failed to cache tunneled media file: {cache_err}")
+            # Pure in-memory streaming - DO NOT WRITE OR SAVE ANY FILE TO RAILWAY DISK!
+            file_size = len(content_bytes)
+            if request.method == "HEAD":
+                return Response(status_code=200, headers={
+                    "Content-Type": content_type,
+                    "Content-Length": str(file_size),
+                    "Accept-Ranges": "bytes"
+                })
+
+            range_header = request.headers.get("range")
+            if range_header and range_header.startswith("bytes="):
+                try:
+                    ranges = range_header.split("=")[1].split("-")
+                    start = int(ranges[0]) if ranges[0] else 0
+                    end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else file_size - 1
+                    if start < file_size:
+                        end = min(end, file_size - 1)
+                        length = end - start + 1
+                        chunk = content_bytes[start:start+length]
+                        return Response(
+                            content=chunk,
+                            status_code=206,
+                            headers={
+                                "Content-Type": content_type,
+                                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                                "Content-Length": str(length),
+                                "Accept-Ranges": "bytes"
+                            }
+                        )
+                except Exception:
+                    pass
+
+            return Response(content=content_bytes, media_type=content_type, headers={"Accept-Ranges": "bytes"})
 
     if found_local and found_local.exists():
         import mimetypes
