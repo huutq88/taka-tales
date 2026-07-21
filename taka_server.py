@@ -658,10 +658,30 @@ async def list_projects():
 @app.get("/v1/projects/{story_id}/{chapter_id}/status")
 async def get_project_status(story_id: str, chapter_id: str):
     job_key = f"{story_id}/{chapter_id}"
-    job_state = project_jobs.get(job_key, {"status": "idle"})
-    final_file = PROJECTS_DIR / story_id / chapter_id / "final.mp4"
-    if final_file.exists() and job_state.get("status") == "idle":
+    job_state = project_jobs.get(job_key, {"status": "idle"}).copy()
+    chapter_dir = PROJECTS_DIR / story_id / chapter_id
+    
+    final_file = chapter_dir / "final.mp4"
+    if not final_file.exists():
+        final_file = chapter_dir / f"{story_id}_{chapter_id}.mp4"
+        
+    if final_file.exists() and job_state.get("status") in ("idle", None):
         job_state["status"] = "completed"
+        
+    # Dynamically restore fragment count from disk if total_fragments is missing (e.g. after server restart)
+    if not job_state.get("total_fragments"):
+        max_frags = 0
+        for sub_dir in ["images", "audio", "videos", "text"]:
+            d = chapter_dir / sub_dir
+            if d.exists() and d.is_dir():
+                count = len([f for f in d.iterdir() if not f.name.startswith(".")])
+                if count > max_frags:
+                    max_frags = count
+        if max_frags > 0:
+            job_state["total_fragments"] = max_frags
+            if job_state.get("status") == "completed":
+                job_state["current_fragment"] = max_frags
+                
     return job_state
 
 class VoiceConfig(BaseModel):
