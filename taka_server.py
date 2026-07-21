@@ -2240,17 +2240,32 @@ async def dashboard():
                         chList.className = "chapter-list";
                         
                         s.chapters.forEach(c => {
+                            let displayTitle = c.title;
+                            if (s.story_id !== "music") {
+                                let idx = "";
+                                let match = c.id.match(/chuong[-_](\d+)/i) || c.id.match(/chapter[-_](\d+)/i) || c.id.match(/(\d+)/);
+                                if (match) {
+                                    idx = match[1];
+                                }
+                                let cleanTitle = c.title.replace(/^(Chương|chuong|chapter)\s*\d+[\s-:]*/i, "").trim();
+                                if (idx !== "") {
+                                    displayTitle = `Chương ${idx}` + (cleanTitle ? `: ${cleanTitle}` : "");
+                                } else {
+                                    displayTitle = cleanTitle || c.title;
+                                }
+                            }
+
                             let activeClass = (s.story_id === currentStory && c.id === currentChapter) ? "active" : "";
                             let item = document.createElement("div");
                             item.className = "chapter-item " + activeClass;
-                            item.onclick = () => selectChapter(s.story_id, c.id, c.title);
+                            item.onclick = () => selectChapter(s.story_id, c.id, displayTitle);
                             
                             let btnId = `btn-${s.story_id}-${c.id}`;
                             let isRunning = (c.status !== 'idle' && c.status !== 'completed');
                             
                             item.innerHTML = `
                                 <div class="chapter-info">
-                                    <h4>${c.title}</h4>
+                                    <h4>${displayTitle}</h4>
                                     <p>${c.has_video ? "🎬 Video completed" : "No video output yet"}</p>
                                 </div>
                             `;
