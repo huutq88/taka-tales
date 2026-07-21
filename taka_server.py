@@ -1947,12 +1947,15 @@ async def dashboard():
                 </div>
 
                 <!-- Watermark and Subtitle Toggles -->
-                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1.2rem; margin-bottom: 1.5rem;">
+                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1.2rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
                         <input type="checkbox" id="story-use-watermark" checked style="width: auto; margin-bottom: 0;"> Gắn Watermark
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
                         <input type="checkbox" id="story-use-subtitles" checked style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--danger); font-weight: bold;">
+                        <input type="checkbox" id="story-force-rerun" style="width: auto; margin-bottom: 0;"> Chạy lại từ đầu (Xóa Cache)
                     </label>
                 </div>
 
@@ -2006,6 +2009,9 @@ async def dashboard():
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
                         <input type="checkbox" id="music-use-whisper" style="width: auto; margin-bottom: 0;"> Nhận diện Whisper
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--danger); font-weight: bold;">
+                        <input type="checkbox" id="music-force-rerun" style="width: auto; margin-bottom: 0;"> Chạy lại từ đầu (Xóa Cache)
                     </label>
                 </div>
 
