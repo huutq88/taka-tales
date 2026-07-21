@@ -3271,7 +3271,7 @@ async def dashboard():
 
             function playVideoPreview(url, fragIdx) {
                 showPreviewModal(`Frag #${fragIdx} - Video segment`, `
-                    <video src="${url}" controls autoplay style="width: 100%; max-width: 280px; aspect-ratio: 9 / 16; max-height: 60vh; border-radius: 8px; background: #000; object-fit: contain;">
+                    <video src="${url}" controls autoplay style="max-width: 100%; max-height: 60vh; aspect-ratio: 9 / 16; border-radius: 8px; background: #000; object-fit: contain;">
                         Your browser does not support the video element.
                     </video>
                 `);
