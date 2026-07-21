@@ -75,7 +75,7 @@ async def check_environment() -> dict:
         "mps_available": mps_available,
         "ollama_active": ollama_active,
         "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.2.8"
+        "agent_version": "0.2.9"
     }
 
 async def setup_omnivoice():
@@ -143,7 +143,12 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         if torch.cuda.is_available():
             device = "cuda"
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = "mps"
+            # Voice cloning on MPS causes PyTorch Segfault (exit code 139) on macOS.
+            # We must use CPU for clone mode, but can use MPS for design/auto modes.
+            is_clone = False
+            if voice_config and voice_config.get("omnivoice_mode") == "clone":
+                is_clone = True
+            device = "cpu" if is_clone else "mps"
         else:
             device = "cpu"
     except ImportError:
@@ -172,11 +177,13 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         if res.stderr:
             print(f"[Agent] OmniVoice stderr: {res.stderr}")
     except subprocess.CalledProcessError as e:
-        print(f"[Agent] OmniVoice script failed: {e.stderr}. Falling back to edge-tts.")
-        asyncio.run(video_engine.tts_edge(text, out))
+        print(f"[Agent] OmniVoice script failed: {e.stderr}")
+        raise RuntimeError(f"OmniVoice synthesis failed: {e.stderr}")
 
 async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
     """Routing helper that generates voiceover according to provider settings."""
+    from core.text_formatter import format_for_voice
+    text = format_for_voice(text)
     default_config = {
         "provider": config.get("AUDIO", "TTS_PROVIDER", fallback="edge"),
         "omnivoice_mode": config.get("AUDIO", "OMNIVOICE_MODE", fallback="auto"),
