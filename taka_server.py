@@ -1020,27 +1020,29 @@ async def delete_voice(request: Request, voice_id: str):
 @app.get("/v1/projects/{story_id}/{chapter_id}/fragments")
 async def get_project_fragments(story_id: str, chapter_id: str):
     content = ""
-    if story_id == "music":
-        project_dir = PROJECTS_DIR / "music" / chapter_id
-        story_file = project_dir / "story.txt"
-        if story_file.exists():
+    project_dir = PROJECTS_DIR / story_id / chapter_id
+    story_file = project_dir / "story.txt"
+    if story_file.exists():
+        try:
             content = story_file.read_text(encoding="utf-8")
-        else:
-            # Fallback to source story file in downloaded_albums
+        except Exception:
+            pass
+
+    if story_id == "music":
+        if not content and (PROJECTS_DIR.parent / "downloaded_albums/music").exists():
             music_story_dir = PROJECTS_DIR.parent / "downloaded_albums/music"
-            if music_story_dir.exists():
-                for p in music_story_dir.glob("*.txt"):
-                    if chapter_id.replace("_", " ").replace("-", " ").lower() in p.name.lower():
-                        content = p.read_text(encoding="utf-8")
-                        break
-    else:
+            for p in music_story_dir.glob("*.txt"):
+                if chapter_id.replace("_", " ").replace("-", " ").lower() in p.name.lower():
+                    content = p.read_text(encoding="utf-8")
+                    break
+    elif not content:
         try:
             from fastapi.concurrency import run_in_threadpool
             content = await run_in_threadpool(fetch_chapter_content, chapter_id)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch content from Lore-Keeper: {str(e)}")
+            print(f"[Server] Warning: Failed to fetch fragments from Lore-Keeper: {e}")
 
-    if not content.strip():
+    if not content or not content.strip():
         return []
 
     if story_id == "music":
@@ -2831,10 +2833,11 @@ async def dashboard():
                 fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/fragments`)
                     .then(res => res.json())
                     .then(frags => {
-                        storyFragments = frags;
+                        storyFragments = Array.isArray(frags) ? frags : [];
                         renderStoryFragments();
                     })
                     .catch(err => {
+                        storyFragments = [];
                         listContainer.innerHTML = `<p style="color: #ff6b6b; font-size: 0.85rem; padding: 0.5rem;">Failed to load fragments: ${err}</p>`;
                     });
                 
@@ -2849,6 +2852,7 @@ async def dashboard():
                 let listContainer = document.getElementById("story-frag-list");
                 listContainer.innerHTML = "";
                 
+                if (!Array.isArray(storyFragments)) storyFragments = [];
                 let filtered = storyFragments;
                 if (filterKeyword.trim()) {
                     let kw = filterKeyword.toLowerCase();
