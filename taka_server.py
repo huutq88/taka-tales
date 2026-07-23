@@ -892,6 +892,7 @@ class VoiceConfig(BaseModel):
 class RunPipelineRequest(BaseModel):
     voice_config: Optional[VoiceConfig] = None
     art_style: Optional[str] = None
+    story_text: Optional[str] = None
     use_watermark: Optional[bool] = True
     use_subtitles: Optional[bool] = True
     use_whisper: Optional[bool] = False
@@ -1123,17 +1124,22 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
     project_dir.mkdir(parents=True, exist_ok=True)
     story_file = project_dir / "story.txt"
 
-    # Fetch content from Lore-Keeper (Only if not a music project)
+    # Fetch content from Lore-Keeper or use provided story_text
     if story_id != "music":
-        try:
-            print(f"[Server] Fetching story content for chapter_id={chapter_id} from Lore-Keeper...")
-            from fastapi.concurrency import run_in_threadpool
-            content = await run_in_threadpool(fetch_chapter_content, chapter_id)
+        if request_data and request_data.story_text and request_data.story_text.strip():
             with open(story_file, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"[Server] Successfully wrote story content to {story_file}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch content from Lore-Keeper: {str(e)}")
+                f.write(request_data.story_text.strip())
+            print(f"[Server] Successfully wrote custom story_text to {story_file}")
+        else:
+            try:
+                print(f"[Server] Fetching story content for chapter_id={chapter_id} from Lore-Keeper...")
+                from fastapi.concurrency import run_in_threadpool
+                content = await run_in_threadpool(fetch_chapter_content, chapter_id)
+                with open(story_file, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"[Server] Successfully wrote story content to {story_file}")
+            except Exception as e:
+                print(f"[Server] Warning: Lore-Keeper fetch failed: {e}")
 
         if not story_file.exists():
             raise HTTPException(status_code=404, detail="story.txt not found. Failed to write chapter content.")
