@@ -2560,7 +2560,8 @@ async def dashboard():
                 options = options || {};
                 options.headers = options.headers || {};
                 let wsId = getWorkspaceId();
-                if (wsId) {
+                let urlStr = typeof url === 'string' ? url : (url ? url.toString() : '');
+                if (wsId && !urlStr.includes("/v1/agent/status")) {
                     if (options.headers instanceof Headers) {
                         options.headers.set("X-Workspace-ID", wsId);
                     } else if (Array.isArray(options.headers)) {
@@ -2964,7 +2965,9 @@ async def dashboard():
                 // Close open dialogs if switching tabs
                 ['dao-ly-dialog', 'music-dialog', 'voice-config-dialog'].forEach(id => {
                     let d = document.getElementById(id);
-                    if (d && d.open) d.close();
+                    if (d) {
+                        try { d.close(); } catch(e) {}
+                    }
                 });
 
                 // Clear active from all navbar items
