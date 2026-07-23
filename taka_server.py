@@ -1202,6 +1202,7 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
         
         # Resolve voice profile from voices folder
         if selected_voice_id:
+            voice_dir = VOICES_DIR / selected_voice_id
             ref_audio = voice_dir / "ref.wav"
             if not ref_audio.exists():
                 for ext in ["mp3", "m4a", "flac", "ogg"]:
@@ -3618,8 +3619,10 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
 
                         let res = await fetch("/v1/projects?story_id=" + encodeURIComponent(projName), { method: "POST" });
                         if (!res.ok) {
-                            let err = await res.json();
-                            alert("Lỗi tạo dự án: " + (err.detail || "Unknown error"));
+                            let txt = await res.text();
+                            let detail = txt;
+                            try { detail = JSON.parse(txt).detail || txt; } catch(_) {}
+                            alert("Lỗi tạo dự án: " + detail);
                             return;
                         }
                     } else {
@@ -3651,8 +3654,10 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                         await loadProjects();
                         selectChapter(projName, "story");
                     } else {
-                        let err = await runRes.json();
-                        alert("Lỗi chạy pipeline: " + (err.detail || "Unknown error"));
+                        let txt = await runRes.text();
+                        let detail = txt;
+                        try { detail = JSON.parse(txt).detail || txt; } catch(_) {}
+                        alert("Lỗi chạy pipeline: " + detail);
                     }
 
                 } catch(e) {
