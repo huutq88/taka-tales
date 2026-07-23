@@ -902,10 +902,10 @@ async def get_project_status(request: Request, story_id: str, chapter_id: str):
     # Dynamically restore fragment count from disk if total_fragments is missing (e.g. after server restart)
     if not job_state.get("total_fragments"):
         max_frags = 0
-        for sub_dir in ["images", "audio", "videos", "text"]:
-            d = chapter_dir / sub_dir
+        for sub_path in ["images", "audio", "videos", "text/story_fragments", "text/image_prompts"]:
+            d = chapter_dir / sub_path
             if d.exists() and d.is_dir():
-                count = len([f for f in d.iterdir() if not f.name.startswith(".") and not f.name.startswith("processed_")])
+                count = len([f for f in d.iterdir() if not f.name.startswith(".") and not f.name.startswith("processed_") and not f.is_dir()])
                 if count > max_frags:
                     max_frags = count
         if max_frags > 0:
@@ -1202,8 +1202,13 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
         
         # Resolve voice profile from voices folder
         if selected_voice_id:
-            voice_dir = VOICES_DIR / selected_voice_id
             ref_audio = voice_dir / "ref.wav"
+            if not ref_audio.exists():
+                for ext in ["mp3", "m4a", "flac", "ogg"]:
+                    alt = voice_dir / f"ref.{ext}"
+                    if alt.exists():
+                        ref_audio = alt
+                        break
             local_path_file = voice_dir / "local_path.txt"
             ref_text_file = voice_dir / "ref_text.txt"
             if not ref_text_file.exists():
@@ -1223,7 +1228,7 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
                     with open(ref_audio, "rb") as f:
                         audio_b64 = base64.b64encode(f.read()).decode("utf-8")
                     voice_payload["ref_audio_b64"] = audio_b64
-                    voice_payload["ref_audio_filename"] = "ref.wav"
+                    voice_payload["ref_audio_filename"] = ref_audio.name
                     print(f"[Server] Encoded base64 audio for voice ID: {selected_voice_id}")
                 except Exception as e:
                     print(f"[Server] Failed to read/encode voice profile audio: {e}")

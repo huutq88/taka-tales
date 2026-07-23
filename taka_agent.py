@@ -270,6 +270,12 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         if voice_dir.exists():
             local_path_file = voice_dir / "local_path.txt"
             ref_audio_file = voice_dir / "ref.wav"
+            if not ref_audio_file.exists():
+                for ext in ["mp3", "m4a", "flac", "ogg"]:
+                    alt = voice_dir / f"ref.{ext}"
+                    if alt.exists():
+                        ref_audio_file = alt
+                        break
             ref_text_file = voice_dir / "ref_text.txt"
             if not ref_text_file.exists():
                 ref_text_file = voice_dir / "ref.txt"
@@ -1101,10 +1107,10 @@ async def main():
                         has_video = (ch_dir / "final.mp4").exists() or (ch_dir / f"{story_id}_{chapter_id}.mp4").exists()
                         
                         max_frags = 0
-                        for sub_dir in ["images", "audio", "videos", "text"]:
-                            d = ch_dir / sub_dir
+                        for sub_path in ["images", "audio", "videos", "text/story_fragments", "text/image_prompts"]:
+                            d = ch_dir / sub_path
                             if d.exists() and d.is_dir():
-                                count = len([f for f in d.iterdir() if not f.name.startswith(".") and not f.name.startswith("processed_")])
+                                count = len([f for f in d.iterdir() if not f.name.startswith(".") and not f.name.startswith("processed_") and not f.is_dir()])
                                 if count > max_frags:
                                     max_frags = count
                                     
