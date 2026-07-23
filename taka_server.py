@@ -776,35 +776,63 @@ async def list_projects(request: Request):
                             "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{s_id}_{ch_id}.mp4").exists()
                         }
 
-    for story_id in story_ids:
-        if story_id == "music":
-            chapters = []
-            music_keys = [k for k in agent_files.keys() if k.startswith("music/")]
-            for key in music_keys:
-                ch_id = key.split("/", 1)[1]
-                ch_title = ch_id.replace("-", " ").replace("_", " ").title()
-                
-                job_key = f"music/{ch_id}"
-                job_state = project_jobs.get(job_key, {"status": "idle"})
-                
-                has_story = agent_files[key].get("has_story", False)
-                has_video = agent_files[key].get("has_video", False)
-                if has_video and job_state.get("status") == "idle":
-                    job_state["status"] = "completed"
-                    
-                chapters.append({
-                    "id": ch_id,
-                    "title": ch_title,
-                    "has_story": has_story,
-                    "has_video": has_video,
-                    "status": job_state.get("status", "idle"),
-                    "progress": job_state,
-                    "is_music": True
-                })
-            stories.append({
+    music_chapters = []
+    dao_ly_chapters = []
+    
+    for key, info in agent_files.items():
+        if key.startswith("music/"):
+            ch_id = key.split("/", 1)[1]
+            ch_title = ch_id.replace("-", " ").replace("_", " ").title()
+            job_key = f"music/{ch_id}"
+            job_state = project_jobs.get(job_key, {"status": "idle"})
+            if info.get("has_video") and job_state.get("status") == "idle":
+                job_state["status"] = "completed"
+            music_chapters.append({
+                "id": ch_id,
                 "story_id": "music",
-                "chapters": sorted(chapters, key=lambda x: x["id"])
+                "title": ch_title,
+                "has_story": info.get("has_story", False),
+                "has_video": info.get("has_video", False),
+                "status": job_state.get("status", "idle"),
+                "progress": job_state,
+                "is_music": True
             })
+        elif key.startswith("dao_ly/") or key.startswith("dao_ly_"):
+            parts = key.split("/")
+            s_id = parts[0]
+            ch_id = parts[1] if len(parts) > 1 else "story"
+            clean_title = s_id.replace("dao_ly_", "").replace("-", " ").replace("_", " ").title()
+            job_key = f"{s_id}/{ch_id}"
+            job_state = project_jobs.get(job_key, {"status": "idle"})
+            if info.get("has_video") and job_state.get("status") == "idle":
+                job_state["status"] = "completed"
+            dao_ly_chapters.append({
+                "id": ch_id,
+                "story_id": s_id,
+                "title": clean_title,
+                "has_story": info.get("has_story", False),
+                "has_video": info.get("has_video", False),
+                "status": job_state.get("status", "idle"),
+                "progress": job_state,
+                "is_dao_ly": True
+            })
+
+    if music_chapters:
+        stories.append({
+            "story_id": "music",
+            "title": "🎵 Music Projects",
+            "chapters": sorted(music_chapters, key=lambda x: x["id"])
+        })
+        
+    if dao_ly_chapters:
+        stories.append({
+            "story_id": "dao_ly",
+            "title": "☯️ Video Đạo Lý",
+            "chapters": sorted(dao_ly_chapters, key=lambda x: x["id"])
+        })
+
+    for story_id in story_ids:
+        if story_id == "music" or story_id == "dao_ly" or story_id.startswith("dao_ly_"):
             continue
             
         from fastapi.concurrency import run_in_threadpool
@@ -1238,7 +1266,7 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             "project_name": f"{story_id}_{chapter_id}",
             "project_path": str(project_dir),
             "voice_config": voice_payload if voice_payload else None,
-            "pipeline_type": "music" if story_id == "music" else "story",
+            "pipeline_type": "music" if story_id == "music" else ("dao_ly" if (story_id == "dao_ly" or story_id.startswith("dao_ly_")) else "story"),
             "art_style": request_data.art_style if request_data else None,
             "use_watermark": request_data.use_watermark if request_data else True,
             "use_subtitles": request_data.use_subtitles if request_data else True,
@@ -2446,7 +2474,7 @@ async def dashboard():
 
                 <div class="dialog-actions" style="margin-top: 1.5rem;">
                     <button type="button" class="btn-cancel" onclick="closeDaoLyStudioModal()">Hủy</button>
-                    <button type="submit" class="btn-submit" style="background: linear-gradient(135deg, #f59e0b, #d97706); border: none; font-weight: bold; font-size: 0.95rem; color: #fff;">🚀 Khởi Tạo & Render Video Đạo Lý</button>
+                    <button type="submit" id="dao-ly-submit-btn" class="btn-submit" style="background: linear-gradient(135deg, #f59e0b, #d97706); border: none; font-weight: bold; font-size: 0.95rem; color: #fff;">🚀 Khởi Tạo & Render Video Đạo Lý</button>
                 </div>
             </form>
         </dialog>
@@ -2717,6 +2745,9 @@ async def dashboard():
                         if (s.story_id === "music") {
                             header.innerHTML = `🎵 Music Projects`;
                             header.style.color = "var(--success)";
+                        } else if (s.story_id === "dao_ly") {
+                            header.innerHTML = `☯️ Video Đạo Lý`;
+                            header.style.color = "#f59e0b";
                         } else {
                             header.innerHTML = `📖 Story: ${s.story_id}`;
                         }
@@ -2726,8 +2757,9 @@ async def dashboard():
                         chList.className = "chapter-list";
                         
                         s.chapters.forEach(c => {
+                            let targetStoryId = c.story_id || s.story_id;
                             let displayTitle = c.title;
-                            if (s.story_id !== "music") {
+                            if (s.story_id !== "music" && s.story_id !== "dao_ly") {
                                 let idx = "";
                                 let match = c.id.match(/chuong[-_](\d+)/i) || c.id.match(/chapter[-_](\d+)/i) || c.id.match(/(\d+)/);
                                 if (match) {
@@ -2741,10 +2773,10 @@ async def dashboard():
                                 }
                             }
 
-                            let activeClass = (s.story_id === currentStory && c.id === currentChapter) ? "active" : "";
+                            let activeClass = (targetStoryId === currentStory && c.id === currentChapter) ? "active" : "";
                             let item = document.createElement("div");
                             item.className = "chapter-item " + activeClass;
-                            item.onclick = () => selectChapter(s.story_id, c.id, displayTitle);
+                            item.onclick = () => selectChapter(targetStoryId, c.id, displayTitle);
                             
                             let btnId = `btn-${s.story_id}-${c.id}`;
                             let isRunning = (c.status !== 'idle' && c.status !== 'completed');
@@ -2790,6 +2822,8 @@ async def dashboard():
                     runBtn.disabled = false;
                     if (storyId === "music") {
                         runBtn.onclick = (event) => runChapter(event, storyId, chapterId);
+                    } else if (storyId.startsWith("dao_ly_")) {
+                        runBtn.onclick = (event) => openDaoLyStudioModal(storyId);
                     } else {
                         runBtn.onclick = (event) => openVoiceConfig(storyId, chapterId);
                     }
@@ -3438,17 +3472,43 @@ Lặng lẽ tích lũy sức mạnh, rồi thời gian sẽ trả lời tất c�
                 }
             };
 
-            function openDaoLyStudioModal() {
+            let currentEditingDaoLyStoryId = null;
+
+            async function openDaoLyStudioModal(storyId = null) {
+                currentEditingDaoLyStoryId = storyId;
                 let dialog = document.getElementById("dao-ly-dialog");
                 if (dialog) {
                     let titleInput = document.getElementById("dao-ly-title");
                     let textInput = document.getElementById("dao-ly-story-text");
                     let select = document.getElementById("dao-ly-sample-select");
-                    
-                    if (select) select.value = "custom";
-                    if (titleInput && !titleInput.value) {
-                        let timestamp = new Date().toISOString().replace(/[-:T.]/g, "").slice(2, 10);
-                        titleInput.value = "Kịch Bản Đạo Lý " + timestamp;
+                    let submitBtn = document.getElementById("dao-ly-submit-btn");
+
+                    if (storyId) {
+                        if (submitBtn) submitBtn.innerText = "🚀 Khởi Chạy Lại Pipeline Đạo Lý";
+                        if (select) select.value = "custom";
+                        if (titleInput) titleInput.value = storyId;
+                        if (textInput) textInput.value = "Đang tải kịch bản...";
+                        
+                        try {
+                            let storyRes = await fetch(`/v1/system/agent/files/${encodeURIComponent(storyId)}/story/story.txt`);
+                            if (storyRes.ok) {
+                                let txt = await storyRes.text();
+                                if (textInput) textInput.value = txt;
+                            } else {
+                                if (textInput) textInput.value = "";
+                            }
+                        } catch(e) {
+                            console.error("Failed to load story.txt", e);
+                            if (textInput) textInput.value = "";
+                        }
+                    } else {
+                        if (submitBtn) submitBtn.innerText = "🚀 Khởi Tạo & Render Video Đạo Lý";
+                        if (select) select.value = "custom";
+                        if (titleInput) {
+                            let timestamp = new Date().toISOString().replace(/[-:T.]/g, "").slice(2, 10);
+                            titleInput.value = "Kịch Bản Đạo Lý " + timestamp;
+                        }
+                        if (textInput) textInput.value = "";
                     }
                     dialog.showModal();
                 }
@@ -3484,22 +3544,26 @@ Lặng lẽ tích lũy sức mạnh, rồi thời gian sẽ trả lời tất c�
                     return;
                 }
 
-                // Generate slug for folder name
-                let slug = titleVal.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-                    .replace(/đ/g, "d").replace(/Đ/g, "d")
-                    .replace(/[^a-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
-                
-                let timestamp = new Date().toISOString().replace(/[-:T.]/g, "").slice(2, 10);
-                let projName = "dao_ly_" + (slug || "story") + "_" + timestamp;
-
-                closeDaoLyStudioModal();
-
                 try {
-                    let res = await fetch("/v1/projects?story_id=" + encodeURIComponent(projName), { method: "POST" });
-                    if (!res.ok) {
-                        let err = await res.json();
-                        alert("Lỗi tạo dự án: " + (err.detail || "Unknown error"));
-                        return;
+                    let projName = currentEditingDaoLyStoryId;
+                    if (!projName) {
+                        let slug = titleVal.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                            .replace(/đ/g, "d").replace(/Đ/g, "d")
+                            .replace(/[^a-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+                        
+                        let timestamp = new Date().toISOString().replace(/[-:T.]/g, "").slice(2, 10);
+                        projName = "dao_ly_" + (slug || "story") + "_" + timestamp;
+
+                        closeDaoLyStudioModal();
+
+                        let res = await fetch("/v1/projects?story_id=" + encodeURIComponent(projName), { method: "POST" });
+                        if (!res.ok) {
+                            let err = await res.json();
+                            alert("Lỗi tạo dự án: " + (err.detail || "Unknown error"));
+                            return;
+                        }
+                    } else {
+                        closeDaoLyStudioModal();
                     }
 
                     let voiceConfig = {};
