@@ -26,6 +26,14 @@ AGENT_VOICES_DIR = AGENT_DATA_DIR / "voices"
 AGENT_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 agent_active_tasks: Dict[str, asyncio.Task] = {}
 
+async def safe_send_ws(ws, payload: dict):
+    if not ws:
+        return
+    try:
+        await ws.send(json.dumps(payload))
+    except Exception as e:
+        print(f"[Agent] Warning: WS send progress skipped ({e})")
+
 # Load config
 _CONFIG_PATH = AGENT_DIR / "config.ini"
 config = configparser.ConfigParser()

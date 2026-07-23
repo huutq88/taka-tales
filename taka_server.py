@@ -3439,7 +3439,8 @@ async def dashboard():
 
                         let audioUrlWav = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.wav`;
                         let audioUrlMp3 = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.mp3`;
-                        let imageUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.png`;
+                        let imageUrlJpg = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.jpg`;
+                        let imageUrlPng = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.png`;
                         let videoUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/videos/video${i}.mp4`;
 
                         if (buildCards) {
@@ -3448,7 +3449,7 @@ async def dashboard():
                                 <div class="step-indicator">
                                     <span class="step-btn ${voiceActive ? 'running' : ''}" id="preview-audio-${i}" title="Play Audio Voiceover">🎵</span>
                                     <span class="step-btn ${imgActive ? 'running' : ''}" id="preview-image-${i}" title="Show Generated Image">🖼️</span>
-                                    <span class="step-btn ${clipActive ? 'running' : ''}" id="preview-video-${i}" title="Play Video Clip">🎥</span>
+                                    <span class="step-btn ${clipActive ? 'running' : ''}" id="preview-video-${i}" title="Play Video Clip">🎬</span>
                                 </div>
                             `;
                             grid.appendChild(card);
@@ -3474,15 +3475,22 @@ async def dashboard():
                             }
                         });
 
-                        getMediaExists(imageUrl).then(exists => {
+                        getMediaExists(imageUrlJpg).then(existsJpg => {
                             let btn = document.getElementById(`preview-image-${i}`);
                             if (btn) {
-                                if (exists) {
+                                if (existsJpg) {
                                     btn.classList.add("active");
-                                    btn.onclick = () => showImagePreview(imageUrl, i);
-                                } else if (!imgActive) {
-                                    btn.classList.remove("active");
-                                    btn.classList.add("disabled");
+                                    btn.onclick = () => showImagePreview(imageUrlJpg, i);
+                                } else {
+                                    getMediaExists(imageUrlPng).then(existsPng => {
+                                        if (existsPng) {
+                                            btn.classList.add("active");
+                                            btn.onclick = () => showImagePreview(imageUrlPng, i);
+                                        } else if (!imgActive) {
+                                            btn.classList.remove("active");
+                                            btn.classList.add("disabled");
+                                        }
+                                    });
                                 }
                             }
                         });
