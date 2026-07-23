@@ -1124,11 +1124,13 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
     project_dir.mkdir(parents=True, exist_ok=True)
     story_file = project_dir / "story.txt"
 
+    content = ""
     # Fetch content from Lore-Keeper or use provided story_text
     if story_id != "music":
         if request_data and request_data.story_text and request_data.story_text.strip():
+            content = request_data.story_text.strip()
             with open(story_file, "w", encoding="utf-8") as f:
-                f.write(request_data.story_text.strip())
+                f.write(content)
             print(f"[Server] Successfully wrote custom story_text to {story_file}")
         else:
             try:
