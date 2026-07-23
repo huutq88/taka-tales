@@ -760,18 +760,27 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
     for k in keys_to_del:
         project_jobs.pop(k, None)
 
-    # Delete local folder on server
+    # Delete local folders on server
+    dirs_to_check = []
     if chapter_id and chapter_id != "story":
-        chapter_dir = PROJECTS_DIR / clean_story / chapter_id
-        if chapter_dir.exists():
-            shutil.rmtree(chapter_dir)
-        parent_dir = PROJECTS_DIR / clean_story
-        if parent_dir.exists() and not any(p for p in parent_dir.iterdir() if not p.name.startswith(".")):
-            shutil.rmtree(parent_dir)
-    else:
-        target_dir = PROJECTS_DIR / clean_story
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
+        dirs_to_check.append(PROJECTS_DIR / clean_story / chapter_id)
+        dirs_to_check.append(PROJECTS_DIR / "dao-ly" / chapter_id)
+        dirs_to_check.append(PROJECTS_DIR / "dao_ly" / chapter_id)
+        dirs_to_check.append(PROJECTS_DIR / chapter_id)
+    dirs_to_check.append(PROJECTS_DIR / clean_story)
+
+    for d in dirs_to_check:
+        if d.exists():
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+                print(f"[Server] Successfully deleted folder: {d}")
+            except Exception as ex:
+                print(f"[Server] Warning deleting {d}: {ex}")
+
+    for cat in ("dao-ly", "dao_ly", "music", clean_story):
+        cat_dir = PROJECTS_DIR / cat
+        if cat_dir.exists() and cat_dir.is_dir() and not any(p for p in cat_dir.iterdir() if not p.name.startswith(".")):
+            shutil.rmtree(cat_dir, ignore_errors=True)
 
     print(f"[Server] Successfully deleted project directory for story_id={clean_story}, chapter_id={chapter_id}")
     return {"ok": True, "story_id": clean_story, "chapter_id": chapter_id}
@@ -2861,7 +2870,7 @@ async def dashboard():
                         if (s.story_id === "music") {
                             header.innerHTML = `🎵 Music Projects`;
                             header.style.color = "var(--success)";
-                        } else if (s.story_id === "dao_ly") {
+                        } else if (s.story_id === "dao-ly" || s.story_id === "dao_ly") {
                             header.innerHTML = `☯️ Video Đạo Lý`;
                             header.style.color = "#f59e0b";
                         } else {
@@ -2875,7 +2884,7 @@ async def dashboard():
                         s.chapters.forEach(c => {
                             let targetStoryId = c.story_id || s.story_id;
                             let displayTitle = c.title;
-                            if (s.story_id !== "music" && s.story_id !== "dao_ly") {
+                            if (s.story_id !== "music" && s.story_id !== "dao-ly" && s.story_id !== "dao_ly") {
                                 let idx = "";
                                 let match = c.id.match(/chuong[-_](\d+)/i) || c.id.match(/chapter[-_](\d+)/i) || c.id.match(/(\d+)/);
                                 if (match) {

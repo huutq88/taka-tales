@@ -1141,27 +1141,26 @@ async def main():
                             agent_running_jobs.pop(k, None)
 
                         # 2. Delete project directory on Agent
+                        dirs_to_check = []
                         if chapter_id and chapter_id != "story":
-                            agent_chapter_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
-                            if agent_chapter_dir.exists():
+                            dirs_to_check.append(AGENT_PROJECTS_DIR / story_id / chapter_id)
+                            dirs_to_check.append(AGENT_PROJECTS_DIR / "dao-ly" / chapter_id)
+                            dirs_to_check.append(AGENT_PROJECTS_DIR / "dao_ly" / chapter_id)
+                            dirs_to_check.append(AGENT_PROJECTS_DIR / chapter_id)
+                        dirs_to_check.append(AGENT_PROJECTS_DIR / story_id)
+
+                        for d in dirs_to_check:
+                            if d.exists():
                                 try:
-                                    shutil.rmtree(agent_chapter_dir)
+                                    shutil.rmtree(d, ignore_errors=True)
+                                    print(f"[Agent] Successfully deleted agent folder: {d}")
                                 except Exception as ex:
-                                    print(f"[Agent] Failed to delete chapter folder: {ex}")
-                            agent_parent_dir = AGENT_PROJECTS_DIR / story_id
-                            if agent_parent_dir.exists() and not any(p for p in agent_parent_dir.iterdir() if not p.name.startswith(".")):
-                                try:
-                                    shutil.rmtree(agent_parent_dir)
-                                except Exception as ex:
-                                    print(f"[Agent] Failed to delete parent project folder: {ex}")
-                        else:
-                            agent_target_dir = AGENT_PROJECTS_DIR / story_id
-                            if agent_target_dir.exists():
-                                try:
-                                    shutil.rmtree(agent_target_dir)
-                                    print(f"[Agent] Successfully deleted agent project folder: {agent_target_dir}")
-                                except Exception as ex:
-                                    print(f"[Agent] Failed to delete agent project folder: {ex}")
+                                    print(f"[Agent] Failed to delete agent folder {d}: {ex}")
+
+                        for cat in ("dao-ly", "dao_ly", "music", story_id):
+                            cat_dir = AGENT_PROJECTS_DIR / cat
+                            if cat_dir.exists() and cat_dir.is_dir() and not any(p for p in cat_dir.iterdir() if not p.name.startswith(".")):
+                                shutil.rmtree(cat_dir, ignore_errors=True)
 
                         await websocket.send(json.dumps({
                             "type": "delete_project_response",
