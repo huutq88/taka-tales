@@ -1104,17 +1104,27 @@ async def main():
                             agent_running_jobs.pop(k, None)
 
                         # 2. Delete project directory on Agent
-                        if chapter_id:
-                            agent_target_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
+                        if chapter_id and chapter_id != "story":
+                            agent_chapter_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
+                            if agent_chapter_dir.exists():
+                                try:
+                                    shutil.rmtree(agent_chapter_dir)
+                                except Exception as ex:
+                                    print(f"[Agent] Failed to delete chapter folder: {ex}")
+                            agent_parent_dir = AGENT_PROJECTS_DIR / story_id
+                            if agent_parent_dir.exists() and not any(p for p in agent_parent_dir.iterdir() if not p.name.startswith(".")):
+                                try:
+                                    shutil.rmtree(agent_parent_dir)
+                                except Exception as ex:
+                                    print(f"[Agent] Failed to delete parent project folder: {ex}")
                         else:
                             agent_target_dir = AGENT_PROJECTS_DIR / story_id
-
-                        if agent_target_dir.exists():
-                            try:
-                                shutil.rmtree(agent_target_dir)
-                                print(f"[Agent] Successfully deleted agent project folder: {agent_target_dir}")
-                            except Exception as ex:
-                                print(f"[Agent] Failed to delete agent project folder: {ex}")
+                            if agent_target_dir.exists():
+                                try:
+                                    shutil.rmtree(agent_target_dir)
+                                    print(f"[Agent] Successfully deleted agent project folder: {agent_target_dir}")
+                                except Exception as ex:
+                                    print(f"[Agent] Failed to delete agent project folder: {ex}")
 
                         await websocket.send(json.dumps({
                             "type": "delete_project_response",

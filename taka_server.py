@@ -725,24 +725,25 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
             print(f"[Server] Warning: delete_project_request to Agent failed: {e}")
 
     # Remove matching job state
-    target_pattern = f"{clean_story}/{chapter_id}" if chapter_id else clean_story
+    target_pattern = f"{clean_story}/{chapter_id}" if (chapter_id and chapter_id != "story") else clean_story
     keys_to_del = [k for k in project_jobs.keys() if k == target_pattern or k.startswith(f"{target_pattern}/") or k == clean_story or k.startswith(f"{clean_story}/")]
     for k in keys_to_del:
         project_jobs.pop(k, None)
 
     # Delete local folder on server
-    if chapter_id:
-        target_dir = PROJECTS_DIR / clean_story / chapter_id
+    if chapter_id and chapter_id != "story":
+        chapter_dir = PROJECTS_DIR / clean_story / chapter_id
+        if chapter_dir.exists():
+            shutil.rmtree(chapter_dir)
+        parent_dir = PROJECTS_DIR / clean_story
+        if parent_dir.exists() and not any(p for p in parent_dir.iterdir() if not p.name.startswith(".")):
+            shutil.rmtree(parent_dir)
     else:
         target_dir = PROJECTS_DIR / clean_story
-
-    if target_dir.exists():
-        try:
+        if target_dir.exists():
             shutil.rmtree(target_dir)
-            print(f"[Server] Successfully deleted project directory: {target_dir}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to delete project directory: {str(e)}")
 
+    print(f"[Server] Successfully deleted project directory for story_id={clean_story}, chapter_id={chapter_id}")
     return {"ok": True, "story_id": clean_story, "chapter_id": chapter_id}
 
 
@@ -3293,7 +3294,10 @@ async def dashboard():
                 let targetChapter = chapterId || currentChapter;
                 if (!targetStory) return;
 
-                let displayLabel = targetChapter ? `${targetStory}` : targetStory;
+                let displayLabel = targetStory;
+                if (targetChapter && targetChapter !== "story") {
+                    displayLabel += ` (${targetChapter})`;
+                }
                 if (!confirm(`Bạn có chắc chắn muốn XÓA DỰ ÁN "${displayLabel}" không?\n\nHành động này sẽ DỪNG TOÀN BỘ tiến trình pipeline đang chạy và XÓA TOÀN BỘ dữ liệu dự án trên đĩa cứng!`)) {
                     return;
                 }
@@ -3305,7 +3309,7 @@ async def dashboard():
                     }
                     let res = await fetch(url, { method: "DELETE" });
                     if (res.ok) {
-                        if (currentStory === targetStory) {
+                        if (!currentStory || currentStory === targetStory || currentStory.startsWith(targetStory)) {
                             currentStory = "";
                             currentChapter = "";
                             let mainView = document.getElementById("main-details-view");
