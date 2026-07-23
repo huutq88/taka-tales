@@ -1206,6 +1206,8 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             ref_audio = voice_dir / "ref.wav"
             local_path_file = voice_dir / "local_path.txt"
             ref_text_file = voice_dir / "ref_text.txt"
+            if not ref_text_file.exists():
+                ref_text_file = voice_dir / "ref.txt"
             
             if local_path_file.exists():
                 try:

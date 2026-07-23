@@ -271,6 +271,8 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
             local_path_file = voice_dir / "local_path.txt"
             ref_audio_file = voice_dir / "ref.wav"
             ref_text_file = voice_dir / "ref_text.txt"
+            if not ref_text_file.exists():
+                ref_text_file = voice_dir / "ref.txt"
             voice_instruct_file = voice_dir / "voice_instruct.txt"
             if not voice_instruct_file.exists():
                 voice_instruct_file = voice_dir / "instruct.txt"
