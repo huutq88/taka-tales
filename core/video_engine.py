@@ -717,11 +717,14 @@ def generate_audio_waveform_frames(audio_path: str, target_w: int, target_h: int
         print(f"[Video Engine] Error generating real audio waveform: {e}. Falling back...")
         return generate_procedural_waveform_frames(target_w, target_h)
 
-def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, audio_path: pathlib.Path = None) -> ImageClip:
+def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, audio_path: pathlib.Path = None, effect_override: str = None) -> ImageClip:
     duration = clip.duration
     w, h = clip.size
     import numpy as np
     from PIL import Image as PILImage
+    import math
+
+    effect = (effect_override or EFFECT_TYPE or "none").lower()
 
     # Load waveform.gif or generate dynamic audio waveform frames
     waveform_frames = []
@@ -748,31 +751,69 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, au
                 except Exception as e:
                     print(f"[Video Engine] Error loading waveform.gif in Ken Burns: {e}")
             else:
-                # Fallback to dynamic white waveform frames
                 target_w = int(0.70 * w)
                 target_h = int(180 * (target_w / 1367))
                 waveform_frames = generate_procedural_waveform_frames(target_w, target_h)
 
-    # Initialize falling particles if EFFECT_TYPE is enabled
+    # Initialize particle simulation based on selected effect
     particles = []
-    if EFFECT_TYPE in ["leaves", "snow", "rain"]:
+    if effect in ["leaves", "leaf", "snow", "rain", "wind"]:
         import random
-        num_particles = 15 if EFFECT_TYPE == "leaves" else (40 if EFFECT_TYPE == "snow" else 60)
-        for _ in range(num_particles):
-            particles.append({
-                "x": random.uniform(0, w),
-                "y": random.uniform(-h, 0),
-                "speed_y": random.uniform(60, 150) if EFFECT_TYPE == "leaves" else (random.uniform(90, 220) if EFFECT_TYPE == "snow" else random.uniform(700, 1300)),
-                "speed_x": random.uniform(-30, 30) if EFFECT_TYPE != "rain" else random.uniform(-60, -20),
-                "size": random.uniform(6, 16) if EFFECT_TYPE == "leaves" else (random.uniform(2, 5) if EFFECT_TYPE == "snow" else random.uniform(1.5, 2.5)),
-                "length": random.uniform(20, 40) if EFFECT_TYPE == "rain" else 0,
-                "color": random.choice([
-                    (210, 105, 30, 140),  # Chocolate brown leaf
-                    (244, 164, 96, 140),  # Sandy brown leaf
-                    (205, 133, 63, 140),  # Peru orange-brown leaf
-                    (139, 69, 19, 140),   # Saddle brown leaf
-                ]) if EFFECT_TYPE == "leaves" else ((255, 255, 255, 200) if EFFECT_TYPE == "snow" else (180, 200, 215, 120))
-            })
+        if effect in ["leaves", "leaf"]:
+            num_particles = 25
+            for _ in range(num_particles):
+                particles.append({
+                    "x": random.uniform(0, w),
+                    "y": random.uniform(-h, 0),
+                    "speed_y": random.uniform(50, 120),
+                    "speed_x": random.uniform(-20, 20),
+                    "sway_freq": random.uniform(1.5, 3.0),
+                    "sway_amp": random.uniform(25, 50),
+                    "size": random.uniform(8, 18),
+                    "color": random.choice([
+                        (234, 150, 30, 170),  # Golden yellow leaf
+                        (210, 105, 30, 170),  # Chocolate amber leaf
+                        (244, 164, 96, 170),  # Sandy orange-brown leaf
+                        (180, 83, 9, 160),    # Autumn dark amber leaf
+                    ])
+                })
+        elif effect == "snow":
+            num_particles = 55
+            for _ in range(num_particles):
+                particles.append({
+                    "x": random.uniform(0, w),
+                    "y": random.uniform(-h, 0),
+                    "speed_y": random.uniform(60, 160),
+                    "speed_x": random.uniform(-15, 15),
+                    "sway_freq": random.uniform(1.0, 2.5),
+                    "sway_amp": random.uniform(15, 30),
+                    "size": random.uniform(2, 6),
+                    "color": (255, 255, 255, random.randint(140, 220))
+                })
+        elif effect == "rain":
+            num_particles = 70
+            for _ in range(num_particles):
+                particles.append({
+                    "x": random.uniform(0, w + 200),
+                    "y": random.uniform(-h, 0),
+                    "speed_y": random.uniform(800, 1400),
+                    "speed_x": random.uniform(-100, -40),
+                    "size": random.uniform(1.2, 2.5),
+                    "length": random.uniform(25, 55),
+                    "color": (200, 220, 235, random.randint(90, 160))
+                })
+        elif effect == "wind":
+            num_particles = 40
+            for _ in range(num_particles):
+                particles.append({
+                    "x": random.uniform(-w, 0),
+                    "y": random.uniform(0, h),
+                    "speed_x": random.uniform(500, 950),
+                    "speed_y": random.uniform(-30, 30),
+                    "length": random.uniform(50, 120),
+                    "size": random.uniform(1.2, 2.5),
+                    "color": (255, 255, 255, random.randint(70, 140))
+                })
 
     def make_frame(get_frame, t):
         frame = get_frame(t)
@@ -807,7 +848,7 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, au
             top = (h - crop_h) / 2.0
             img_cropped = img.resize((w, h), box=(shift_x, top, shift_x + crop_w, top + crop_h), resample=PILImage.Resampling.LANCZOS)
             
-        # Draw falling particles
+        # Draw dynamic particle effects
         if particles:
             from PIL import ImageDraw
             img_rgba = img_cropped.convert("RGBA")
@@ -815,23 +856,34 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, au
             draw = ImageDraw.Draw(overlay)
             
             for p in particles:
-                curr_y = (p["y"] + p["speed_y"] * t) % (h + 50) - 25
-                curr_x = (p["x"] + p["speed_x"] * t) % w
-                
-                if EFFECT_TYPE == "leaves":
+                if effect in ["leaves", "leaf"]:
+                    sway = math.sin(t * p["sway_freq"]) * p["sway_amp"]
+                    curr_y = (p["y"] + p["speed_y"] * t) % (h + 60) - 30
+                    curr_x = (p["x"] + p["speed_x"] * t + sway) % w
                     size = p["size"]
                     pts = [
                         (curr_x, curr_y - size),
-                        (curr_x + size/2, curr_y),
+                        (curr_x + size * 0.4, curr_y - size * 0.3),
+                        (curr_x + size * 0.5, curr_y + size * 0.4),
                         (curr_x, curr_y + size),
-                        (curr_x - size/2, curr_y)
+                        (curr_x - size * 0.5, curr_y + size * 0.4),
+                        (curr_x - size * 0.4, curr_y - size * 0.3)
                     ]
                     draw.polygon(pts, fill=p["color"])
-                elif EFFECT_TYPE == "snow":
+                elif effect == "snow":
+                    sway = math.sin(t * p["sway_freq"]) * p["sway_amp"]
+                    curr_y = (p["y"] + p["speed_y"] * t) % (h + 20) - 10
+                    curr_x = (p["x"] + p["speed_x"] * t + sway) % w
                     size = p["size"]
                     draw.ellipse([curr_x, curr_y, curr_x + size, curr_y + size], fill=p["color"])
-                elif EFFECT_TYPE == "rain":
-                    draw.line([curr_x, curr_y, curr_x + p["speed_x"] * 0.02, curr_y + p["length"]], fill=p["color"], width=int(p["size"]))
+                elif effect == "rain":
+                    curr_y = (p["y"] + p["speed_y"] * t) % (h + 80) - 40
+                    curr_x = (p["x"] + p["speed_x"] * t) % (w + 200) - 100
+                    draw.line([curr_x, curr_y, curr_x + p["speed_x"] * 0.03, curr_y + p["length"]], fill=p["color"], width=int(p["size"]))
+                elif effect == "wind":
+                    curr_x = (p["x"] + p["speed_x"] * t) % (w + 300) - 150
+                    curr_y = (p["y"] + p["speed_y"] * t) % h
+                    draw.line([curr_x, curr_y, curr_x + p["length"], curr_y + p["speed_y"] * 0.1], fill=p["color"], width=int(p["size"]))
                     
             img_cropped = PILImage.alpha_composite(img_rgba, overlay).convert("RGB")
             
@@ -879,6 +931,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
     config_path = project_dir / "project_config.json"
     use_watermark = SHOW_WATERMARK
     use_subtitles = True
+    effect_override = None
     if config_path.exists():
         try:
             import json
@@ -886,6 +939,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
                 p_cfg = json.load(f)
                 use_watermark = p_cfg.get("use_watermark", use_watermark)
                 use_subtitles = p_cfg.get("use_subtitles", use_subtitles)
+                effect_override = p_cfg.get("effect_type") or p_cfg.get("effect")
         except Exception as e:
             print(f"Error loading project_config.json: {e}")
 
@@ -897,7 +951,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
 
     image_clip = ImageClip(str(img_path)).set_duration(audio_clip.duration)
     # Always apply waveform (is_music=True) with correct audio_path to display actual audio levels
-    image_clip = apply_ken_burns_effect(image_clip, idx, is_music=True, audio_path=audio_path)
+    image_clip = apply_ken_burns_effect(image_clip, idx, is_music=True, audio_path=audio_path, effect_override=effect_override)
 
     # Pick the best available font with Vietnamese support
     font_path = "Arial"

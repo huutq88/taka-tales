@@ -389,7 +389,7 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         finally:
             video_engine.VOICE = orig_voice
 
-async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_subtitles: bool = True, story_text: str = None, force_rerun: bool = False):
+async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_subtitles: bool = True, story_text: str = None, force_rerun: bool = False, effect_type: str = "leaves"):
     """Executes the full Taka-Tales pipeline and reports progress in real time."""
     try:
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
@@ -423,7 +423,8 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
         config_data = {
             "use_watermark": use_watermark,
             "use_subtitles": use_subtitles,
-            "use_whisper": False
+            "use_whisper": False,
+            "effect_type": effect_type
         }
         with open(project_dir / "project_config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, ensure_ascii=False, indent=2)
@@ -1114,7 +1115,8 @@ async def main():
                             agent_active_tasks[project_name] = t
                         else:
                             story_text = payload.get("story_text")
-                            t = asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text, force_rerun))
+                            effect_type = payload.get("effect_type", "leaves")
+                            t = asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text, force_rerun, effect_type=effect_type))
                             agent_active_tasks[project_name] = t
                     elif msg_type == "delete_project_request":
                         request_id = message.get("request_id")

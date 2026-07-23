@@ -1039,6 +1039,7 @@ class VoiceConfig(BaseModel):
 class RunPipelineRequest(BaseModel):
     voice_config: Optional[VoiceConfig] = None
     art_style: Optional[str] = None
+    effect_type: Optional[str] = "leaves"
     story_text: Optional[str] = None
     use_watermark: Optional[bool] = True
     use_subtitles: Optional[bool] = True
@@ -1393,8 +1394,9 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             "project_name": f"{story_id}_{chapter_id}",
             "project_path": str(project_dir),
             "voice_config": voice_payload if voice_payload else None,
-            "pipeline_type": "music" if story_id == "music" else ("dao_ly" if (story_id == "dao_ly" or story_id.startswith("dao_ly_")) else "story"),
+            "pipeline_type": "music" if story_id == "music" else ("dao_ly" if (story_id in ("dao-ly", "dao_ly") or story_id.startswith("dao_ly_") or story_id.startswith("dao-ly-")) else "story"),
             "art_style": request_data.art_style if request_data else None,
+            "effect_type": request_data.effect_type if (request_data and hasattr(request_data, 'effect_type')) else "leaves",
             "use_watermark": request_data.use_watermark if request_data else True,
             "use_subtitles": request_data.use_subtitles if request_data else True,
             "use_whisper": request_data.use_whisper if request_data else False,
@@ -2589,12 +2591,24 @@ async def dashboard():
                         </select>
                     </div>
                 </div>
-                <div class="form-group" style="margin-top: 0.5rem;">
-                    <label for="dao-ly-aspect" style="font-weight: 600;">Tỷ lệ khung hình:</label>
-                    <select id="dao-ly-aspect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
-                        <option value="vertical">📱 Video Dọc (Shorts / TikTok / Reels 9:16)</option>
-                        <option value="horizontal">💻 Video Ngang (YouTube 16:9)</option>
-                    </select>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem;">
+                    <div class="form-group">
+                        <label for="dao-ly-aspect" style="font-weight: 600;">Tỷ lệ khung hình:</label>
+                        <select id="dao-ly-aspect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
+                            <option value="vertical">📱 Video Dọc (Shorts / TikTok / Reels 9:16)</option>
+                            <option value="horizontal">💻 Video Ngang (YouTube 16:9)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="dao-ly-effect" style="font-weight: 600;">Hiệu ứng hạt / Khí khí:</label>
+                        <select id="dao-ly-effect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
+                            <option value="leaves">🍁 Lá vàng rơi (Khuyên dùng Đạo Lý)</option>
+                            <option value="snow">❄️ Tuyết rơi lất phất</option>
+                            <option value="rain">🌧️ Mưa bay lất phất</option>
+                            <option value="wind">🍃 Gió thổi chao nghiêng</option>
+                            <option value="none">🚫 Không hiệu ứng</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="dialog-actions" style="margin-top: 1.5rem;">
@@ -3769,6 +3783,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                 let voiceVal = document.getElementById("dao-ly-voice").value;
                 let artStyle = document.getElementById("dao-ly-art-style").value;
                 let aspect = document.getElementById("dao-ly-aspect").value;
+                let effectVal = document.getElementById("dao-ly-effect") ? document.getElementById("dao-ly-effect").value : "leaves";
 
                 if (!titleVal || !storyText) {
                     alert("Vui lòng nhập cả Tiêu đề video và Nội dung kịch bản đọc!");
@@ -3814,6 +3829,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                         body: JSON.stringify({
                             voice_config: voiceConfig,
                             art_style: artStyle,
+                            effect_type: effectVal,
                             story_text: storyText,
                             use_watermark: true,
                             use_subtitles: true
