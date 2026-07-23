@@ -2450,10 +2450,9 @@ async def dashboard():
                     <div class="form-group">
                         <label for="dao-ly-voice" style="font-weight: 600;">Giọng đọc Đạo Lý:</label>
                         <select id="dao-ly-voice" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
-                            <option value="nam-dao-ly">👨 nam-dao-ly (OmniVoice Design - Nam trầm ấm)</option>
-                            <option value="nu-dao-ly">👩 nu-dao-ly (OmniVoice Design - Nữ dịu dàng)</option>
-                            <option value="vi-VN-NamMinhNeural">🎙️ Edge-TTS: Nam Minh (Nam chuẩn)</option>
-                            <option value="vi-VN-HoaiMyNeural">🎙️ Edge-TTS: Hoài Mỹ (Nữ chuẩn)</option>
+                            <option value="nam-bac-dao-ly">👨 nam-bac-dao-ly (OmniVoice - Nam Bắc Đạo Lý)</option>
+                            <option value="nam-dao-ly">👨 nam-dao-ly (OmniVoice - Nam trầm ấm)</option>
+                            <option value="nu-dao-ly">👩 nu-dao-ly (OmniVoice - Nữ dịu dàng)</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -3061,20 +3060,43 @@ async def dashboard():
                 try {
                     let res = await fetch("/v1/voices");
                     let voices = await res.json();
-                    let select = document.getElementById("vc-voice-id");
-                    let currentValue = select.value;
-                    select.innerHTML = '<option value="">-- Select Voice Profile --</option>';
-                    voices.forEach(v => {
-                        let opt = document.createElement("option");
-                        opt.value = v.id;
-                        opt.textContent = `${v.name} (${v.has_audio ? "Ref Audio Present" : "Missing Audio"})`;
-                        select.appendChild(opt);
-                    });
-                    if (currentValue) {
-                        select.value = currentValue;
+                    
+                    // 1. Populate #vc-voice-id
+                    let selectVc = document.getElementById("vc-voice-id");
+                    if (selectVc) {
+                        let currentValue = selectVc.value;
+                        selectVc.innerHTML = '<option value="">-- Select Voice Profile --</option>';
+                        voices.forEach(v => {
+                            let opt = document.createElement("option");
+                            opt.value = v.id;
+                            opt.textContent = `${v.name} (${v.has_audio ? "Ref Audio Present" : "Missing Audio"})`;
+                            selectVc.appendChild(opt);
+                        });
+                        if (currentValue) selectVc.value = currentValue;
+                    }
+
+                    // 2. Populate #dao-ly-voice dynamically
+                    let selectDaoLy = document.getElementById("dao-ly-voice");
+                    if (selectDaoLy) {
+                        let currentValue = selectDaoLy.value;
+                        selectDaoLy.innerHTML = "";
+                        
+                        voices.forEach(v => {
+                            let opt = document.createElement("option");
+                            opt.value = v.id;
+                            let emoji = "🎙️";
+                            if (v.id.includes("nam")) emoji = "👨";
+                            else if (v.id.includes("nu")) emoji = "👩";
+                            opt.textContent = `${emoji} ${v.id} (OmniVoice - ${v.name || v.id})`;
+                            selectDaoLy.appendChild(opt);
+                        });
+
+                        if (currentValue) {
+                            selectDaoLy.value = currentValue;
+                        }
                     }
                 } catch (e) {
-                    console.error("Failed to load voices: " + e);
+                    console.error("Failed to load voices dropdown: " + e);
                 }
             }
 
@@ -3532,6 +3554,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                         }
                         if (textInput) textInput.value = "";
                     }
+                    await loadVoicesDropdown();
                     dialog.showModal();
                 }
             }
