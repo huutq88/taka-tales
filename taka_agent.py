@@ -20,6 +20,7 @@ AGENT_PROJECTS_DIR = AGENT_DATA_DIR / "projects"
 AGENT_PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 AGENT_VOICES_DIR = AGENT_DATA_DIR / "voices"
 AGENT_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+agent_active_tasks: Dict[str, asyncio.Task] = {}
 
 # Load config
 _CONFIG_PATH = AGENT_DIR / "config.ini"
@@ -549,6 +550,18 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             "current_fragment": num_frags,
             "total_fragments": num_frags
         }))
+    except asyncio.CancelledError:
+        print(f"[Agent] Pipeline task for '{project_name}' was cancelled.")
+        try:
+            await websocket.send(json.dumps({
+                "type": "pipeline_progress",
+                "project_name": project_name,
+                "status": "stopped",
+                "current_fragment": 0,
+                "total_fragments": 0
+            }))
+        except Exception:
+            pass
     except Exception as e:
         print(f"[Agent] Pipeline task failed: {e}")
         try:
@@ -562,6 +575,8 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             }))
         except Exception as send_err:
             print(f"[Agent] Failed to send error status: {send_err}")
+    finally:
+        agent_active_tasks.pop(project_name, None)
 
 
 async def run_music_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = False, use_subtitles: bool = False, use_whisper: bool = False, music_b64: str = None, music_filename: str = None, music_local_path: str = None, force_rerun: bool = False):
@@ -853,6 +868,18 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
             "current_fragment": num_frags,
             "total_fragments": num_frags
         }))
+    except asyncio.CancelledError:
+        print(f"[Agent] Music pipeline task for '{project_name}' was cancelled.")
+        try:
+            await websocket.send(json.dumps({
+                "type": "pipeline_progress",
+                "project_name": project_name,
+                "status": "stopped",
+                "current_fragment": 0,
+                "total_fragments": 0
+            }))
+        except Exception:
+            pass
     except Exception as e:
         print(f"[Agent] Music pipeline task failed: {e}")
         try:
@@ -866,6 +893,8 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
             }))
         except Exception as send_err:
             print(f"[Agent] Failed to send error status: {send_err}")
+    finally:
+        agent_active_tasks.pop(project_name, None)
 
 
 def start_local_media_server():
@@ -1040,10 +1069,54 @@ async def main():
                             music_b64 = payload.get("music_b64")
                             music_filename = payload.get("music_filename")
                             music_local_path = payload.get("music_local_path")
-                            asyncio.create_task(run_music_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, use_whisper, music_b64, music_filename, music_local_path, force_rerun))
+                            t = asyncio.create_task(run_music_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, use_whisper, music_b64, music_filename, music_local_path, force_rerun))
+                            agent_active_tasks[project_name] = t
                         else:
                             story_text = payload.get("story_text")
-                            asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text, force_rerun))
+                            t = asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text, force_rerun))
+                            agent_active_tasks[project_name] = t
+                    elif msg_type == "delete_project_request":
+                        request_id = message.get("request_id")
+                        story_id = payload.get("story_id", "").strip()
+                        chapter_id = payload.get("chapter_id")
+                        
+                        search_patterns = [story_id]
+                        if chapter_id:
+                            search_patterns.append(f"{story_id}/{chapter_id}")
+                            search_patterns.append(f"{story_id}_{chapter_id}")
+
+                        # 1. Cancel running pipeline task if any
+                        to_cancel = [k for k in agent_active_tasks.keys() if any(k == p or k.startswith(f"{p}/") or k.startswith(f"{p}_") for p in search_patterns)]
+                        for k in to_cancel:
+                            t = agent_active_tasks.get(k)
+                            if t and not t.done():
+                                print(f"[Agent] Stopping running pipeline task for project: {k}")
+                                t.cancel()
+                            agent_active_tasks.pop(k, None)
+
+                        # Clear running jobs state
+                        job_keys = [k for k in agent_running_jobs.keys() if any(k == p or k.startswith(f"{p}/") or k.startswith(f"{p}_") for p in search_patterns)]
+                        for k in job_keys:
+                            agent_running_jobs.pop(k, None)
+
+                        # 2. Delete project directory on Agent
+                        if chapter_id:
+                            agent_target_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
+                        else:
+                            agent_target_dir = AGENT_PROJECTS_DIR / story_id
+
+                        if agent_target_dir.exists():
+                            try:
+                                shutil.rmtree(agent_target_dir)
+                                print(f"[Agent] Successfully deleted agent project folder: {agent_target_dir}")
+                            except Exception as ex:
+                                print(f"[Agent] Failed to delete agent project folder: {ex}")
+
+                        await websocket.send(json.dumps({
+                            "type": "delete_project_response",
+                            "request_id": request_id,
+                            "payload": {"ok": True, "story_id": story_id, "chapter_id": chapter_id}
+                        }))
                     elif msg_type == "select_file_request":
                         request_id = message.get("request_id")
                         prompt = payload.get("prompt", "Select a file")

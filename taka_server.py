@@ -705,6 +705,45 @@ async def create_project(story_id: str):
     story_dir.mkdir(parents=True, exist_ok=True)
     return {"ok": True, "story_id": clean_id}
 
+@app.delete("/v1/projects/{story_id}")
+@app.delete("/v1/projects/{story_id}/{chapter_id}")
+async def delete_project(request: Request, story_id: str, chapter_id: Optional[str] = None):
+    clean_story = story_id.strip()
+    if not clean_story or "/" in clean_story or ".." in clean_story:
+        raise HTTPException(status_code=400, detail="Invalid story_id format")
+
+    ws_id = get_workspace_id_from_request(request)
+    agent_ws = agents_by_workspace.get(ws_id)
+    if agent_ws:
+        try:
+            await tunnel_request_to_agent("delete_project_request", {
+                "story_id": clean_story,
+                "chapter_id": chapter_id
+            }, workspace_id=ws_id, timeout=5.0)
+        except Exception as e:
+            print(f"[Server] Warning: delete_project_request to Agent failed: {e}")
+
+    # Remove matching job state
+    target_pattern = f"{clean_story}/{chapter_id}" if chapter_id else clean_story
+    keys_to_del = [k for k in project_jobs.keys() if k == target_pattern or k.startswith(f"{target_pattern}/") or k == clean_story or k.startswith(f"{clean_story}/")]
+    for k in keys_to_del:
+        project_jobs.pop(k, None)
+
+    # Delete local folder on server
+    if chapter_id:
+        target_dir = PROJECTS_DIR / clean_story / chapter_id
+    else:
+        target_dir = PROJECTS_DIR / clean_story
+
+    if target_dir.exists():
+        try:
+            shutil.rmtree(target_dir)
+            print(f"[Server] Successfully deleted project directory: {target_dir}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete project directory: {str(e)}")
+
+    return {"ok": True, "story_id": clean_story, "chapter_id": chapter_id}
+
 
 @app.post("/v1/projects/music")
 async def create_music_project(project_name: str, local_path: str = "", file: Optional[UploadFile] = File(None)):
@@ -2270,9 +2309,10 @@ async def dashboard():
                             <h2 id="current-project-title">Project Name</h2>
                             <p id="current-project-desc" style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.2rem;">Pipeline Status</p>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 1rem;">
+                        <div style="display: flex; align-items: center; gap: 0.8rem;">
                             <span id="status-banner" class="status-banner">Idle</span>
                             <button id="details-run-btn" class="run-btn" style="padding: 0.4rem 1rem; font-size: 0.85rem;">Run</button>
+                            <button id="details-delete-btn" onclick="deleteCurrentProject()" style="padding: 0.4rem 0.9rem; font-size: 0.85rem; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: #ef4444; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s ease;">🗑️ Xóa dự án</button>
                         </div>
                     </div>
 
@@ -2466,7 +2506,8 @@ async def dashboard():
                     <div class="form-group">
                         <label for="dao-ly-voice" style="font-weight: 600;">Giọng đọc Đạo Lý:</label>
                         <select id="dao-ly-voice" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
-                            <option value="nam-bac-dao-ly">👨 nam-bac-dao-ly (OmniVoice - Nam Bắc Đạo Lý)</option>
+                            <option value="nam-dao-ly">👨 Nam Đạo Lý (OmniVoice - nam-dao-ly)</option>
+                            <option value="nu-doc-truyen">👩 Nữ Đọc Truyện (OmniVoice - nu-doc-truyen)</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -2797,9 +2838,12 @@ async def dashboard():
                             let isRunning = (c.status !== 'idle' && c.status !== 'completed');
                             
                             item.innerHTML = `
-                                <div class="chapter-info">
-                                    <h4>${displayTitle}</h4>
-                                    <p>${c.has_video ? "🎬 Video completed" : "No video output yet"}</p>
+                                <div class="chapter-info" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                                    <div style="flex: 1; overflow: hidden; text-overflow: ellipsis;">
+                                        <h4>${displayTitle}</h4>
+                                        <p>${c.has_video ? "🎬 Video completed" : "No video output yet"}</p>
+                                    </div>
+                                    <button class="delete-item-btn" title="Xóa dự án này" onclick="event.stopPropagation(); deleteProject('${targetStoryId}', '${c.id}');" style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; padding: 0.25rem 0.5rem; border-radius: 5px; font-size: 0.75rem; cursor: pointer; font-weight: 600; margin-left: 0.5rem;">🗑️</button>
                                 </div>
                             `;
                             chList.appendChild(item);
@@ -3238,9 +3282,50 @@ async def dashboard():
                     } else {
                         loadVoicesList();
                     }
-                } catch(e) {
-                    alert("Error: " + e);
+                } catch (e) {
+                    alert("Failed to delete voice profile: " + e);
                 }
+            }
+
+            async function deleteProject(storyId, chapterId) {
+                let targetStory = storyId || currentStory;
+                let targetChapter = chapterId || currentChapter;
+                if (!targetStory) return;
+
+                let displayLabel = targetChapter ? `${targetStory}` : targetStory;
+                if (!confirm(`Bạn có chắc chắn muốn XÓA DỰ ÁN "${displayLabel}" không?\n\nHành động này sẽ DỪNG TOÀN BỘ tiến trình pipeline đang chạy và XÓA TOÀN BỘ dữ liệu dự án trên đĩa cứng!`)) {
+                    return;
+                }
+
+                try {
+                    let url = `/v1/projects/${encodeURIComponent(targetStory)}`;
+                    if (targetChapter && targetChapter !== "story") {
+                        url += `/${encodeURIComponent(targetChapter)}`;
+                    }
+                    let res = await fetch(url, { method: "DELETE" });
+                    if (res.ok) {
+                        if (currentStory === targetStory) {
+                            currentStory = "";
+                            currentChapter = "";
+                            let mainView = document.getElementById("main-details-view");
+                            if (mainView) mainView.style.display = "none";
+                            let emptyView = document.getElementById("empty-details-view");
+                            if (emptyView) emptyView.style.display = "block";
+                        }
+                        await loadProjects();
+                    } else {
+                        let txt = await res.text();
+                        let detail = txt;
+                        try { detail = JSON.parse(txt).detail || txt; } catch(_) {}
+                        alert("Lỗi xóa dự án: " + detail);
+                    }
+                } catch(e) {
+                    alert("Lỗi kết nối khi xóa dự án: " + e);
+                }
+            }
+
+            function deleteCurrentProject() {
+                deleteProject(currentStory, currentChapter);
             }
 
             async function runChapter(event, storyId, chapterId) {
