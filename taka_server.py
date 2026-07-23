@@ -313,15 +313,18 @@ async def get_agent_status(request: Request):
     st = agent_status.get(ws_id, {})
     agent_ver = st.get("agent_version")
     needs_update = (agent_ver != AGENT_VERSION) if connected else False
-    return {
-        "connected": connected,
-        "workspace_id": ws_id,
-        "active_workspaces": list(agents_by_workspace.keys()),
-        "agents": {ws_id: st} if st else {},
-        "server_version": AGENT_VERSION,
-        "needs_update": needs_update,
-        "agent_version": agent_ver
-    }
+    return JSONResponse(
+        content={
+            "connected": connected,
+            "workspace_id": ws_id,
+            "active_workspaces": list(agents_by_workspace.keys()),
+            "agents": {ws_id: st} if st else {},
+            "server_version": AGENT_VERSION,
+            "needs_update": needs_update,
+            "agent_version": agent_ver
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
 
 @app.get("/v1/system/install-agent.sh", response_class=PlainTextResponse)
 async def get_install_script(request: Request, workspace_id: str = "default_workspace"):
@@ -2576,7 +2579,7 @@ async def dashboard():
 
             async function updateAgentStatus() {
                 try {
-                    let res = await fetch("/v1/agent/status");
+                    let res = await fetch("/v1/agent/status?_t=" + Date.now());
                     let data = await res.json();
                     let badge = document.getElementById("agent-badge");
                     let text = document.getElementById("agent-text");
