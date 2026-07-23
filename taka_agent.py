@@ -172,12 +172,9 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         if torch.cuda.is_available():
             device = "cuda"
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            # Voice cloning on MPS causes PyTorch Segfault (exit code 139) on macOS.
-            # We must use CPU for clone mode, but can use MPS for design/auto modes.
-            is_clone = False
-            if voice_config and voice_config.get("omnivoice_mode") == "clone":
-                is_clone = True
-            device = "cpu" if is_clone else "mps"
+            # OmniVoice weight loading locks/leaks semaphores on PyTorch MPS on macOS.
+            # Using CPU is reliable and completes synthesis in 20s.
+            device = "cpu"
         else:
             device = "cpu"
     except ImportError:
