@@ -306,7 +306,7 @@ async def list_active_workspaces():
 @app.get("/v1/agent/status")
 async def get_agent_status(request: Request):
     ws_id = get_workspace_id_from_request(request)
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) == 1:
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
         ws_id = list(agents_by_workspace.keys())[0]
     agent_ws = agents_by_workspace.get(ws_id)
     connected = agent_ws is not None
@@ -743,7 +743,7 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
 @app.get("/v1/projects")
 async def list_projects(request: Request):
     ws_id = get_workspace_id_from_request(request)
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) == 1:
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
         ws_id = list(agents_by_workspace.keys())[0]
     stories = []
     story_ids = []
