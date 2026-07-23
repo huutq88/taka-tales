@@ -101,7 +101,8 @@ ART_STYLES: Dict[str, str] = {
     "dong_ho": "traditional Vietnamese Dong Ho folk painting style, woodblock print texture, bold hand-drawn ink outlines, natural pigments on aged textured Dzo paper, depicting traditional Vietnamese rural life, Vietnamese peasants, Vietnamese countryside context, folk art masterpiece",
     "son_mai": "detailed Vietnamese lacquer painting style, gold leaf accents, cinnabar red highlights, polished dark lacquer surface, organic textures, featuring traditional Vietnamese motifs and Vietnamese village scenery, cultural masterpiece",
     "woodblock": "rustic monochrome Vietnamese folk woodblock print style, black ink printing on aged yellowish parchment paper, bold textured carving lines, traditional Vietnamese country life depiction, hand-carved block printing aesthetic",
-    "thuy_mac": "classical Vietnamese ink wash painting style, elegant brush strokes, sepia and black ink wash, misty Vietnamese countryside atmosphere, featuring traditional Vietnamese dress, ancient Vietnamese village houses, aged scroll paper texture, nostalgic poetic look"
+    "thuy_mac": "classical East Asian ink wash painting style, sumi-e aesthetic, elegant black ink strokes on white Xuan paper, subtle grey washes, misty atmosphere, monochrome, zen art style, poetic nostalgic look, masterpiece",
+    "thuy_mac_blackwhite": "strict monochrome black and white ink wash painting, traditional sumi-e style, pure black ink and white paper contrast, no color, minimalist, zen atmosphere, expressive brushstrokes, negative space, dramatic silhouette, masterpiece"
 }
 NEGATIVE_PROMPT: str = config["STABLE_DIFFUSION"]["negative_prompt"]
 USE_SD_API: str = config["STABLE_DIFFUSION"]["USE_SD_VIA_API"]

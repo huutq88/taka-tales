@@ -306,6 +306,8 @@ async def list_active_workspaces():
 @app.get("/v1/agent/status")
 async def get_agent_status(request: Request):
     ws_id = get_workspace_id_from_request(request)
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) == 1:
+        ws_id = list(agents_by_workspace.keys())[0]
     agent_ws = agents_by_workspace.get(ws_id)
     connected = agent_ws is not None
     st = agent_status.get(ws_id, {})
@@ -738,6 +740,8 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
 @app.get("/v1/projects")
 async def list_projects(request: Request):
     ws_id = get_workspace_id_from_request(request)
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) == 1:
+        ws_id = list(agents_by_workspace.keys())[0]
     stories = []
     story_ids = []
     agent_files = {}
@@ -2149,14 +2153,11 @@ async def dashboard():
             </div>
             <nav class="header-menu">
                 <a id="nav-home" onclick="showPage('home')" class="active">Home</a>
+                <a id="nav-dao-ly" onclick="showPage('dao-ly')" style="color: #f59e0b; display: flex; align-items: center; gap: 0.3rem;" title="Tạo video Đạo Lý 1-Click">☯️ Đạo Lý</a>
                 <a id="nav-voices" onclick="showPage('voices')">Voices</a>
-                <a id="nav-music" onclick="openMusicDialog()">Music</a>
+                <a id="nav-music" onclick="showPage('music')">Music</a>
             </nav>
             <div style="display: flex; align-items: center; gap: 1rem;">
-                <div id="workspace-badge" style="font-size: 0.8rem; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); padding: 0.35rem 0.8rem; border-radius: 20px; display: flex; align-items: center; gap: 0.4rem; cursor: pointer;" onclick="changeWorkspacePrompt()" title="Click to switch workspace">
-                    <span style="opacity: 0.6;">Workspace:</span>
-                    <strong id="workspace-id-text" style="color: var(--primary-light);">...</strong>
-                </div>
                 <div id="agent-badge" class="agent-badge">
                     <span class="badge-dot"></span>
                     <span id="agent-text">Agent Offline</span>
@@ -2362,6 +2363,67 @@ async def dashboard():
                 <div class="dialog-actions">
                     <button type="button" class="btn-cancel" onclick="closeMusicDialog()">Cancel</button>
                     <button type="submit" class="btn-submit">Upload & Start</button>
+                </div>
+            </form>
+        </dialog>
+
+        <!-- Đạo Lý Studio Dialog -->
+        <dialog id="dao-ly-dialog" style="max-width: 680px; width: 90%;">
+            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; color: #f59e0b;">
+                <span>☯️ Đạo Lý — Tạo Video Triết Lý 1-Click</span>
+                <span style="font-size:0.8rem; opacity:0.6; color: var(--text-muted);">Shorts / Reels Generator</span>
+            </h3>
+            <form id="dao-ly-form" onsubmit="submitDaoLyProject(event)">
+                <div class="form-group" style="margin-top: 1rem;">
+                    <label for="dao-ly-sample-select" style="font-weight: 600; color: #a78bfa;">Chọn Kịch Bản Mẫu (Hoặc Tự Nhập Bằng Tay):</label>
+                    <select id="dao-ly-sample-select" onchange="onSelectDaoLySample(this.value)" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;">
+                        <option value="custom">-- Kịch bản Tùy Chỉnh (Tự nhập tiêu đề & nội dung bên dưới) --</option>
+                        <option value="s1">📜 Kịch bản 1: Túi Tiền Và Tâm Hồn (Tài chính & Trí tuệ)</option>
+                        <option value="s2">📜 Kịch bản 2: Nhìn Thấu Lòng Người (Ứng xử & Bản chất)</option>
+                        <option value="s3">📜 Kịch bản 3: Bản Lĩnh Và Cơn Giận (Kiểm soát cảm xúc)</option>
+                        <option value="s4">📜 Kịch bản 4: Sự Buông Bỏ Bình Yên (Tĩnh tâm & Quá khứ)</option>
+                        <option value="s5">📜 Kịch bản 5: Sự Im Lặng Trưởng Thành (Thâm trầm & Nội tâm)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="dao-ly-title" style="font-weight: 600; color: #f59e0b;">1. Tiêu đề Video / Tên Kịch Bản:</label>
+                    <input type="text" id="dao-ly-title" required placeholder="Nhập tiêu đề video (e.g. Sự Im Lặng Của Người Trưởng Thành)..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.65rem; border-radius: 6px; outline: none; font-size: 0.95rem; font-weight: 600;">
+                </div>
+                <div class="form-group">
+                    <label for="dao-ly-story-text" style="font-weight: 600; color: #10b981;">2. Nội dung Kịch bản Đọc (Plain Text cho TTS):</label>
+                    <textarea id="dao-ly-story-text" rows="6" required placeholder="Nhập văn bản kịch bản đọc để chuyển thành giọng nói tại đây..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-family: inherit; font-size: 0.9rem; resize: vertical; line-height: 1.5;"></textarea>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label for="dao-ly-voice" style="font-weight: 600;">Giọng đọc Đạo Lý:</label>
+                        <select id="dao-ly-voice" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
+                            <option value="nam-dao-ly">👨 nam-dao-ly (OmniVoice Design - Nam trầm ấm)</option>
+                            <option value="nu-dao-ly">👩 nu-dao-ly (OmniVoice Design - Nữ dịu dàng)</option>
+                            <option value="vi-VN-NamMinhNeural">🎙️ Edge-TTS: Nam Minh (Nam chuẩn)</option>
+                            <option value="vi-VN-HoaiMyNeural">🎙️ Edge-TTS: Hoài Mỹ (Nữ chuẩn)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="dao-ly-art-style" style="font-weight: 600;">Phong cách vẽ ảnh AI:</label>
+                        <select id="dao-ly-art-style" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
+                            <option value="thuy_mac_blackwhite">☯️ Thủy mặc Đen - Trắng (Khuyên dùng)</option>
+                            <option value="thuy_mac">🖌️ Thủy mặc Đen - Xám mờ sương</option>
+                            <option value="woodblock">🪵 Mộc bản khắc gỗ trắng đen</option>
+                            <option value="watercolor">🎨 Tranh màu nước hoài niệm</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 0.5rem;">
+                    <label for="dao-ly-aspect" style="font-weight: 600;">Tỷ lệ khung hình:</label>
+                    <select id="dao-ly-aspect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
+                        <option value="vertical">📱 Video Dọc (Shorts / TikTok / Reels 9:16)</option>
+                        <option value="horizontal">💻 Video Ngang (YouTube 16:9)</option>
+                    </select>
+                </div>
+
+                <div class="dialog-actions" style="margin-top: 1.5rem;">
+                    <button type="button" class="btn-cancel" onclick="closeDaoLyStudioModal()">Hủy</button>
+                    <button type="submit" class="btn-submit" style="background: linear-gradient(135deg, #f59e0b, #d97706); border: none; font-weight: bold; font-size: 0.95rem; color: #fff;">🚀 Khởi Tạo & Render Video Đạo Lý</button>
                 </div>
             </form>
         </dialog>
@@ -2902,18 +2964,38 @@ async def dashboard():
             }
 
             function showPage(pageId) {
-                document.getElementById("nav-home").classList.remove("active");
-                document.getElementById("nav-voices").classList.remove("active");
-                
+                // Close open dialogs if switching tabs
+                ['dao-ly-dialog', 'music-dialog', 'voice-config-dialog'].forEach(id => {
+                    let d = document.getElementById(id);
+                    if (d && d.open) d.close();
+                });
+
+                // Clear active from all navbar items
+                document.querySelectorAll('.header-menu a').forEach(a => a.classList.remove('active'));
+
                 if (pageId === 'home') {
-                    document.getElementById("nav-home").classList.add("active");
+                    let homeBtn = document.getElementById('nav-home');
+                    if (homeBtn) homeBtn.classList.add('active');
                     document.getElementById("main-grid").style.display = "grid";
                     document.getElementById("voices-page").style.display = "none";
                 } else if (pageId === 'voices') {
-                    document.getElementById("nav-voices").classList.add("active");
+                    let voicesBtn = document.getElementById('nav-voices');
+                    if (voicesBtn) voicesBtn.classList.add('active');
                     document.getElementById("main-grid").style.display = "none";
                     document.getElementById("voices-page").style.display = "block";
                     loadVoicesList();
+                } else if (pageId === 'dao-ly') {
+                    let daoLyBtn = document.getElementById('nav-dao-ly');
+                    if (daoLyBtn) daoLyBtn.classList.add('active');
+                    document.getElementById("main-grid").style.display = "grid";
+                    document.getElementById("voices-page").style.display = "none";
+                    openDaoLyStudioModal();
+                } else if (pageId === 'music') {
+                    let musicBtn = document.getElementById('nav-music');
+                    if (musicBtn) musicBtn.classList.add('active');
+                    document.getElementById("main-grid").style.display = "grid";
+                    document.getElementById("voices-page").style.display = "none";
+                    openMusicDialog();
                 }
             }
 
@@ -3281,6 +3363,127 @@ async def dashboard():
             updateAgentStatus();
             loadProjects();
 
+            const DAO_LY_SAMPLES = {
+                s1: {
+                    title: "Túi Tiền Và Tâm Hồn",
+                    text: "Kẻ nghèo nhất không phải người không có tiền, mà là người chỉ có tiền trong tay.\n\nKhi bạn chỉ sống vì vật chất, sự tôn trọng người khác dành cho bạn cũng chỉ đắt giá bằng túi tiền của bạn mà thôi. Đồng tiền có thể mua được sự nịnh hót tạm thời, nhưng không bao giờ mua được tấm lòng trung thành. Người có trí tuệ coi tiền là công cụ, còn kẻ dại khờ coi tiền là thước đo nhân cách.\n\nHãy làm chủ đồng tiền, đừng để nó biến bạn thành nô lệ trong sự giàu có cô độc.\n\nHãy giữ cho mình một tâm hồn giàu có trước khi tích lũy của cải. Theo dõi kênh để cùng rèn luyện tư duy mỗi ngày."
+                },
+                s2: {
+                    title: "Nhìn Thấu Lòng Người",
+                    text: "Đừng vội tin một người khi họ đối xử tốt với bạn lúc họ đang cần bạn.\n\nBản chất con người giống như một hồ nước sâu, chỉ khi gặp biến cố hoặc lợi ích bị đụng chạm, đáy nước mới hiện rõ. Người chân thành không dùng lời ngon tiếng ngọt để lấy lòng, mà lặng lẽ đứng bên bạn khi thế giới quay lưng. Kẻ dối trá thường rất vội vã, còn người tử tế luôn bình thản với thời gian.\n\nNhìn thấu lòng người là một loại năng lực, nhưng không bóc phốt là một loại giáo dưỡng.\n\nGiữ sự tỉnh táo để nhìn đời, và giữ sự bao dung để sống yên bình. Đăng ký kênh để đón nhận thêm nhiều triết lý hay."
+                },
+                s3: {
+                    title: "Bản Lĩnh Và Cơn Giận",
+                    text: "Mất kiểm soát cơn giận là cách nhanh nhất để bạn phá hủy thành quả của chính mình.\n\nMột khoảnh khắc giận dữ có thể đốt cháy cả một rừng công sức bạn đã chắt chiu xây dựng. Người nông nổi dùng lời nói xỉa xói để chứng minh mình đúng, còn người bản lĩnh dùng sự im lặng để bao quát toàn cục. Kẻ thù lớn nhất không nằm ở bên ngoài, mà chính là sự bồng bồng trong tâm trí bạn.\n\nLàm chủ được cảm xúc, bạn mới có thể làm chủ được vận mệnh.\n\nBớt một chút tranh cãi, bạn sẽ bớt đi hàng ngàn phiền lụy. Nhấn theo dõi để rèn luyện sự bình thản mỗi ngày."
+                },
+                s4: {
+                    title: "Sự Buông Bỏ Bình Yên",
+                    text: "Thứ đang thiêu rụi cuộc đời bạn không phải là quá khứ, mà là sự hối tiếc vô ích.\n\nNhững gì đã xảy ra là điều bắt buộc phải xảy ra, dằn dằn bản thân hàng ngàn lần cũng không thể thay đổi được thực tại. Bạn không thể bắt đầu một chương mới nếu cứ mải miết đọc lại những trang sách cũ đầy nước mắt. Buông bỏ không phải là đầu hàng, mà là mỉm cười chấp nhận mọi thứ đã hoàn thành sứ mệnh.\n\nTrả lại bình yên cho tâm trí, và mở lòng đón nhận những điều đang chờ phía trước.\n\nTheo dõi kênh để tìm lại sự thanh thản trong tâm hồn."
+                },
+                s5: {
+                    title: "Sự Im Lặng Trưởng Thành",
+                    text: "Càng trưởng thành, con người ta càng trở nên im lặng.\n\nKhông phải vì hết lời để nói, mà vì họ nhận ra không phải ai cũng đủ trình độ để hiểu được sự trầm mặc của mình. Giải thích với người không cùng tầng tư duy chỉ làm tổn hại đến năng lượng của bạn. Nước sâu thì chảy chậm, người khôn thì nói ít. Khi bạn ngừng tranh luận đúng sai, đó là lúc trí tuệ lên tiếng.\n\nLặng lẽ tích lũy sức mạnh, rồi thời gian sẽ trả lời tất cả.\n\nĐón xem các bài học cuộc sống tiếp theo bằng cách bấm theo dõi kênh."
+                }
+            };
+
+            function openDaoLyStudioModal() {
+                let dialog = document.getElementById("dao-ly-dialog");
+                if (dialog) {
+                    let titleInput = document.getElementById("dao-ly-title");
+                    let textInput = document.getElementById("dao-ly-story-text");
+                    let select = document.getElementById("dao-ly-sample-select");
+                    
+                    if (select) select.value = "custom";
+                    if (titleInput && !titleInput.value) {
+                        let timestamp = new Date().toISOString().replace(/[-:T.]/g, "").slice(2, 10);
+                        titleInput.value = "Kịch Bản Đạo Lý " + timestamp;
+                    }
+                    dialog.showModal();
+                }
+            }
+
+            function closeDaoLyStudioModal() {
+                let dialog = document.getElementById("dao-ly-dialog");
+                if (dialog) dialog.close();
+                document.querySelectorAll('.header-menu a').forEach(a => a.classList.remove('active'));
+                let homeBtn = document.getElementById('nav-home');
+                if (homeBtn) homeBtn.classList.add('active');
+            }
+
+            function onSelectDaoLySample(key) {
+                let titleInput = document.getElementById("dao-ly-title");
+                let textInput = document.getElementById("dao-ly-story-text");
+                if (DAO_LY_SAMPLES[key]) {
+                    if (titleInput) titleInput.value = DAO_LY_SAMPLES[key].title;
+                    if (textInput) textInput.value = DAO_LY_SAMPLES[key].text;
+                }
+            }
+
+            async function submitDaoLyProject(event) {
+                event.preventDefault();
+                let titleVal = document.getElementById("dao-ly-title").value.trim();
+                let storyText = document.getElementById("dao-ly-story-text").value.trim();
+                let voiceVal = document.getElementById("dao-ly-voice").value;
+                let artStyle = document.getElementById("dao-ly-art-style").value;
+                let aspect = document.getElementById("dao-ly-aspect").value;
+
+                if (!titleVal || !storyText) {
+                    alert("Vui lòng nhập cả Tiêu đề video và Nội dung kịch bản đọc!");
+                    return;
+                }
+
+                // Generate slug for folder name
+                let slug = titleVal.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                    .replace(/đ/g, "d").replace(/Đ/g, "d")
+                    .replace(/[^a-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+                
+                let timestamp = new Date().toISOString().replace(/[-:T.]/g, "").slice(2, 10);
+                let projName = "dao_ly_" + (slug || "story") + "_" + timestamp;
+
+                closeDaoLyStudioModal();
+
+                try {
+                    let res = await fetch("/v1/projects?story_id=" + encodeURIComponent(projName), { method: "POST" });
+                    if (!res.ok) {
+                        let err = await res.json();
+                        alert("Lỗi tạo dự án: " + (err.detail || "Unknown error"));
+                        return;
+                    }
+
+                    let voiceConfig = {};
+                    if (voiceVal.startsWith("vi-VN-")) {
+                        voiceConfig = { provider: "edge", voice_id: voiceVal };
+                    } else {
+                        voiceConfig = { provider: "omnivoice", voice_id: voiceVal };
+                    }
+
+                    // Run pipeline with created project
+                    let runUrl = `/v1/projects/${encodeURIComponent(projName)}/story/run`;
+                    let runRes = await fetch(runUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            voice_config: voiceConfig,
+                            art_style: artStyle,
+                            story_text: storyText,
+                            use_watermark: true,
+                            use_subtitles: true
+                        })
+                    });
+
+                    if (runRes.ok) {
+                        await loadProjects();
+                        selectChapter(projName, "story");
+                    } else {
+                        let err = await runRes.json();
+                        alert("Lỗi chạy pipeline: " + (err.detail || "Unknown error"));
+                    }
+
+                } catch(e) {
+                    alert("Không thể khởi tạo dự án Đạo Lý: " + e);
+                }
+            }
+
             function openMusicDialog() {
                 document.getElementById("music-project-name").value = "";
                 document.getElementById("music-path").value = "";
@@ -3289,7 +3492,11 @@ async def dashboard():
             }
 
             function closeMusicDialog() {
-                document.getElementById("music-dialog").close();
+                let dialog = document.getElementById("music-dialog");
+                if (dialog) dialog.close();
+                document.querySelectorAll('.header-menu a').forEach(a => a.classList.remove('active'));
+                let homeBtn = document.getElementById('nav-home');
+                if (homeBtn) homeBtn.classList.add('active');
             }
 
              async function submitMusicProject(event) {

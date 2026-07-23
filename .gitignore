@@ -139,8 +139,8 @@ Thumbs.db
 # Ignore projects directory entirely
 projects/
 
-# Ignore downloaded albums
-downloaded_albums/
+# Ignore data
+data/
 
 # Ignore local reference/test media files
 *.jpeg

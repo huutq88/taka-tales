@@ -256,10 +256,16 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
             voices_base = AGENT_DIR / "voices"
             
         voice_dir = voices_base / voice_id
+        if not voice_dir.exists():
+            voice_dir = AGENT_DIR / "voices" / voice_id
+            
         if voice_dir.exists():
             local_path_file = voice_dir / "local_path.txt"
             ref_audio_file = voice_dir / "ref.wav"
             ref_text_file = voice_dir / "ref_text.txt"
+            voice_instruct_file = voice_dir / "voice_instruct.txt"
+            if not voice_instruct_file.exists():
+                voice_instruct_file = voice_dir / "instruct.txt"
             
             if local_path_file.exists():
                 try:
@@ -280,6 +286,15 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
                     print(f"[Agent] Failed to read ref_text.txt: {ex}")
             else:
                 merged_config["ref_text"] = None
+
+            if voice_instruct_file.exists():
+                try:
+                    with open(voice_instruct_file, "r", encoding="utf-8") as f:
+                        merged_config["voice_instruct"] = f.read().strip()
+                        merged_config["omnivoice_mode"] = "design"
+                        merged_config["provider"] = "omnivoice"
+                except Exception as ex:
+                    print(f"[Agent] Failed to read voice_instruct.txt: {ex}")
 
     provider = merged_config.get("provider", "edge").lower()
     print(f"[Agent] Routing TTS generation. provider={provider}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in merged_config.items() if k != 'ref_audio_b64'} }")
