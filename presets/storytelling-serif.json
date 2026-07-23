@@ -1,0 +1,55 @@
+{
+  "id": "storytelling-serif",
+  "renderer_hint": "ass",
+  "segmentation": {
+    "min_words": 2,
+    "max_words": 5,
+    "min_duration_ms": 500,
+    "max_duration_ms": 2600,
+    "max_chars_per_line": 22,
+    "max_lines": 2,
+    "pause_threshold_ms": 350
+  },
+  "layout": {
+    "type": "bottom-center",
+    "safe_bottom": 440,
+    "max_width_ratio": 0.80,
+    "line_spacing": 16
+  },
+  "font": {
+    "family": "Georgia",
+    "size": 60,
+    "weight": 700
+  },
+  "text": {
+    "color": "#F8FAFC",
+    "active_color": "#F59E0B"
+  },
+  "outline": {
+    "enabled": true,
+    "color": "#0F172A",
+    "width": 6
+  },
+  "shadow": {
+    "enabled": true,
+    "x": 0,
+    "y": 4,
+    "blur": 6,
+    "color": "#000000AA"
+  },
+  "animation": {
+    "caption_enter": {
+      "type": "fade",
+      "duration_ms": 120
+    },
+    "word_active": {
+      "type": "scale-highlight",
+      "scale": 1.08,
+      "duration_ms": 90
+    },
+    "caption_exit": {
+      "type": "fade",
+      "duration_ms": 100
+    }
+  }
+}

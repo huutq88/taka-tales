@@ -1,0 +1,55 @@
+{
+  "id": "viral-bold-yellow",
+  "renderer_hint": "ass",
+  "segmentation": {
+    "min_words": 2,
+    "max_words": 5,
+    "min_duration_ms": 450,
+    "max_duration_ms": 2200,
+    "max_chars_per_line": 18,
+    "max_lines": 2,
+    "pause_threshold_ms": 320
+  },
+  "layout": {
+    "type": "bottom-center",
+    "safe_bottom": 440,
+    "max_width_ratio": 0.80,
+    "line_spacing": 14
+  },
+  "font": {
+    "family": "Montserrat ExtraBold",
+    "size": 64,
+    "weight": 800
+  },
+  "text": {
+    "color": "#FFFFFF",
+    "active_color": "#FFD400"
+  },
+  "outline": {
+    "enabled": true,
+    "color": "#000000",
+    "width": 8
+  },
+  "shadow": {
+    "enabled": true,
+    "x": 0,
+    "y": 5,
+    "blur": 4,
+    "color": "#000000AA"
+  },
+  "animation": {
+    "caption_enter": {
+      "type": "pop",
+      "duration_ms": 150
+    },
+    "word_active": {
+      "type": "scale-highlight",
+      "scale": 1.12,
+      "duration_ms": 100
+    },
+    "caption_exit": {
+      "type": "fade",
+      "duration_ms": 100
+    }
+  }
+}

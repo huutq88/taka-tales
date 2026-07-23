@@ -1,0 +1,55 @@
+{
+  "id": "podcast-clean",
+  "renderer_hint": "ass",
+  "segmentation": {
+    "min_words": 2,
+    "max_words": 6,
+    "min_duration_ms": 400,
+    "max_duration_ms": 2500,
+    "max_chars_per_line": 22,
+    "max_lines": 2,
+    "pause_threshold_ms": 320
+  },
+  "layout": {
+    "type": "bottom-center",
+    "safe_bottom": 440,
+    "max_width_ratio": 0.80,
+    "line_spacing": 14
+  },
+  "font": {
+    "family": "Outfit",
+    "size": 60,
+    "weight": 700
+  },
+  "text": {
+    "color": "#F1F5F9",
+    "active_color": "#38BDF8"
+  },
+  "outline": {
+    "enabled": true,
+    "color": "#090D16",
+    "width": 6
+  },
+  "shadow": {
+    "enabled": true,
+    "x": 0,
+    "y": 4,
+    "blur": 6,
+    "color": "#00000099"
+  },
+  "animation": {
+    "caption_enter": {
+      "type": "pop",
+      "duration_ms": 120
+    },
+    "word_active": {
+      "type": "scale-highlight",
+      "scale": 1.1,
+      "duration_ms": 90
+    },
+    "caption_exit": {
+      "type": "fade",
+      "duration_ms": 90
+    }
+  }
+}

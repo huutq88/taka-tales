@@ -393,7 +393,7 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         finally:
             video_engine.VOICE = orig_voice
 
-async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_subtitles: bool = True, story_text: str = None, force_rerun: bool = False, effect_type: str = "leaves"):
+async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_waveform: bool = True, use_subtitles: bool = True, story_text: str = None, force_rerun: bool = False, effect_type: str = "leaves"):
     """Executes the full Taka-Tales pipeline and reports progress in real time."""
     try:
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
@@ -426,6 +426,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
         # Save project_config.json
         config_data = {
             "use_watermark": use_watermark,
+            "use_waveform": use_waveform,
             "use_subtitles": use_subtitles,
             "use_whisper": False,
             "effect_type": effect_type
@@ -1067,9 +1068,19 @@ async def main():
     
     while True:
         try:
-            async with websockets.connect(ws_url, ping_interval=60, ping_timeout=60, max_size=100 * 1024 * 1024) as websocket:
+            async with websockets.connect(ws_url, ping_interval=15, ping_timeout=15, max_size=100 * 1024 * 1024) as websocket:
                 print("[Agent] Connected to Taka Server successfully.")
                 active_websocket = websocket
+                
+                async def heartbeat_loop(ws):
+                    while True:
+                        try:
+                            await asyncio.sleep(12)
+                            await ws.send(json.dumps({"type": "heartbeat"}))
+                        except Exception:
+                            break
+                            
+                heartbeat_task = asyncio.create_task(heartbeat_loop(websocket))
                 
                 # Check environment
                 status = await check_environment()
@@ -1089,14 +1100,17 @@ async def main():
                     "payload": status
                 }))
 
-                async for message_str in websocket:
-                    try:
-                        message = json.loads(message_str)
-                    except json.JSONDecodeError:
-                        continue
+                try:
+                    async for message_str in websocket:
+                        try:
+                            message = json.loads(message_str)
+                        except json.JSONDecodeError:
+                            continue
 
-                    msg_type = message.get("type")
-                    payload = message.get("payload", {})
+                        msg_type = message.get("type")
+                        payload = message.get("payload", {})
+                        if msg_type == "heartbeat":
+                            continue
 
                     if msg_type == "run_pipeline":
                         project_name = payload.get("project_name")
@@ -1106,6 +1120,7 @@ async def main():
                         print(f"[Agent] Received run_pipeline message. project_name={project_name}, pipeline_type={pipeline_type}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_config.items() if k != 'ref_audio_b64'} if voice_config else None}")
                         art_style = payload.get("art_style")
                         use_watermark = payload.get("use_watermark", True)
+                        use_waveform = payload.get("use_waveform", True)
                         use_subtitles = payload.get("use_subtitles", True)
                         use_whisper = payload.get("use_whisper", False)
                         force_rerun = payload.get("force_rerun", False)
@@ -1120,7 +1135,7 @@ async def main():
                         else:
                             story_text = payload.get("story_text")
                             effect_type = payload.get("effect_type", "leaves")
-                            t = asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, story_text, force_rerun, effect_type=effect_type))
+                            t = asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark=use_watermark, use_waveform=use_waveform, use_subtitles=use_subtitles, story_text=story_text, force_rerun=force_rerun, effect_type=effect_type))
                             agent_active_tasks[project_name] = t
                     elif msg_type == "delete_project_request":
                         request_id = message.get("request_id")
@@ -1421,7 +1436,6 @@ async def main():
                         projects_base = AGENT_PROJECTS_DIR
                         project_dir = projects_base / "music" / project_name
                         if project_dir.exists():
-                            import shutil
                             shutil.rmtree(project_dir)
                         project_dir.mkdir(parents=True, exist_ok=True)
                         
@@ -1446,19 +1460,17 @@ async def main():
                         request_id = message.get("request_id")
                         voice_id = payload.get("voice_id")
                         
-                        voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
-                        if not voices_base.exists():
-                            voices_base = AGENT_DIR / "voices"
-                            
+                        voices_base = AGENT_VOICES_DIR
                         voice_dir = voices_base / voice_id
                         if voice_dir.exists() and voice_dir.is_dir():
-                            import shutil
                             shutil.rmtree(voice_dir)
                         await websocket.send(json.dumps({
                             "type": "delete_voice_response",
                             "request_id": request_id,
                             "payload": {"ok": True}
                         }))
+                finally:
+                    heartbeat_task.cancel()
                         
         except ConnectionClosed:
             print("[Agent] Connection to server closed. Retrying in 5 seconds...")

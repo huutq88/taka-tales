@@ -717,7 +717,7 @@ def generate_audio_waveform_frames(audio_path: str, target_w: int, target_h: int
         print(f"[Video Engine] Error generating real audio waveform: {e}. Falling back...")
         return generate_procedural_waveform_frames(target_w, target_h)
 
-def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, audio_path: pathlib.Path = None, effect_override: str = None) -> ImageClip:
+def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, audio_path: pathlib.Path = None, effect_override: str = None, show_waveform: bool = True) -> ImageClip:
     duration = clip.duration
     w, h = clip.size
     import numpy as np
@@ -728,7 +728,7 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, au
 
     # Load waveform.gif or generate dynamic audio waveform frames
     waveform_frames = []
-    if is_music or True:
+    if show_waveform:
         if audio_path and audio_path.exists():
             target_w = int(0.70 * w)
             target_h = int(180 * (target_w / 1367))
@@ -971,6 +971,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
     config_path = project_dir / "project_config.json"
     use_watermark = SHOW_WATERMARK
     use_subtitles = True
+    use_waveform = True
     effect_override = None
     if config_path.exists():
         try:
@@ -979,6 +980,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
                 p_cfg = json.load(f)
                 use_watermark = p_cfg.get("use_watermark", use_watermark)
                 use_subtitles = p_cfg.get("use_subtitles", use_subtitles)
+                use_waveform = p_cfg.get("use_waveform", use_waveform)
                 effect_override = p_cfg.get("effect_type") or p_cfg.get("effect")
         except Exception as e:
             print(f"Error loading project_config.json: {e}")
@@ -990,8 +992,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
         img_resized.save(str(img_path))
 
     image_clip = ImageClip(str(img_path)).set_duration(audio_clip.duration)
-    # Always apply waveform (is_music=True) with correct audio_path to display actual audio levels
-    image_clip = apply_ken_burns_effect(image_clip, idx, is_music=True, audio_path=audio_path, effect_override=effect_override)
+    image_clip = apply_ken_burns_effect(image_clip, idx, is_music=True, audio_path=audio_path, effect_override=effect_override, show_waveform=use_waveform)
 
     # Pick the best available font with Vietnamese support
     font_path = "Arial"
@@ -1238,6 +1239,30 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
 
     out = project_dir / f"{project_name}.mp4"
     final.write_videofile(str(out), fps=FPS, codec="libx264", audio_codec="aac")
+
+    # Check if subtitle engine burn is enabled in project_config.json
+    config_file = project_dir / "project_config.json"
+    use_sub = True
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                use_sub = cfg.get("use_subtitles", True)
+        except Exception:
+            pass
+
+    if use_sub:
+        try:
+            from subtitle_engine.processor import SubtitleProcessor
+            story_file = project_dir / "story.txt"
+            story_text = story_file.read_text(encoding="utf-8") if story_file.exists() else None
+            sp = SubtitleProcessor(preset_path_or_id="viral-bold-yellow")
+            temp_out = project_dir / f"{project_name}_subtitled.mp4"
+            sp.burn_subtitles_to_video(input_video_path=out, output_video_path=temp_out, transcript=story_text)
+            if temp_out.exists():
+                shutil.move(str(temp_out), str(out))
+        except Exception as err:
+            print(f"[VideoEngine] Subtitle Engine burn notice: {err}")
 
 
 def transcribe_audio_file(audio_path: pathlib.Path) -> List[Dict[str, any]]:

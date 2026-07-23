@@ -1,0 +1,55 @@
+{
+  "id": "karaoke-green",
+  "renderer_hint": "ass",
+  "segmentation": {
+    "min_words": 2,
+    "max_words": 6,
+    "min_duration_ms": 400,
+    "max_duration_ms": 2500,
+    "max_chars_per_line": 20,
+    "max_lines": 2,
+    "pause_threshold_ms": 350
+  },
+  "layout": {
+    "type": "bottom-center",
+    "safe_bottom": 440,
+    "max_width_ratio": 0.80,
+    "line_spacing": 14
+  },
+  "font": {
+    "family": "Be Vietnam Pro",
+    "size": 60,
+    "weight": 700
+  },
+  "text": {
+    "color": "#FFFFFF",
+    "active_color": "#10B981"
+  },
+  "outline": {
+    "enabled": true,
+    "color": "#000000",
+    "width": 6
+  },
+  "shadow": {
+    "enabled": true,
+    "x": 0,
+    "y": 4,
+    "blur": 4,
+    "color": "#00000088"
+  },
+  "animation": {
+    "caption_enter": {
+      "type": "fade",
+      "duration_ms": 100
+    },
+    "word_active": {
+      "type": "karaoke-highlight",
+      "scale": 1.05,
+      "duration_ms": 80
+    },
+    "caption_exit": {
+      "type": "fade",
+      "duration_ms": 100
+    }
+  }
+}

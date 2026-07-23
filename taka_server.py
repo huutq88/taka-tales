@@ -357,12 +357,21 @@ async def list_active_workspaces():
         "agent_status": agent_status
     }
 
+def get_default_workspace_id():
+    try:
+        import getpass, uuid, hashlib, socket
+        user = getpass.getuser().lower()
+        clean_user = "".join(c for c in user if c.isalnum() or c in ("-", "_")).strip() or "user"
+        mac = uuid.getnode()
+        hostname = socket.gethostname()
+        dev_hash = hashlib.md5(f"{mac}-{hostname}".encode()).hexdigest()[:6]
+        return f"{clean_user}_{dev_hash}"
+    except Exception:
+        pass
+    return "default_workspace"
+
 @app.get("/v1/agent/status")
 async def get_agent_status(request: Request):
-    ws_id = get_workspace_id_from_request(request)
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
-        ws_id = list(agents_by_workspace.keys())[0]
-    
     is_local_active = False
     agent_log = BASE_DIR / "agent.log"
     if not agent_log.exists():
@@ -370,8 +379,18 @@ async def get_agent_status(request: Request):
     if agent_log.exists():
         is_local_active = True
 
-    connected = (len(agents_by_workspace) > 0) or is_local_active
-    st = agent_status.get(ws_id, {}) if ws_id else {}
+    active_ws_list = list(agents_by_workspace.keys())
+    connected = (len(active_ws_list) > 0) or is_local_active
+
+    default_ws = get_default_workspace_id()
+    if active_ws_list:
+        resolved_ws = active_ws_list[0]
+    elif is_local_active:
+        resolved_ws = default_ws
+    else:
+        resolved_ws = get_workspace_id_from_request(request) or default_ws
+
+    st = agent_status.get(resolved_ws, {})
     if not st and len(agent_status) > 0:
         st = list(agent_status.values())[0]
     if not st and is_local_active:
@@ -382,15 +401,16 @@ async def get_agent_status(request: Request):
             "omnivoice_installed": True,
             "agent_version": AGENT_VERSION
         }
-        
+
     agent_ver = st.get("agent_version", AGENT_VERSION)
     needs_update = (agent_ver != AGENT_VERSION) if connected else False
+
     return JSONResponse(
         content={
             "connected": connected,
-            "workspace_id": ws_id or (list(agents_by_workspace.keys())[0] if len(agents_by_workspace) > 0 else "local_agent"),
-            "active_workspaces": list(agents_by_workspace.keys()) or ["local_agent"],
-            "agents": agent_status if agent_status else ({ws_id: st} if ws_id and st else {"local_agent": st}),
+            "workspace_id": resolved_ws,
+            "active_workspaces": active_ws_list or [resolved_ws],
+            "agents": agent_status if agent_status else {resolved_ws: st},
             "server_version": AGENT_VERSION,
             "needs_update": needs_update,
             "agent_version": agent_ver
@@ -1077,7 +1097,9 @@ class RunPipelineRequest(BaseModel):
     effect_type: Optional[str] = "leaves"
     story_text: Optional[str] = None
     use_watermark: Optional[bool] = True
+    use_waveform: Optional[bool] = True
     use_subtitles: Optional[bool] = True
+    subtitle_preset: Optional[str] = "viral-bold-yellow"
     use_whisper: Optional[bool] = False
     force_rerun: Optional[bool] = False
 
@@ -1421,15 +1443,30 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
 
     print(f"[Server] Prepared voice config payload to agent ({ws_id}): { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_payload.items()} }")
     
+    art_style = request_data.art_style if request_data else None
+    effect_type = request_data.effect_type if (request_data and hasattr(request_data, 'effect_type')) else "leaves"
+    use_watermark = request_data.use_watermark if (request_data and request_data.use_watermark is not None) else True
+    use_waveform = request_data.use_waveform if (request_data and hasattr(request_data, 'use_waveform') and request_data.use_waveform is not None) else True
+    use_subtitles = request_data.use_subtitles if (request_data and request_data.use_subtitles is not None) else True
+    force_rerun = request_data.force_rerun if request_data else False
+
+    # Save project configuration for video engine
+    config_data = {
+        "use_watermark": use_watermark,
+        "use_waveform": use_waveform,
+        "use_subtitles": use_subtitles,
+        "effect_type": effect_type
+    }
+    try:
+        with open(project_dir / "project_config.json", "w", encoding="utf-8") as f:
+            json.dump(config_data, f, ensure_ascii=False, indent=2)
+    except Exception as err:
+        print(f"[Server] Failed to write project_config.json: {err}")
+
     if not agent_ws:
         try:
             import taka_agent
             project_name = f"{story_id}_{chapter_id}"
-            art_style = request_data.art_style if request_data else None
-            effect_type = request_data.effect_type if (request_data and hasattr(request_data, 'effect_type')) else "leaves"
-            use_watermark = request_data.use_watermark if request_data else True
-            use_subtitles = request_data.use_subtitles if request_data else True
-            force_rerun = request_data.force_rerun if request_data else False
             
             class FakeWS:
                 async def send(self, msg_str):
@@ -1467,12 +1504,13 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             "project_path": str(project_dir),
             "voice_config": voice_payload if voice_payload else None,
             "pipeline_type": "music" if story_id == "music" else ("dao_ly" if (story_id in ("dao-ly", "dao_ly") or story_id.startswith("dao_ly_") or story_id.startswith("dao-ly-")) else "story"),
-            "art_style": request_data.art_style if request_data else None,
-            "effect_type": request_data.effect_type if (request_data and hasattr(request_data, 'effect_type')) else "leaves",
-            "use_watermark": request_data.use_watermark if request_data else True,
-            "use_subtitles": request_data.use_subtitles if request_data else True,
+            "art_style": art_style,
+            "effect_type": effect_type,
+            "use_watermark": use_watermark,
+            "use_waveform": use_waveform,
+            "use_subtitles": use_subtitles,
             "use_whisper": request_data.use_whisper if request_data else False,
-            "force_rerun": request_data.force_rerun if request_data else False,
+            "force_rerun": force_rerun,
             "story_text": content if story_id != "music" else None,
             "music_b64": music_b64,
             "music_filename": music_filename,
@@ -1805,6 +1843,9 @@ async def dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+        <meta http-equiv="Pragma" content="no-cache">
+        <meta http-equiv="Expires" content="0">
         <title>Taka-Agent Story Studio</title>
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
         <style>
@@ -2683,6 +2724,32 @@ async def dashboard():
                     </div>
                 </div>
 
+                <div style="display: flex; gap: 1.5rem; margin-top: 1rem; padding: 0.8rem; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--border); justify-content: space-around;">
+                    <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
+                        <input type="checkbox" id="dao-ly-watermark" style="accent-color: #f59e0b; width: 16px; height: 16px;">
+                        <span>🏷️ Watermark</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
+                        <input type="checkbox" id="dao-ly-waveform" style="accent-color: #f59e0b; width: 16px; height: 16px;">
+                        <span>🌊 Sóng âm (Waveform)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
+                        <input type="checkbox" id="dao-ly-subtitles" checked style="accent-color: #f59e0b; width: 16px; height: 16px;">
+                        <span>💬 Phụ đề (Subtitles)</span>
+                    </label>
+                </div>
+
+                <div style="display: flex; gap: 1rem; margin-top: 0.8rem; align-items: center; padding: 0.6rem 0.8rem; background: rgba(245, 158, 11, 0.05); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.2);">
+                    <label style="font-size: 0.85rem; font-weight: bold; color: #f59e0b; white-space: nowrap;">✨ Kiểu Phụ Đề:</label>
+                    <select id="dao-ly-subtitle-preset" style="flex: 1; padding: 0.4rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
+                        <option value="viral-bold-yellow" selected>⚡ Viral Bold Yellow (Vàng Nổi Bật)</option>
+                        <option value="storytelling-serif">📜 Storytelling Serif (Đạo Lý Hoài Cổ)</option>
+                        <option value="karaoke-green">🎤 Karaoke Green (Xanh Ngọc Mượt)</option>
+                        <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương Hiện Đại)</option>
+                        <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
+                    </select>
+                </div>
+
                 <div class="dialog-actions" style="margin-top: 1.5rem;">
                     <button type="button" class="btn-cancel" onclick="closeDaoLyStudioModal()">Hủy</button>
                     <button type="submit" id="dao-ly-submit-btn" class="btn-submit" style="background: linear-gradient(135deg, #f59e0b, #d97706); border: none; font-weight: bold; font-size: 0.95rem; color: #fff;">🚀 Khởi Tạo & Render Video Đạo Lý</button>
@@ -2768,6 +2835,9 @@ async def dashboard():
 
             // Register change listeners for manual upload fallbacks after DOM content load
             window.addEventListener('DOMContentLoaded', (event) => {
+                updateAgentStatus();
+                setInterval(updateAgentStatus, 5000);
+
                 const musicFile = document.getElementById('music-file');
                 if (musicFile) {
                     musicFile.addEventListener('change', function(e) {
@@ -2799,7 +2869,8 @@ async def dashboard():
                     localStorage.setItem("taka_workspace_id", wsId.trim());
                     let el = document.getElementById("workspace-id-text");
                     if (el) el.innerText = wsId.trim();
-                    fetchStories();
+                    if (typeof fetchStories === "function") fetchStories();
+                    if (typeof loadProjects === "function") loadProjects();
                     if (typeof fetchVoicesPage === "function") fetchVoicesPage();
                     updateAgentStatus();
                 }
@@ -2855,7 +2926,8 @@ async def dashboard():
                             localStorage.setItem("taka_workspace_id", autoWs);
                             let wsEl = document.getElementById("workspace-id-text");
                             if (wsEl) wsEl.innerText = autoWs;
-                            fetchStories();
+                            if (typeof fetchStories === "function") fetchStories();
+                            if (typeof loadProjects === "function") loadProjects();
                             // Re-fetch status with updated workspace header
                             if (!data.connected) {
                                 return updateAgentStatus();
@@ -3036,8 +3108,8 @@ async def dashboard():
                     runBtn.disabled = false;
                     if (storyId === "music") {
                         runBtn.onclick = (event) => runChapter(event, storyId, chapterId);
-                    } else if (storyId.startsWith("dao_ly_")) {
-                        runBtn.onclick = (event) => openDaoLyStudioModal(storyId);
+                    } else if (storyId === "dao-ly" || storyId === "dao_ly" || storyId.startsWith("dao_ly_") || storyId.startsWith("dao-ly-")) {
+                        runBtn.onclick = (event) => openDaoLyStudioModal(chapterId);
                     } else {
                         runBtn.onclick = (event) => openVoiceConfig(storyId, chapterId);
                     }
@@ -3588,11 +3660,11 @@ async def dashboard():
                             clipActive = (i === current);
                         }
 
-                        let audioUrlWav = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.wav`;
-                        let audioUrlMp3 = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.mp3`;
-                        let imageUrlJpg = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.jpg`;
-                        let imageUrlPng = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.png`;
-                        let videoUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/videos/video${i}.mp4`;
+                        let audioUrlWav = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.wav`;
+                        let audioUrlMp3 = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.mp3`;
+                        let imageUrlJpg = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.jpg`;
+                        let imageUrlPng = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.png`;
+                        let videoUrl = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/videos/video${i}.mp4`;
 
                         if (buildCards) {
                             card.innerHTML = `
@@ -3664,7 +3736,7 @@ async def dashboard():
                     let videoContainer = document.getElementById("video-preview-container");
                     let videoElement = document.getElementById("final-video");
                     if (status.status === "completed" || status.status === "idle") {
-                        let videoUrl = `${LOCAL_MEDIA_ORIGIN}/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/final.mp4`;
+                        let videoUrl = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/final.mp4`;
                         if (videoContainer.dataset.loadedUrl !== videoUrl) {
                             let check = await getMediaExists(videoUrl);
                             if (check) {
@@ -3810,7 +3882,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                             if (storyRes.ok) {
                                 let frags = await storyRes.json();
                                 if (Array.isArray(frags) && frags.length > 0) {
-                                    textInput.value = frags.map(f => f.text).join("\n\n");
+                                    textInput.value = frags.map(f => f.text).join("\\n\\n");
                                 } else {
                                     textInput.value = "";
                                 }
@@ -3907,8 +3979,10 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                             art_style: artStyle,
                             effect_type: effectVal,
                             story_text: storyText,
-                            use_watermark: true,
-                            use_subtitles: true
+                            use_watermark: document.getElementById("dao-ly-watermark") ? document.getElementById("dao-ly-watermark").checked : false,
+                            use_waveform: document.getElementById("dao-ly-waveform") ? document.getElementById("dao-ly-waveform").checked : false,
+                            use_subtitles: document.getElementById("dao-ly-subtitles") ? document.getElementById("dao-ly-subtitles").checked : true,
+                            subtitle_preset: document.getElementById("dao-ly-subtitle-preset") ? document.getElementById("dao-ly-subtitle-preset").value : "viral-bold-yellow"
                         })
                     });
 
@@ -4089,6 +4163,11 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                     </video>
                 `);
             }
+
+            // Initial load & periodic polling
+            updateAgentStatus();
+            loadProjects();
+            setInterval(updateAgentStatus, 3000);
         </script>
 
         <!-- Preview Modal Overlay -->
