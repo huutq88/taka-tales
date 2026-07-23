@@ -876,18 +876,18 @@ async def list_projects(request: Request):
                 "progress": job_state,
                 "is_music": True
             })
-        elif key.startswith("dao_ly/") or key.startswith("dao_ly_"):
+        elif key.startswith("dao-ly/") or key.startswith("dao_ly/") or key.startswith("dao_ly_"):
             parts = key.split("/")
-            s_id = parts[0]
-            ch_id = parts[1] if len(parts) > 1 else "story"
-            clean_title = s_id.replace("dao_ly_", "").replace("-", " ").replace("_", " ").title()
-            job_key = f"{s_id}/{ch_id}"
+            category_id = "dao-ly"
+            ch_id = parts[1] if len(parts) > 1 else parts[0]
+            clean_title = ch_id.replace("dao_ly_", "").replace("dao-ly-", "").replace("-", " ").replace("_", " ").title()
+            job_key = f"dao-ly/{ch_id}"
             job_state = project_jobs.get(job_key, {"status": "idle"})
             if info.get("has_video") and job_state.get("status") == "idle":
                 job_state["status"] = "completed"
             dao_ly_chapters.append({
                 "id": ch_id,
-                "story_id": s_id,
+                "story_id": "dao-ly",
                 "title": clean_title,
                 "has_story": info.get("has_story", False),
                 "has_video": info.get("has_video", False),
@@ -914,12 +914,21 @@ async def list_projects(request: Request):
         if story_id in ("music", "dao-ly", "dao_ly", "affiliate", "test_project_1") or story_id.startswith("dao_ly_"):
             continue
             
+        local_chaps_for_story = [k.split("/", 1)[1] for k in agent_files.keys() if k.startswith(f"{story_id}/")]
+        
         from fastapi.concurrency import run_in_threadpool
-        db_chapters = await run_in_threadpool(fetch_story_chapters, story_id)
+        db_chapters = []
+        try:
+            db_chapters = await run_in_threadpool(fetch_story_chapters, story_id)
+        except Exception as e:
+            print(f"[Server] Warning fetching story chapters for {story_id}: {e}")
+            
+        existing_ch_ids = set()
         chapters = []
         for ch in db_chapters:
             ch_id = ch["id"]
             ch_title = ch["title"]
+            existing_ch_ids.add(ch_id)
             key = f"{story_id}/{ch_id}"
             
             job_key = f"{story_id}/{ch_id}"
@@ -939,10 +948,30 @@ async def list_projects(request: Request):
                 "status": job_state.get("status", "idle"),
                 "progress": job_state
             })
-        stories.append({
-            "story_id": story_id,
-            "chapters": chapters
-        })
+            
+        for ch_id in local_chaps_for_story:
+            if ch_id not in existing_ch_ids:
+                key = f"{story_id}/{ch_id}"
+                job_key = f"{story_id}/{ch_id}"
+                job_state = project_jobs.get(job_key, {"status": "idle"})
+                info = agent_files.get(key, {})
+                if info.get("has_video") and job_state.get("status") == "idle":
+                    job_state["status"] = "completed"
+                clean_title = ch_id.replace("-", " ").replace("_", " ").title()
+                chapters.append({
+                    "id": ch_id,
+                    "title": clean_title,
+                    "has_story": info.get("has_story", False),
+                    "has_video": info.get("has_video", False),
+                    "status": job_state.get("status", "idle"),
+                    "progress": job_state
+                })
+                
+        if chapters:
+            stories.append({
+                "story_id": story_id,
+                "chapters": chapters
+            })
         
     return stories
 
