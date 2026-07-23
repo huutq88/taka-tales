@@ -13,6 +13,10 @@ import requests
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from typing import Dict, Optional, List
+
+os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
+
 # Resolve base directory (where taka_agent.py is located)
 AGENT_DIR = pathlib.Path(__file__).resolve().parent
 AGENT_DATA_DIR = pathlib.Path.home() / ".taka-agent"

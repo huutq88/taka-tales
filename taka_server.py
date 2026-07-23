@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 import pathlib
 from typing import Dict, List, Set, Optional
 from pydantic import BaseModel
