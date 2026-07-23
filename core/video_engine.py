@@ -101,8 +101,8 @@ ART_STYLES: Dict[str, str] = {
     "dong_ho": "traditional Vietnamese Dong Ho folk painting style, woodblock print texture, bold hand-drawn ink outlines, natural pigments on aged textured Dzo paper, depicting traditional Vietnamese rural life, Vietnamese peasants, Vietnamese countryside context, folk art masterpiece",
     "son_mai": "detailed Vietnamese lacquer painting style, gold leaf accents, cinnabar red highlights, polished dark lacquer surface, organic textures, featuring traditional Vietnamese motifs and Vietnamese village scenery, cultural masterpiece",
     "woodblock": "rustic monochrome Vietnamese folk woodblock print style, black ink printing on aged yellowish parchment paper, bold textured carving lines, traditional Vietnamese country life depiction, hand-carved block printing aesthetic",
-    "thuy_mac": "classical East Asian ink wash painting style, sumi-e aesthetic, elegant black ink strokes on white Xuan paper, subtle grey washes, misty atmosphere, monochrome, zen art style, poetic nostalgic look, masterpiece",
-    "thuy_mac_blackwhite": "strict monochrome black and white ink wash painting, traditional sumi-e style, pure black ink and white paper contrast, no color, minimalist, zen atmosphere, expressive brushstrokes, negative space, dramatic silhouette, masterpiece"
+    "thuy_mac": "classical East Asian ink wash painting style, sumi-e aesthetic, elegant black ink strokes on white Xuan paper, subtle grey washes, misty atmosphere, zen art style, poetic nostalgic look, masterpiece",
+    "thuy_mac_blackwhite": "strict monochrome traditional East Asian black ink wash brush painting, ancient Chinese sumi-e style, bold black ink calligraphic brush strokes, charcoal grey washes, pure black ink on aged white Xuan paper, minimalist zen ink painting, high contrast black and white, negative space, no colors, monochrome masterpiece"
 }
 NEGATIVE_PROMPT: str = config["STABLE_DIFFUSION"]["negative_prompt"]
 USE_SD_API: str = config["STABLE_DIFFUSION"]["USE_SD_VIA_API"]
@@ -307,9 +307,12 @@ def _keywords_fallback(fragment: str) -> str:
 
 def build_image_prompt(fragment: str, art_style: str = None) -> str:
     style_suffix = ART_STYLES.get(art_style, POSITIVE_SUFFIX) if art_style else POSITIVE_SUFFIX
+    color_rule = ""
+    if art_style == "thuy_mac_blackwhite":
+        color_rule = " CRITICAL: The image MUST be strict monochrome black and white ink wash brush drawing (sumi-e style). DO NOT mention any colors (such as warm, red, blue, green, yellow, watercolor)."
     prompt_instruction = (
         "You are an expert prompt writer for Stable-Diffusion-XL. "
-        f"Style context: {style_suffix}. "
+        f"Style context: {style_suffix}.{color_rule} "
         "Describe the scene in a single sentence, max 20 words. "
         "Do NOT include any explanations or quotes. "
         "CRITICAL: The output prompt must be in English. Do NOT use any Vietnamese or Chinese characters in the prompt. "
@@ -396,9 +399,22 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None) -
     if image_path.exists():
         return
 
-    prompt = _read_text(prompt_path)
-    style_suffix = ART_STYLES.get(art_style, POSITIVE_SUFFIX) if art_style else POSITIVE_SUFFIX
-    prompt = f"{POSITIVE_PREFIX} {prompt} {style_suffix}"
+    prompt_raw = _read_text(prompt_path)
+    
+    if art_style == "thuy_mac_blackwhite":
+        prefix = "traditional monochrome black and white Chinese ink brush painting, sumi-e style, masterwork black ink brushwork on white Xuan paper,"
+        style_suffix = "pure black ink, charcoal grey wash gradients, expressive calligraphic brush strokes, negative space, dramatic silhouette, zen art aesthetic, no color, black and white masterpiece"
+        negative_str = "color, colorful, red, green, blue, yellow, warm colors, watercolor, oil painting, 3d, cgi, photorealistic, digital painting, nsfw"
+        prompt = f"{prefix} {prompt_raw}, {style_suffix}"
+    elif art_style == "thuy_mac":
+        prefix = "classical East Asian ink wash painting style, sumi-e aesthetic, elegant ink brush drawing of"
+        style_suffix = "black ink strokes on white Xuan paper, subtle grey washes, misty atmosphere, zen art style, poetic nostalgic look, masterpiece"
+        negative_str = "vivid bright color, 3d, cgi, photorealistic, digital painting, nsfw"
+        prompt = f"{prefix} {prompt_raw}, {style_suffix}"
+    else:
+        style_suffix = ART_STYLES.get(art_style, POSITIVE_SUFFIX) if art_style else POSITIVE_SUFFIX
+        prompt = f"{POSITIVE_PREFIX} {prompt_raw} {style_suffix}"
+        negative_str = NEGATIVE_PROMPT
     
     _log(f"{idx} Loaded Prompt: {prompt}")
     do_it = True
@@ -426,10 +442,11 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None) -
                 import urllib.parse
                 ua = UserAgent()
                 encoded_prompt = urllib.parse.quote(prompt)
+                encoded_negative = urllib.parse.quote(negative_str)
                 url = (
                     f"https://image.pollinations.ai/prompt/{encoded_prompt}"
                     f"?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&nologo=true&model={POLLINATIONS_MODEL}&enhance=false"
-                    f"&seed={time.time()}&negative=nsfw"
+                    f"&seed={time.time()}&negative={encoded_negative}"
                 )
                 response = requests.get(url, headers={"User-Agent": ua.random}, timeout=60)
                 if response.status_code == 200:
