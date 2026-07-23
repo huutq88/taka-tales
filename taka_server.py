@@ -6,10 +6,18 @@ from typing import Dict, List, Set, Optional
 from pydantic import BaseModel
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse, Response, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import requests
 import shutil
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 AGENT_VERSION = "0.3.0"
 
 LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "http://lore-keeper:8080"
@@ -1111,9 +1119,9 @@ async def get_project_fragments(story_id: str, chapter_id: str):
     
     punctuation_list = [',', ';', ':']
     new_sentences = []
-    frag_len = 12
+    frag_len = 20
     try:
-        frag_len = config.getint("STABLE_DIFFUSION", "FRAGMENT_LENGTH", fallback=12)
+        frag_len = config.getint("TEXT_FRAGMENT", "FRAGMENT_LENGTH", fallback=20)
     except Exception:
         pass
         
@@ -3734,7 +3742,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                 }
             }
 
-            const LOCAL_MEDIA_ORIGIN = 'http://127.0.0.1:8766';
+            const LOCAL_MEDIA_ORIGIN = window.location.origin;
             let mediaExistsCache = {};
 
             async function getMediaExists(url) {
@@ -3752,7 +3760,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                         return true;
                     }
                     if (url.startsWith("/media/")) {
-                        let localFallback = url.replace("/media", "http://127.0.0.1:8766");
+                        let localFallback = url.replace("/media", window.location.origin);
                         try {
                             let resLocal = await fetch(localFallback, { method: "HEAD" });
                             if (resLocal.ok) {
