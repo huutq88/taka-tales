@@ -572,7 +572,7 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
         existing_music = []
         if project_dir.exists():
             for item in project_dir.iterdir():
-                if item.is_file() and item.suffix.lower() in [".mp3", ".wav", ".m4a"]:
+                if item.is_file() and item.suffix.lower() in [".mp3", ".wav", ".m4a"] and not item.name.startswith("processed_"):
                     try:
                         existing_music.append((item.name, item.read_bytes()))
                     except Exception:
@@ -1105,7 +1105,7 @@ async def main():
                         for sub_dir in ["images", "audio", "videos", "text"]:
                             d = ch_dir / sub_dir
                             if d.exists() and d.is_dir():
-                                count = len([f for f in d.iterdir() if not f.name.startswith(".")])
+                                count = len([f for f in d.iterdir() if not f.name.startswith(".") and not f.name.startswith("processed_")])
                                 if count > max_frags:
                                     max_frags = count
                                     

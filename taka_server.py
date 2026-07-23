@@ -897,7 +897,7 @@ async def get_project_status(request: Request, story_id: str, chapter_id: str):
         for sub_dir in ["images", "audio", "videos", "text"]:
             d = chapter_dir / sub_dir
             if d.exists() and d.is_dir():
-                count = len([f for f in d.iterdir() if not f.name.startswith(".")])
+                count = len([f for f in d.iterdir() if not f.name.startswith(".") and not f.name.startswith("processed_")])
                 if count > max_frags:
                     max_frags = count
         if max_frags > 0:
