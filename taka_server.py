@@ -2373,7 +2373,6 @@ async def dashboard():
                         <div style="display: flex; align-items: center; gap: 0.8rem;">
                             <span id="status-banner" class="status-banner">Idle</span>
                             <button id="details-run-btn" class="run-btn" style="padding: 0.4rem 1rem; font-size: 0.85rem;">Run</button>
-                            <button id="details-delete-btn" onclick="deleteCurrentProject()" style="padding: 0.4rem 0.9rem; font-size: 0.85rem; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: #ef4444; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s ease;">🗑️ Xóa dự án</button>
                         </div>
                     </div>
 
