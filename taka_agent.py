@@ -191,7 +191,19 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
             if voice_config.get("ref_text"):
                 cmd += ["--ref_text", voice_config["ref_text"]]
         elif mode == "design" and voice_config.get("voice_instruct"):
-            cmd += ["--instruct", voice_config["voice_instruct"]]
+            raw_inst = voice_config["voice_instruct"].strip()
+            valid_tags = {
+                "american accent", "australian accent", "british accent", "canadian accent",
+                "child", "chinese accent", "elderly", "female", "high pitch", "indian accent",
+                "japanese accent", "korean accent", "low pitch", "male", "middle-aged",
+                "moderate pitch", "portuguese accent", "russian accent", "teenager",
+                "very high pitch", "very low pitch", "whisper", "young adult"
+            }
+            parts = [p.strip().lower() for p in raw_inst.replace("\n", ",").split(",") if p.strip()]
+            matched = [p for p in parts if p in valid_tags]
+            if not matched:
+                matched = ["male", "low pitch"] if "nam" in raw_inst.lower() else ["female", "low pitch"]
+            cmd += ["--instruct", ", ".join(matched)]
 
     print(f"[Agent] Executing OmniVoice CLI command: {' '.join(cmd)}")
     try:
