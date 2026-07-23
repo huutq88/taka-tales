@@ -39,8 +39,12 @@ pending_agent_requests: Dict[str, dict] = {}
 def get_workspace_id_from_request(request: Request) -> str:
     ws_id = request.headers.get("x-workspace-id") or request.query_params.get("workspace_id")
     if not ws_id or ws_id == "null" or ws_id == "undefined":
-        return ""
-    return ws_id.strip()
+        ws_id = ""
+    else:
+        ws_id = ws_id.strip()
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
+        ws_id = list(agents_by_workspace.keys())[0]
+    return ws_id
 
 async def tunnel_request_to_agent(message_type: str, payload: dict, workspace_id: str = "", timeout: float = 10.0) -> Optional[dict]:
     if not workspace_id:
@@ -1109,6 +1113,8 @@ async def get_project_fragments(story_id: str, chapter_id: str):
 @app.post("/v1/projects/{story_id}/{chapter_id}/run")
 async def run_project_pipeline(request: Request, story_id: str, chapter_id: str, request_data: Optional[RunPipelineRequest] = None):
     ws_id = get_workspace_id_from_request(request)
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
+        ws_id = list(agents_by_workspace.keys())[0]
     agent_ws = agents_by_workspace.get(ws_id)
     if not agent_ws:
         raise HTTPException(status_code=400, detail=f"No active Taka-Agent connected for workspace '{ws_id}'. Please start taka-agent on your computer.")
