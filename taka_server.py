@@ -2585,24 +2585,18 @@ async def dashboard():
                     let welcomeDot = document.getElementById("welcome-status-dot");
 
                     // Auto-select online workspace if none saved or current is offline
-                    if (data.active_workspaces && data.active_workspaces.length > 0) {
+                    if (data.active_workspaces && data.active_workspaces.length === 1) {
+                        let autoWs = data.active_workspaces[0];
                         let currentWs = localStorage.getItem("taka_workspace_id");
-                        if (!currentWs || !data.active_workspaces.includes(currentWs)) {
-                            if (data.active_workspaces.length === 1) {
-                                let autoWs = data.active_workspaces[0];
-                                localStorage.setItem("taka_workspace_id", autoWs);
-                                let wsEl = document.getElementById("workspace-id-text");
-                                if (wsEl) wsEl.innerText = autoWs;
-                                fetchStories();
+                        if (currentWs !== autoWs) {
+                            localStorage.setItem("taka_workspace_id", autoWs);
+                            let wsEl = document.getElementById("workspace-id-text");
+                            if (wsEl) wsEl.innerText = autoWs;
+                            fetchStories();
+                            // Re-fetch status with updated workspace header
+                            if (!data.connected) {
+                                return updateAgentStatus();
                             }
-                        }
-                    }
-
-                    if (data.workspace_id) {
-                        let wsEl = document.getElementById("workspace-id-text");
-                        if (wsEl) wsEl.innerText = data.workspace_id;
-                        if (!localStorage.getItem("taka_workspace_id")) {
-                            localStorage.setItem("taka_workspace_id", data.workspace_id);
                         }
                     }
 
