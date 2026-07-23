@@ -1,6 +1,6 @@
-# 📜 BỘ 15 KỊCH BẢN VIDEO ĐẠO LÝ & THỂ LOẠI PHONG PHÚ (DÀI 2 - 2.5 PHÚT)
+# 📜 BỘ 20 KỊCH BẢN VIDEO ĐẠO LÝ & THỂ LOẠI PHONG PHÚ (DÀI 2 - 2.5 PHÚT)
 
-> **Ghi chú chuẩn hóa:** Toàn bộ 15 kịch bản dưới đây đã được viết theo chuẩn độ dài siêu dài (~450-500 từ, 15-18 câu triết lý sâu sắc) với đa dạng các thể loại cuộc sống, đảm bảo video đầu ra đạt thời lượng **2 phút đến 2.5 phút (120 - 150 giây)**.
+> **Ghi chú chuẩn hóa:** Toàn bộ 20 kịch bản dưới đây đã được viết theo chuẩn độ dài siêu dài (~450-500 từ, 15-18 câu triết lý sâu sắc) với đa dạng các thể loại cuộc sống, đảm bảo video đầu ra đạt thời lượng **2 phút đến 2.5 phút (120 - 150 giây)**.
 
 ---
 
@@ -212,7 +212,7 @@ Theo dõi kênh để cùng xây dựng thói quen làm chủ thời gian và ph
 
 ---
 
-## 📌 Kịch bản 14: Lòng Biết Ơn (Phước Báu Của Sự Trân Trọng)
+## 📌 Kịch bản 14: Phước Báu Của Sự Trân Trọng (Lòng Biết Ơn)
 
 Lòng biết ơn là nguồn gốc của mọi phước báu và là chìa khóa mở ra cánh cửa của sự giàu có nội tâm.
 
@@ -241,3 +241,83 @@ Can đảm bước đi trên con đường riêng của mình, dù con đường
 Hãy sống một cuộc đời rực rỡ, chân thật và không hối tiếc với chính bản thân mình.
 
 Nhấn theo dõi kênh để tiếp thêm niềm tin và bản lĩnh sống đúng với ước mơ của bạn.
+
+---
+
+## 📌 Kịch bản 16: Nghệ Thuật Buông Bỏ Sự Đố Đố & Ghen Tỵ
+
+Ghen tỵ với thành công của người khác là bạn đang tự uống độc dược và mong chờ người khác ngộ độc.
+
+Trong cuộc sống, mỗi người có một múi giờ tiến bước riêng. Có người gặt hái thành công ở tuổi hai mươi, có người đến năm mươi tuổi mới tìm thấy vinh quang của đời mình. Khi bạn mải miết nhìn sang khu vườn của người khác và thèm muốn những bông hoa của họ, bạn sẽ bỏ quên khu vườn của chính mình đang héo hắt vì thiếu sự chăm sóc.
+
+Sự đố đố không làm người khác kém đi, nhưng chắc chắn sẽ thiêu rụi sự bình yên và năng lượng tích cực trong tâm trí bạn. Người có trí tuệ hiểu rằng thành công của người khác không làm giảm đi giá trị của bản thân mình. Thay vì ghen tị, hãy biến sự thành công của họ thành nguồn cảm hứng để bạn nỗ lực nhiều hơn.
+
+Mỗi khi thấy ai đó đạt được thành tựu, hãy mỉm cười chúc mừng họ từ đáy lòng. Trái tim rộng mở và biết chung vui với niềm vui của nhân gian chính là trái tim dễ dàng thu hút may mắn và phước báu nhất.
+
+Học cách hài lòng với những gì đang có, tập trung phát triển bản thân và mỉm cười trước thành công của người khác.
+
+Đăng ký kênh để cùng nuôi dưỡng một tâm hồn cao đẹp và tràn đầy năng lượng tích cực mỗi ngày.
+
+---
+
+## 📌 Kịch bản 17: Bản Lĩnh Đứng Lên Sau Vấp Ngã
+
+Thất bại không phải là mảng tối của cuộc đời, thất bại chỉ là bài kiểm tra bản lĩnh của người quân tử.
+
+Không có con đường dẫn tới đỉnh vinh quang nào trải đầy hoa hồng mà không có gai nhọn. Mọi vấp ngã, mọi thất bại bạn trải qua đều là những người thầy nghiêm khắc nhưng công bằng nhất, dạy cho bạn bài học về sự cẩn trọng, kiên nhẫn và sâu sắc. Kẻ dại khờ gục ngã và ng ngụi đổ lỗi cho số phận, còn người bản lĩnh đứng dậy, lau sạch vết thương và mỉm cười bước tiếp.
+
+Cuộc sống không định giá bạn qua số lần bạn bị quật ngã, mà đánh giá bạn qua số lần bạn can đảm đứng dậy sau mỗi lần vấp ngã. Hãy nhớ rằng, viên ngọc quý chỉ sáng bóng khi được mài giũa qua hàng nghìn lần va đập. Mọi vết sẹo trên hành trình của bạn chính là những huy chương danh giá nhất chứng minh sự kiên cường của bạn.
+
+Đừng sợ thất bại, hãy sợ sự hèn nhát bỏ cuộc. Khi bạn dám đối mặt với nỗi sợ hãi và kiên trì đến cùng, vũ trụ sẽ luôn nhường đường cho những người có quyết tâm sắt đá.
+
+Hãy đứng lên, màng vết thương như chiếc áo giáp và tự tin chinh phục những tầm cao mới.
+
+Theo dõi kênh để tiếp thêm nghị lực và niềm tin vững chắc vào bản thân mỗi ngày.
+
+---
+
+## 📌 Kịch bản 18: Sự Tử Tế Không Cần Đền Đáp
+
+Sự tử tế bạn trao đi cho đời chưa bao giờ là lãng phí, bởi vì luật nhân quả luôn rất công bằng.
+
+Trong xã hội hiện đại, nhiều người trở nên tính toán và hoài nghi, họ chỉ trao đi sự giúp đỡ khi thấy có lợi ích đáp trả. Nhưng sự tử tế đích thực là hành động xuất phát từ tâm chân thành, không cần phô trương, không cần báo đáp và không cần sự công nhận của đám đông. Gieo hạt giống lành, bạn chắc chắn sẽ gặt hái quả ngọt vào thời điểm thích hợp nhất.
+
+Có thể người bạn giúp đỡ hôm nay không thể đền đáp bạn, nhưng sự tử tế đó sẽ quay trở lại với bạn theo một cách khác, qua một người khác, vào lúc bạn cần nhất. Một nụ cười ấm áp, một lời an ủi chân thành hay một bàn tay đỡ đần lúc khó khăn có thể thắp sáng cả một cuộc đời đang trong tăm tối.
+
+Hãy sống như một bông hoa ngát hương: tỏa hương thơm cho đời mà không cần đòi hỏi khu vườn phải trả ơn. Sự tử tế giữ cho tâm hồn bạn luôn thanh thản, giấc ngủ luôn tròn và gương mặt luôn rạng rỡ nét an yên.
+
+Sống tử tế, làm việc thiện lành và tin tưởng vào những điều tốt đẹp trong nhân gian.
+
+Nhấn theo dõi kênh để cùng lan tỏa những giá trị nhân văn và lòng tử tế mỗi ngày.
+
+---
+
+## 📌 Kịch bản 19: Học Cách Lắng Nghe Và Thấu Hiểu
+
+Thượng đế sinh ra con người với hai cái tai nhưng chỉ có một cái miệng, đó là để chúng ta lắng nghe nhiều gấp đôi khi nói.
+
+Trong giao tiếp, sai lầm lớn nhất của đa số mọi người là lắng nghe không phải để thấu hiểu, mà là để chuẩn bị phản bác. Khi ai đó tâm sự với bạn, thứ họ cần đôi khi không phải là một lời khuyên thông thái hay một bài giảng đạo lý, mà đơn giản chỉ là một sự hiện diện chân thành và một đôi tai biết lắng nghe không phán xét.
+
+Lắng nghe là đỉnh cao của nghệ thuật giao tiếp và là biểu hiện của sự tôn trọng sâu sắc nhất. Người biết im lặng để nghe người khác nói là người nắm giữ chìa khóa thu phục lòng người. Khi bạn ngừng ngắt lời, ngừng áp đặt góc nhìn của mình lên người khác, bạn sẽ học được rất nhiều bài học quý giá từ chính những trải nghiệm của họ.
+
+Học cách kiềm chế cái tôi thích thể hiện, rèn luyện sự kiên nhẫn trong tâm trí và mở lòng thấu hiểu những nỗi niềm thầm kín của người đối diện. Sự chân thành trong lắng nghe có thể chữa lành những tổn thương sâu sắc nhất mà lời nói không thể chạm tới.
+
+Lắng nghe bằng cả trái tim để kết nối những tâm hồn và xây dựng những mối quan hệ bền vững.
+
+Đăng ký kênh để cùng học hỏi và phát triển trí tuệ ứng xử mỗi ngày.
+
+---
+
+## 📌 Kịch bản 20: Tĩnh Tâm Giữa Thị Phi Nhân Gian
+
+Thị phi ngoài kia giống như một trận mưa rào, nếu bạn không mang tâm hồn mình ra phơi nắng thì chẳng có trận mưa nào có thể làm bạn ướt.
+
+Trong cuộc đời, dù bạn có tốt đẹp và hoàn hảo đến đâu, vẫn sẽ có người yêu mến và sẽ có kẻ gièm pha, đố đố. Người khen bạn chưa chắc đã chân thành, kẻ chê bai bạn chưa chắc đã là kẻ thù. Nếu bạn sống mà cứ phải nhìn mặt người khác để vui buồn, bạn đang tự trao chiếc chìa khóa hạnh phúc của mình vào tay thiên hạ.
+
+Hãy giữ cho tâm mình như một hồ nước phẳng lặng: mặc cho người đời ném đá xuống, nước chỉ gợn sóng lăn tăn rồi nhanh chóng trở lại trạng thái thanh tĩnh ban đầu. Đừng phung phí thời gian đi giải thích hay tranh cãi với những kẻ cố tình không muốn hiểu bạn. Thời gian và năng lượng của bạn là vô giá, hãy dành nó cho những người yêu thương bạn và những mục tiêu có ý nghĩa.
+
+Hiểu rõ giá trị của bản thân, sống đúng với đạo lý làm người và mỉm cười bước qua mọi lời đàm tiếu. Khi tâm bạn không động, sóng gió ngoài kia cũng chỉ là mây khói thoảng qua.
+
+Giữ tâm kiên định, sống đời an nhiên và tự tại giữa biến động của nhân gian.
+
+Nhấn nút đăng ký và theo dõi kênh để tìm lại sự tĩnh lặng và bản lĩnh nội tâm mỗi ngày.
