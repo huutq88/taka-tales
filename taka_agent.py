@@ -89,8 +89,7 @@ server_env = os.environ.get("SERVER_URL")
 if server_env:
     SERVER_URL = server_env
 else:
-    # Default to local 127.0.0.1:8766 if port 8766 is active locally
-    SERVER_URL = "http://127.0.0.1:8766"
+    SERVER_URL = config.get("TAKA_AGENT", "SERVER_URL", fallback="https://tales.taka.zone")
 config_ws = config.get("TAKA_AGENT", "WORKSPACE_ID", fallback="").strip()
 if config_ws and config_ws != "default_workspace":
     WORKSPACE_ID = config_ws
