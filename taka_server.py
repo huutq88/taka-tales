@@ -2467,8 +2467,6 @@ async def dashboard():
                         <label for="dao-ly-voice" style="font-weight: 600;">Giọng đọc Đạo Lý:</label>
                         <select id="dao-ly-voice" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
                             <option value="nam-bac-dao-ly">👨 nam-bac-dao-ly (OmniVoice - Nam Bắc Đạo Lý)</option>
-                            <option value="nam-dao-ly">👨 nam-dao-ly (OmniVoice - Nam trầm ấm)</option>
-                            <option value="nu-dao-ly">👩 nu-dao-ly (OmniVoice - Nữ dịu dàng)</option>
                         </select>
                     </div>
                     <div class="form-group">
