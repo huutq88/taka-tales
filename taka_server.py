@@ -708,6 +708,8 @@ async def create_project(story_id: str):
 
 @app.delete("/v1/projects/{story_id}")
 @app.delete("/v1/projects/{story_id}/{chapter_id}")
+@app.post("/v1/projects/{story_id}/delete")
+@app.post("/v1/projects/{story_id}/{chapter_id}/delete")
 async def delete_project(request: Request, story_id: str, chapter_id: Optional[str] = None):
     clean_story = story_id.strip()
     if not clean_story or "/" in clean_story or ".." in clean_story:
@@ -3308,6 +3310,13 @@ async def dashboard():
                         url += `/${encodeURIComponent(targetChapter)}`;
                     }
                     let res = await fetch(url, { method: "DELETE" });
+                    if (!res.ok) {
+                        let postUrl = `/v1/projects/${encodeURIComponent(targetStory)}/delete`;
+                        if (targetChapter && targetChapter !== "story") {
+                            postUrl = `/v1/projects/${encodeURIComponent(targetStory)}/${encodeURIComponent(targetChapter)}/delete`;
+                        }
+                        res = await fetch(postUrl, { method: "POST" });
+                    }
                     if (res.ok) {
                         if (!currentStory || currentStory === targetStory || currentStory.startsWith(targetStory)) {
                             currentStory = "";
