@@ -878,6 +878,8 @@ async def get_project_status(request: Request, story_id: str, chapter_id: str):
     if res and isinstance(res, dict):
         for k, v in res.items():
             if v is not None:
+                if k == "status" and v == "idle" and job_state.get("status") not in ("idle", "completed", "failed", None):
+                    continue
                 job_state[k] = v
         return job_state
 

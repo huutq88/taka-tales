@@ -51,6 +51,7 @@ else:
     WORKSPACE_ID = get_default_workspace_id()
 
 print(f"[Agent] Starting agent with WORKSPACE_ID: '{WORKSPACE_ID}'")
+agent_running_jobs = {}
 
 # Resolve tools and checkpoints relative to AGENT_DIR
 omnivoice_subpath = config.get("TAKA_AGENT", "OMNIVOICE_PATH", fallback="tools/OmniVoice")
@@ -1110,10 +1111,15 @@ async def main():
                                 if count > max_frags:
                                     max_frags = count
                                     
+                        job_info = agent_running_jobs.get(f"{story_id}_{chapter_id}") or agent_running_jobs.get(f"{story_id}/{chapter_id}") or agent_running_jobs.get(story_id)
+                        current_status = "completed" if has_video else "idle"
+                        if job_info and job_info.get("status") not in ("completed", "failed", "idle", None):
+                            current_status = job_info.get("status")
+
                         status_res = {
-                            "status": "completed" if has_video else "idle",
-                            "total_fragments": max_frags,
-                            "current_fragment": max_frags if has_video else 0,
+                            "status": current_status,
+                            "total_fragments": job_info.get("total_fragments", max_frags) if job_info else max_frags,
+                            "current_fragment": job_info.get("current_fragment", max_frags if has_video else 0) if job_info else (max_frags if has_video else 0),
                             "has_video": has_video
                         }
                         
