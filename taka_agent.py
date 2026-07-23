@@ -172,10 +172,7 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         if torch.cuda.is_available():
             device = "cuda"
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            is_clone = False
-            if voice_config and voice_config.get("omnivoice_mode") == "clone":
-                is_clone = True
-            device = "cpu" if is_clone else "mps"
+            device = "mps"
         else:
             device = "cpu"
     except ImportError:
