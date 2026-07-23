@@ -3611,12 +3611,12 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                         closeDaoLyStudioModal();
                     }
 
-                    let voiceConfig = {};
-                    if (voiceVal.startsWith("vi-VN-")) {
-                        voiceConfig = { provider: "edge", voice_id: voiceVal };
-                    } else {
-                        voiceConfig = { provider: "omnivoice", voice_id: voiceVal };
-                    }
+                    let voiceConfig = {
+                        provider: "omnivoice",
+                        voice_id: voiceVal,
+                        start_fragment: 0,
+                        limit_fragments: 0
+                    };
 
                     // Run pipeline with created project
                     let runUrl = `/v1/projects/${encodeURIComponent(projName)}/story/run`;
