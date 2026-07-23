@@ -760,21 +760,28 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, au
     if effect in ["leaves", "leaf", "snow", "rain", "wind"]:
         import random
         if effect in ["leaves", "leaf"]:
-            num_particles = 25
+            num_particles = 32
             for _ in range(num_particles):
                 particles.append({
-                    "x": random.uniform(0, w),
+                    "x": random.uniform(-40, w),
                     "y": random.uniform(-h, 0),
-                    "speed_y": random.uniform(50, 120),
-                    "speed_x": random.uniform(-20, 20),
-                    "sway_freq": random.uniform(1.5, 3.0),
-                    "sway_amp": random.uniform(25, 50),
-                    "size": random.uniform(8, 18),
+                    "speed_y": random.uniform(40, 110),
+                    "speed_x": random.uniform(15, 60),
+                    "sway_freq1": random.uniform(1.2, 2.8),
+                    "sway_freq2": random.uniform(2.5, 4.5),
+                    "sway_amp1": random.uniform(20, 45),
+                    "sway_amp2": random.uniform(8, 20),
+                    "rot_start": random.uniform(0, 360),
+                    "rot_speed": random.uniform(-120, 120),
+                    "size_w": random.uniform(7, 16),
+                    "size_h": random.uniform(12, 24),
+                    "leaf_type": random.choice(["maple", "oval", "willow"]),
                     "color": random.choice([
-                        (234, 150, 30, 170),  # Golden yellow leaf
-                        (210, 105, 30, 170),  # Chocolate amber leaf
-                        (244, 164, 96, 170),  # Sandy orange-brown leaf
-                        (180, 83, 9, 160),    # Autumn dark amber leaf
+                        (238, 160, 34, 180),  # Bright golden amber
+                        (212, 110, 24, 180),  # Warm autumn orange
+                        (180, 80, 20, 170),   # Deep russet red-brown
+                        (245, 185, 45, 190),  # Radiant yellow
+                        (160, 95, 30, 165),   # Muted rustic brown
                     ])
                 })
         elif effect == "snow":
@@ -857,18 +864,51 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, au
             
             for p in particles:
                 if effect in ["leaves", "leaf"]:
-                    sway = math.sin(t * p["sway_freq"]) * p["sway_amp"]
-                    curr_y = (p["y"] + p["speed_y"] * t) % (h + 60) - 30
-                    curr_x = (p["x"] + p["speed_x"] * t + sway) % w
-                    size = p["size"]
-                    pts = [
-                        (curr_x, curr_y - size),
-                        (curr_x + size * 0.4, curr_y - size * 0.3),
-                        (curr_x + size * 0.5, curr_y + size * 0.4),
-                        (curr_x, curr_y + size),
-                        (curr_x - size * 0.5, curr_y + size * 0.4),
-                        (curr_x - size * 0.4, curr_y - size * 0.3)
-                    ]
+                    # Multi-harmonic natural wind sway math
+                    sway = math.sin(t * p["sway_freq1"]) * p["sway_amp1"] + math.cos(t * p["sway_freq2"]) * p["sway_amp2"]
+                    curr_y = (p["y"] + p["speed_y"] * t) % (h + 80) - 40
+                    curr_x = (p["x"] + p["speed_x"] * t + sway) % (w + 80) - 40
+                    
+                    # Tumbling 2D rotation math
+                    angle_deg = p["rot_start"] + p["rot_speed"] * t + 30.0 * math.sin(t * 2.0)
+                    rad = math.radians(angle_deg)
+                    cos_a, sin_a = math.cos(rad), math.sin(rad)
+                    
+                    sw, sh = p["size_w"], p["size_h"]
+                    
+                    # Organic leaf contour relative coordinates
+                    if p["leaf_type"] == "maple":
+                        base_pts = [
+                            (0, -sh * 0.6),
+                            (sw * 0.3, -sh * 0.2),
+                            (sw * 0.6, -sh * 0.35),
+                            (sw * 0.4, 0.1 * sh),
+                            (sw * 0.5, 0.5 * sh),
+                            (0, sh * 0.4),
+                            (-sw * 0.5, 0.5 * sh),
+                            (-sw * 0.4, 0.1 * sh),
+                            (-sw * 0.6, -sh * 0.35),
+                            (-sw * 0.3, -sh * 0.2),
+                        ]
+                    else:
+                        base_pts = [
+                            (0, -sh * 0.65),
+                            (sw * 0.45, -sh * 0.2),
+                            (sw * 0.55, sh * 0.25),
+                            (sw * 0.15, sh * 0.6),
+                            (0, sh * 0.75),
+                            (-sw * 0.15, sh * 0.6),
+                            (-sw * 0.55, sh * 0.25),
+                            (-sw * 0.45, -sh * 0.2),
+                        ]
+                    
+                    # Apply 2D rotation matrix & translation
+                    pts = []
+                    for dx, dy in base_pts:
+                        rx = dx * cos_a - dy * sin_a
+                        ry = dx * sin_a + dy * cos_a
+                        pts.append((curr_x + rx, curr_y + ry))
+                        
                     draw.polygon(pts, fill=p["color"])
                 elif effect == "snow":
                     sway = math.sin(t * p["sway_freq"]) * p["sway_amp"]
