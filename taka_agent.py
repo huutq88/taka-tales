@@ -24,6 +24,35 @@ AGENT_PROJECTS_DIR = AGENT_DATA_DIR / "projects"
 AGENT_PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 AGENT_VOICES_DIR = AGENT_DATA_DIR / "voices"
 AGENT_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+
+def migrate_projects_structure(projects_dir: pathlib.Path):
+    if not projects_dir or not projects_dir.exists():
+        return
+    dao_ly_dir = projects_dir / "dao-ly"
+    dao_ly_dir.mkdir(parents=True, exist_ok=True)
+    
+    for item in list(projects_dir.iterdir()):
+        if not item.is_dir() or item.name.startswith(".") or item.name in ("music", "dao-ly", "affiliate", "test_project_1"):
+            continue
+            
+        if item.name.startswith("dao_ly_") or item.name.startswith("dao-ly-"):
+            sub_story = item / "story"
+            target_dir = dao_ly_dir / item.name
+            if sub_story.exists() and sub_story.is_dir():
+                if target_dir.exists():
+                    shutil.rmtree(target_dir, ignore_errors=True)
+                shutil.move(str(sub_story), str(target_dir))
+                shutil.rmtree(item, ignore_errors=True)
+                print(f"[Agent Migration] Moved legacy sub_story {item / 'story'} -> {target_dir}")
+            else:
+                if target_dir.exists() and target_dir != item:
+                    shutil.rmtree(target_dir, ignore_errors=True)
+                if item != target_dir:
+                    shutil.move(str(item), str(target_dir))
+                    print(f"[Agent Migration] Moved legacy project {item} -> {target_dir}")
+
+migrate_projects_structure(AGENT_PROJECTS_DIR)
+
 agent_active_tasks: Dict[str, asyncio.Task] = {}
 
 async def safe_send_ws(ws, payload: dict):
@@ -1172,7 +1201,7 @@ async def main():
                         projects_dir = AGENT_PROJECTS_DIR
                         if projects_dir.exists():
                             for item in projects_dir.iterdir():
-                                if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1":
+                                if item.is_dir() and not item.name.startswith(".") and item.name not in ("test_project_1", "affiliate"):
                                     story_folders.append(item.name)
                                     for ch_dir in item.iterdir():
                                         if ch_dir.is_dir() and not ch_dir.name.startswith("."):

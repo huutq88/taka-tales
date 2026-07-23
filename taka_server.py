@@ -38,6 +38,34 @@ PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 VOICES_DIR = DATA_DIR / "voices"
 VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
+def migrate_projects_structure(projects_dir: pathlib.Path):
+    if not projects_dir or not projects_dir.exists():
+        return
+    dao_ly_dir = projects_dir / "dao-ly"
+    dao_ly_dir.mkdir(parents=True, exist_ok=True)
+    
+    for item in list(projects_dir.iterdir()):
+        if not item.is_dir() or item.name.startswith(".") or item.name in ("music", "dao-ly", "affiliate", "test_project_1"):
+            continue
+            
+        if item.name.startswith("dao_ly_") or item.name.startswith("dao-ly-"):
+            sub_story = item / "story"
+            target_dir = dao_ly_dir / item.name
+            if sub_story.exists() and sub_story.is_dir():
+                if target_dir.exists():
+                    shutil.rmtree(target_dir, ignore_errors=True)
+                shutil.move(str(sub_story), str(target_dir))
+                shutil.rmtree(item, ignore_errors=True)
+                print(f"[Migration] Moved legacy sub_story {item / 'story'} -> {target_dir}")
+            else:
+                if target_dir.exists() and target_dir != item:
+                    shutil.rmtree(target_dir, ignore_errors=True)
+                if item != target_dir:
+                    shutil.move(str(item), str(target_dir))
+                    print(f"[Migration] Moved legacy project {item} -> {target_dir}")
+
+migrate_projects_structure(PROJECTS_DIR)
+
 # In-memory stores
 agents_by_workspace: Dict[str, WebSocket] = {}  # workspace_id -> websocket
 agent_status: Dict[str, dict] = {}              # workspace_id -> status dict
@@ -877,13 +905,13 @@ async def list_projects(request: Request):
         
     if dao_ly_chapters:
         stories.append({
-            "story_id": "dao_ly",
+            "story_id": "dao-ly",
             "title": "☯️ Video Đạo Lý",
             "chapters": sorted(dao_ly_chapters, key=lambda x: x["id"])
         })
 
     for story_id in story_ids:
-        if story_id == "music" or story_id == "dao_ly" or story_id.startswith("dao_ly_"):
+        if story_id in ("music", "dao-ly", "dao_ly", "affiliate", "test_project_1") or story_id.startswith("dao_ly_"):
             continue
             
         from fastapi.concurrency import run_in_threadpool
@@ -3741,8 +3769,8 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                         limit_fragments: 0
                     };
 
-                    // Run pipeline with created project
-                    let runUrl = `/v1/projects/${encodeURIComponent(projName)}/story/run`;
+                    // Run pipeline with created project under dao-ly category
+                    let runUrl = `/v1/projects/dao-ly/${encodeURIComponent(projName)}/run`;
                     let runRes = await fetch(runUrl, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -3757,7 +3785,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
 
                     if (runRes.ok) {
                         await loadProjects();
-                        selectChapter(projName, "story");
+                        selectChapter("dao-ly", projName, titleVal);
                     } else {
                         let txt = await runRes.text();
                         let detail = txt;
