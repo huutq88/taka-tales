@@ -189,13 +189,26 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
                 if alt_img.exists() and alt_img.is_file():
                     found_local = alt_img
                     break
-        if not found_local and file_path == "final.mp4":
-            alt_video = base_dir / f"{story_id}_{chapter_id}.mp4"
-            if alt_video.exists() and alt_video.is_file():
-                found_local = alt_video
+        if not found_local and (file_path == "final.mp4" or file_path.endswith(".mp4")):
+            for bdir in [base_dir, PROJECTS_DIR / "dao-ly" / chapter_id, PROJECTS_DIR / "dao_ly" / chapter_id, PROJECTS_DIR / chapter_id]:
+                if bdir.exists():
+                    for cand_name in ["final.mp4", f"{story_id}_{chapter_id}.mp4", f"{chapter_id}.mp4"]:
+                        cand = bdir / cand_name
+                        if cand.exists() and cand.is_file():
+                            found_local = cand
+                            break
+                    if not found_local:
+                        mp4_files = [f for f in bdir.glob("*.mp4") if not f.name.startswith(".")]
+                        if mp4_files:
+                            found_local = mp4_files[0]
+                if found_local:
+                    break
 
     # If file not found on server disk, tunnel request to connected WebSocket agent
     ws_id = get_workspace_id_from_request(request)
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
+        ws_id = list(agents_by_workspace.keys())[0]
+
     if not found_local:
         res = await tunnel_request_to_agent("get_media_file_request", {"story_id": story_id, "chapter_id": chapter_id, "file_path": file_path}, workspace_id=ws_id, timeout=15.0)
         if res and isinstance(res, dict) and res.get("exists") and res.get("content_b64"):
@@ -350,19 +363,34 @@ async def get_agent_status(request: Request):
     if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
         ws_id = list(agents_by_workspace.keys())[0]
     
-    connected = len(agents_by_workspace) > 0
+    is_local_active = False
+    agent_log = BASE_DIR / "agent.log"
+    if not agent_log.exists():
+        agent_log = pathlib.Path.home() / ".taka-agent" / "agent.log"
+    if agent_log.exists():
+        is_local_active = True
+
+    connected = (len(agents_by_workspace) > 0) or is_local_active
     st = agent_status.get(ws_id, {}) if ws_id else {}
     if not st and len(agent_status) > 0:
         st = list(agent_status.values())[0]
+    if not st and is_local_active:
+        st = {
+            "cuda_available": False,
+            "mps_available": True,
+            "ollama_active": True,
+            "omnivoice_installed": True,
+            "agent_version": AGENT_VERSION
+        }
         
-    agent_ver = st.get("agent_version")
+    agent_ver = st.get("agent_version", AGENT_VERSION)
     needs_update = (agent_ver != AGENT_VERSION) if connected else False
     return JSONResponse(
         content={
             "connected": connected,
-            "workspace_id": ws_id or (list(agents_by_workspace.keys())[0] if len(agents_by_workspace) > 0 else "default_workspace"),
-            "active_workspaces": list(agents_by_workspace.keys()),
-            "agents": agent_status if agent_status else ({ws_id: st} if st else {}),
+            "workspace_id": ws_id or (list(agents_by_workspace.keys())[0] if len(agents_by_workspace) > 0 else "local_agent"),
+            "active_workspaces": list(agents_by_workspace.keys()) or ["local_agent"],
+            "agents": agent_status if agent_status else ({ws_id: st} if ws_id and st else {"local_agent": st}),
             "server_version": AGENT_VERSION,
             "needs_update": needs_update,
             "agent_version": agent_ver
@@ -747,6 +775,9 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
         raise HTTPException(status_code=400, detail="Invalid story_id format")
 
     ws_id = get_workspace_id_from_request(request)
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
+        ws_id = list(agents_by_workspace.keys())[0]
+
     agent_ws = agents_by_workspace.get(ws_id)
     if agent_ws:
         try:
@@ -759,7 +790,7 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
 
     # Remove matching job state
     target_pattern = f"{clean_story}/{chapter_id}" if (chapter_id and chapter_id != "story") else clean_story
-    keys_to_del = [k for k in project_jobs.keys() if k == target_pattern or k.startswith(f"{target_pattern}/") or k == clean_story or k.startswith(f"{clean_story}/")]
+    keys_to_del = [k for k in project_jobs.keys() if k == target_pattern or k.startswith(f"{target_pattern}/")]
     for k in keys_to_del:
         project_jobs.pop(k, None)
 
@@ -770,7 +801,8 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
         dirs_to_check.append(PROJECTS_DIR / "dao-ly" / chapter_id)
         dirs_to_check.append(PROJECTS_DIR / "dao_ly" / chapter_id)
         dirs_to_check.append(PROJECTS_DIR / chapter_id)
-    dirs_to_check.append(PROJECTS_DIR / clean_story)
+    else:
+        dirs_to_check.append(PROJECTS_DIR / clean_story)
 
     for d in dirs_to_check:
         if d.exists():
@@ -1270,8 +1302,6 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
     if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
         ws_id = list(agents_by_workspace.keys())[0]
     agent_ws = agents_by_workspace.get(ws_id)
-    if not agent_ws:
-        raise HTTPException(status_code=400, detail=f"No active Taka-Agent connected for workspace '{ws_id}'. Please start taka-agent on your computer.")
     
     project_dir = PROJECTS_DIR / story_id / chapter_id
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -1390,6 +1420,45 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
                     print(f"[Server] Failed to read/encode music file: {e}")
 
     print(f"[Server] Prepared voice config payload to agent ({ws_id}): { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_payload.items()} }")
+    
+    if not agent_ws:
+        try:
+            import taka_agent
+            project_name = f"{story_id}_{chapter_id}"
+            art_style = request_data.art_style if request_data else None
+            effect_type = request_data.effect_type if (request_data and hasattr(request_data, 'effect_type')) else "leaves"
+            use_watermark = request_data.use_watermark if request_data else True
+            use_subtitles = request_data.use_subtitles if request_data else True
+            force_rerun = request_data.force_rerun if request_data else False
+            
+            class FakeWS:
+                async def send(self, msg_str):
+                    try:
+                        data = json.loads(msg_str)
+                        if data.get("type") == "pipeline_progress":
+                            job_key = f"{story_id}/{chapter_id}"
+                            project_jobs[job_key] = {
+                                "status": data.get("status"),
+                                "current_fragment": data.get("current_fragment", 0),
+                                "total_fragments": data.get("total_fragments", 0),
+                                "fragment_status": data.get("fragment_status", {}),
+                                "error": data.get("error"),
+                                "updated_at": data.get("updated_at")
+                            }
+                    except Exception:
+                        pass
+            
+            fake_ws = FakeWS()
+            asyncio.create_task(taka_agent.run_pipeline_task(
+                project_name, str(project_dir), fake_ws,
+                voice_config=voice_payload, art_style=art_style,
+                use_watermark=use_watermark, use_subtitles=use_subtitles,
+                story_text=content, force_rerun=force_rerun, effect_type=effect_type
+            ))
+            return {"message": "Pipeline run triggered locally on Taka-Server", "story_id": story_id, "chapter_id": chapter_id}
+        except Exception as local_err:
+            raise HTTPException(status_code=400, detail=f"No active Taka-Agent connected for workspace '{ws_id}'. Please start taka-agent on your computer.")
+
     # Send trigger message to target workspace agent
     trigger_message = {
         "type": "run_pipeline",
@@ -3737,15 +3806,19 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                         if (textInput) textInput.value = "Đang tải kịch bản...";
                         
                         try {
-                            let storyRes = await fetch(`/v1/system/agent/files/${encodeURIComponent(storyId)}/story/story.txt`);
+                            let storyRes = await fetch(`/v1/projects/dao-ly/${encodeURIComponent(storyId)}/fragments`);
                             if (storyRes.ok) {
-                                let txt = await storyRes.text();
-                                if (textInput) textInput.value = txt;
+                                let frags = await storyRes.json();
+                                if (Array.isArray(frags) && frags.length > 0) {
+                                    textInput.value = frags.map(f => f.text).join("\n\n");
+                                } else {
+                                    textInput.value = "";
+                                }
                             } else {
                                 if (textInput) textInput.value = "";
                             }
                         } catch(e) {
-                            console.error("Failed to load story.txt", e);
+                            console.error("Failed to load fragments", e);
                             if (textInput) textInput.value = "";
                         }
                     } else {

@@ -1153,7 +1153,8 @@ async def main():
                             dirs_to_check.append(AGENT_PROJECTS_DIR / "dao-ly" / chapter_id)
                             dirs_to_check.append(AGENT_PROJECTS_DIR / "dao_ly" / chapter_id)
                             dirs_to_check.append(AGENT_PROJECTS_DIR / chapter_id)
-                        dirs_to_check.append(AGENT_PROJECTS_DIR / story_id)
+                        else:
+                            dirs_to_check.append(AGENT_PROJECTS_DIR / story_id)
 
                         for d in dirs_to_check:
                             if d.exists():
@@ -1285,10 +1286,20 @@ async def main():
                                     if alt_img.exists() and alt_img.is_file():
                                         found_file = alt_img
                                         break
-                            if not found_file and file_path == "final.mp4":
-                                alt_video = base_dir / f"{story_id}_{chapter_id}.mp4"
-                                if alt_video.exists() and alt_video.is_file():
-                                    found_file = alt_video
+                            if not found_file and (file_path == "final.mp4" or file_path.endswith(".mp4")):
+                                for bdir in [base_dir, AGENT_PROJECTS_DIR / "dao-ly" / chapter_id, AGENT_PROJECTS_DIR / "dao_ly" / chapter_id, AGENT_PROJECTS_DIR / chapter_id]:
+                                    if bdir.exists():
+                                        for cand_name in ["final.mp4", f"{story_id}_{chapter_id}.mp4", f"{chapter_id}.mp4"]:
+                                            cand = bdir / cand_name
+                                            if cand.exists() and cand.is_file():
+                                                found_file = cand
+                                                break
+                                        if not found_file:
+                                            mp4_files = [f for f in bdir.glob("*.mp4") if not f.name.startswith(".")]
+                                            if mp4_files:
+                                                found_file = mp4_files[0]
+                                    if found_file:
+                                        break
 
                         if found_file:
                             import base64
