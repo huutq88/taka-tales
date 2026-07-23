@@ -2026,6 +2026,10 @@ async def dashboard():
                 color: var(--text);
                 text-shadow: 0 0 10px rgba(255,255,255,0.4);
             }
+            #nav-dao-ly:hover, #nav-dao-ly.active {
+                color: #f59e0b !important;
+                text-shadow: 0 0 10px rgba(245, 158, 11, 0.5) !important;
+            }
 
             .step-btn {
                 display: inline-flex;
@@ -2156,7 +2160,7 @@ async def dashboard():
             </div>
             <nav class="header-menu">
                 <a id="nav-home" onclick="showPage('home')" class="active">Home</a>
-                <a id="nav-dao-ly" onclick="showPage('dao-ly')" style="color: #f59e0b; display: flex; align-items: center; gap: 0.3rem;" title="Tạo video Đạo Lý 1-Click">☯️ Đạo Lý</a>
+                <a id="nav-dao-ly" onclick="showPage('dao-ly')" style="display: flex; align-items: center; gap: 0.3rem;" title="Tạo video Đạo Lý 1-Click">☯️ Đạo Lý</a>
                 <a id="nav-voices" onclick="showPage('voices')">Voices</a>
                 <a id="nav-music" onclick="showPage('music')">Music</a>
             </nav>
