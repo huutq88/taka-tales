@@ -349,17 +349,20 @@ async def get_agent_status(request: Request):
     ws_id = get_workspace_id_from_request(request)
     if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
         ws_id = list(agents_by_workspace.keys())[0]
-    agent_ws = agents_by_workspace.get(ws_id)
-    connected = agent_ws is not None
-    st = agent_status.get(ws_id, {})
+    
+    connected = len(agents_by_workspace) > 0
+    st = agent_status.get(ws_id, {}) if ws_id else {}
+    if not st and len(agent_status) > 0:
+        st = list(agent_status.values())[0]
+        
     agent_ver = st.get("agent_version")
     needs_update = (agent_ver != AGENT_VERSION) if connected else False
     return JSONResponse(
         content={
             "connected": connected,
-            "workspace_id": ws_id,
+            "workspace_id": ws_id or (list(agents_by_workspace.keys())[0] if len(agents_by_workspace) > 0 else "default_workspace"),
             "active_workspaces": list(agents_by_workspace.keys()),
-            "agents": {ws_id: st} if st else {},
+            "agents": agent_status if agent_status else ({ws_id: st} if st else {}),
             "server_version": AGENT_VERSION,
             "needs_update": needs_update,
             "agent_version": agent_ver
