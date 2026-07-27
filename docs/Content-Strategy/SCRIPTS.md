@@ -318,6 +318,82 @@ Hãy giữ cho tâm mình như một hồ nước phẳng lặng: mặc cho ngư
 
 Hiểu rõ giá trị của bản thân, sống đúng với đạo lý làm người và mỉm cười bước qua mọi lời đàm tiếu. Khi tâm bạn không động, sóng gió ngoài kia cũng chỉ là mây khói thoảng qua.
 
-Giữ tâm kiên định, sống đời an nhiên và tự tại giữa biến động của nhân gian.
+---
 
-Nhấn nút đăng ký và theo dõi kênh để tìm lại sự tĩnh lặng và bản lĩnh nội tâm mỗi ngày.
+## 📌 Kịch bản 21: Ngoại Tình & Bản Chất Kẻ Phản Bội (Bản Chất Của Kẻ Phản Bội)
+
+Kẻ phản bội bạn một lần, chắc chắn sẽ có lần thứ hai.
+
+Đừng bao giờ tin vào những lời thề thốt muộn màng của một kẻ đã tráo trở quay lưng với tình nghĩa vợ chồng. Sự chung thủy là một loại lựa chọn và là bản lĩnh của người tử tế, chứ không phải là nghĩa vụ tạm thời khi họ chưa tìm thấy mối lợi tốt hơn ngoài kia. Kẻ lấy lý do "say nắng" hay "tạm thời ngã lòng" chỉ là sự ngụy trang hèn nhát cho một tâm hồn tham lam, ích kỷ và thiếu tự trọng.
+
+Khi một người đã sẵn sàng vứt bỏ người từng cùng mình đi qua những năm tháng gian khó nhất để chạy theo nụ cười xa lạ, thì sự tha thứ của bạn chỉ là chiếc thảm trải đường cho lần phản bội tiếp theo. Người đàn bà hay người đàn ông lén lút nhân danh tình yêu để phá nát một gia đình, bản chất họ cũng sẽ lại phản bội nhau khi sóng gió ập đến.
+
+Hãy nhớ rằng, tha thứ cho kẻ phản bội không phải là bao dung, mà là tự rước lấy mầm mống bi kịch cho tương lai của chính mình. Đừng tiếc nuối một chiếc lá đã ối vàng, cũng đừng níu kéo một kẻ đã không còn xứng đáng với tình cảm chân thành của bạn.
+
+Can đảm bước ra khỏi mối quan hệ độc hại, chữa lành bản thân và nâng cao giá trị của mình. Khi bạn tỏa sáng, bạn sẽ gặp được người biết trân trọng bạn như một báu vật.
+
+Đăng ký và theo dõi kênh để cùng rèn luyện sự tỉnh táo và bản lĩnh trong tình cảm mỗi ngày.
+
+---
+
+## 📌 Kịch bản 22: Yêu Đương & Giá Trị Bản Thân (Đừng Yêu Đến Mất Đi Chính Mình)
+
+Tình yêu đẹp nhất là khi hai người cùng nhau tốt lên, chứ không phải một người liên tục chịu đựng và hạ thấp bản thân.
+
+Trong tình yêu, sai lầm lớn nhất của những kẻ lụy tình là nghĩ rằng sự hy sinh vô điều kiện sẽ đổi lấy tình cảm vĩnh cửu. Sự thật cay đắng là: khi bạn càng coi người khác là cả thế giới, người ta lại càng coi sự hiện diện của bạn là điều hiển nhiên và dễ dàng vứt bỏ. Yêu hết lòng nhưng phải giữ lại sự kiêu hãnh và ranh giới tự trọng của chính mình.
+
+Đừng biến mình thành cây tầm gửi phụ thuộc vào cảm xúc của người khác. Một người thực sự yêu bạn sẽ không bao giờ bắt bạn phải tha thứ hết lần này đến lần khác, không khiến bạn phải thức đêm khóc thầm hay hoài nghi về giá trị của bản thân. Tình yêu chân chính mang lại cảm giác an toàn, bình yên và sự tôn trọng lẫn nhau.
+
+Hãy học cách yêu bản thân mình trước khi chờ đợi ai đó đến yêu thương. Hãy có sự nghiệp riêng, có đam mê riêng và có một tâm hồn độc lập vững vàng. 
+
+Khi bạn đủ tự tin và tỏa sáng, bạn không cần phải van xin tình thương, bởi tình yêu chân thành sẽ tự tìm đến như một lẽ tự nhiên.
+
+Nhấn theo dõi kênh để cùng xây dựng tư duy tình cảm làm chủ cuộc đời mình.
+
+---
+
+## 📌 Kịch bản 23: Gia Đình & Nơi Trở Về (Gia Đình Là Điểm Tựa Duy Nhất)
+
+Thế giới ngoài kia có thể tung hô bạn khi bạn thành công, nhưng chỉ có gia đình mới sẵn sàng ôm lấy bạn khi bạn vấp ngã.
+
+Ra ngoài xã hội, người ta nhìn vào ví tiền, địa vị và chiếc xe bạn đi để đong đếm sự tôn trọng. Nhưng khi bước qua cánh cửa nhà, mọi danh vọng hay thất bại đều phải bỏ lại bên ngoài. Cha mẹ là những người duy nhất trên đời không bao giờ soi xét hoàn cảnh của bạn, chỉ cần bạn trở về bình an, khỏe mạnh và nở nụ cười trọn vẹn.
+
+Bữa cơm gia đình đơn sơ với bát canh rau đắng đôi khi lại đắt giá hơn vạn yến tiệc sang trọng ngoài kia. Đừng phung phí thời gian và sự kiên nhẫn cho những cuộc vui xã giao vô bổ, để rồi khi quay về nhà lại vô tình buông ra những lời cộc lốc với người yêu thương mình nhất.
+
+Tóc cha thêm sợi bạc, lưng mẹ thêm còng theo từng bước trưởng thành của bạn. Thời gian của cha mẹ không chờ đợi sự nghiệp của bạn thành danh. Hãy yêu thương và trân trọng từng phút giây bên gia đình khi còn có thể.
+
+Gia đình là gốc rễ của mọi hạnh phúc. Giữ gìn ngọn lửa yêu thương trong mái nhà chính là giữ gìn phước báu lớn nhất của đời người.
+
+Bấm đăng ký kênh để cùng trân trọng những giá trị tình thân thiêng liêng mỗi ngày.
+
+---
+
+## 📌 Kịch bản 24: Ngoại Tình & Nhân Quả Hôn Nhân (Cái Giá Của Sự Phản Bội)
+
+Cái cướp được từ tay người khác, chưa bao giờ là hạnh phúc thực sự.
+
+Nhiều kẻ tưởng rằng mình khôn khéo khi dối vợ phản chồng, lén lút vun vén cho thứ tình cảm bất chính ngoài luồng. Họ mê mải trong thứ cảm giác lén lút nhất thời mà quên mất rằng luật nhân quả trong hôn nhân chưa bao giờ bỏ sót một ai. Sự phản bội như một con dao hai lưỡi: hôm nay bạn làm tổn thương người cùng mình đồng cam cộng khổ, thì ngày mai thứ bạn nhận lại sẽ là sự cô đơn và khinh rẻ.
+
+Người thứ ba chen chân vào tổ ấm của người khác, đừng vội vã đắc ý khi cướp được một người đàn ông hay người đàn bà phản bội. Bởi một kẻ đã sẵn sàng bỏ rơi gia đình mình để theo bạn, thì mai này họ cũng sẽ dễ dàng bỏ rơi bạn để chạy theo một bóng hình mới lạ khác.
+
+Tình yêu bất chính được xây dựng trên sự đau khổ của người khác thì cái kết nhận lại sẽ luôn là cay đắng và tổn thương gấp bội. Hôn nhân là sự cam kết và trách nhiệm, gieo mầm dối trá sẽ thu hoạch đắng ngắt.
+
+Sống tử tế, giữ trọn đạo nghĩa vợ chồng để đời đời được an nhiên và không thẹn với lòng.
+
+Theo dõi kênh để tìm hiểu những bài học nhân quả sâu sắc trong cuộc sống gia đình.
+
+---
+
+## 📌 Kịch bản 25: Yêu Đương & Sự Trưởng Thành (Gặp Đúng Người, Đúng Thời Điểm)
+
+Yêu đúng người là khi bạn không cần phải giả vờ hoàn hảo, vẫn cảm thấy mình được trân trọng và an toàn.
+
+Thời trẻ, chúng ta thường say mê những lời thề thốt ngọt ngào và những lãng mạn thoáng qua. Nhưng khi trải qua vài lần tổn thương, bạn mới nhận ra: một người đồng hành tuyệt vời không nằm ở vẻ bề ngoài hay những hứa hẹn xa xôi, mà nằm ở sự kiên định, trách nhiệm và cách họ nắm tay bạn qua những ngày sóng gió nhất của cuộc đời.
+
+Tình yêu trưởng thành không có sự thao túng hay kiểm soát ích kỷ. Đó là sự thấu hiểu từ những điều nhỏ nhặt, là sự tôn trọng khoảng trời riêng của nhau, và là cảm giác bình yên đến lạ mỗi khi ở bên cạnh người ấy. 
+
+Đừng vội vã kết hôn chỉ vì áp lực tuổi tác hay lời giục giã của số đông. Hạnh phúc cả đời không thể đánh đổi bằng sự vội vàng tạm thời. Thà kiên nhẫn chờ đợi người phù hợp còn hơn bước nhầm vào một cuộc hôn nhân lạnh ngắt.
+
+Hãy cứ sống thật rực rỡ, tu dưỡng tâm hồn và hoàn thiện bản thân. Người thuộc về bạn chắc chắn sẽ xuất hiện vào thời điểm đẹp đẽ nhất.
+
+Nhấn đăng ký kênh để đón nhận thêm nhiều thông điệp ý nghĩa về tình yêu và cuộc sống.

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 import pathlib
 from typing import Dict, List, Set, Optional
@@ -327,6 +328,8 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default_w
                     job_key = project_name.replace("_", "/", 1)
                     project_jobs[job_key] = {
                         "status": data.get("status"),
+                        "queue_position": data.get("queue_position", 0),
+                        "total_queued": data.get("total_queued", 0),
                         "current_fragment": data.get("current_fragment", 0),
                         "total_fragments": data.get("total_fragments", 0),
                         "fragment_status": data.get("fragment_status", {}),
@@ -372,38 +375,25 @@ def get_default_workspace_id():
 
 @app.get("/v1/agent/status")
 async def get_agent_status(request: Request):
-    is_local_active = False
-    agent_log = BASE_DIR / "agent.log"
-    if not agent_log.exists():
-        agent_log = pathlib.Path.home() / ".taka-agent" / "agent.log"
-    if agent_log.exists():
-        is_local_active = True
-
     active_ws_list = list(agents_by_workspace.keys())
-    connected = (len(active_ws_list) > 0) or is_local_active
+    connected = len(active_ws_list) > 0
 
     default_ws = get_default_workspace_id()
     if active_ws_list:
         resolved_ws = active_ws_list[0]
-    elif is_local_active:
-        resolved_ws = default_ws
     else:
         resolved_ws = get_workspace_id_from_request(request) or default_ws
 
     st = agent_status.get(resolved_ws, {})
     if not st and len(agent_status) > 0:
         st = list(agent_status.values())[0]
-    if not st and is_local_active:
-        st = {
-            "cuda_available": False,
-            "mps_available": True,
-            "ollama_active": True,
-            "omnivoice_installed": True,
-            "agent_version": AGENT_VERSION
-        }
 
     agent_ver = st.get("agent_version", AGENT_VERSION)
     needs_update = (agent_ver != AGENT_VERSION) if connected else False
+
+    running_jobs = [k for k, v in project_jobs.items() if v.get("status") not in ("idle", "completed", "failed", "stopped", "queued", None)]
+    queued_jobs = [k for k, v in project_jobs.items() if v.get("status") == "queued"]
+    active_running = running_jobs[0] if running_jobs else None
 
     return JSONResponse(
         content={
@@ -413,7 +403,10 @@ async def get_agent_status(request: Request):
             "agents": agent_status if agent_status else {resolved_ws: st},
             "server_version": AGENT_VERSION,
             "needs_update": needs_update,
-            "agent_version": agent_ver
+            "agent_version": agent_ver,
+            "active_running_project": active_running,
+            "total_running": len(running_jobs),
+            "total_queued": len(queued_jobs)
         },
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
@@ -808,6 +801,12 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
         except Exception as e:
             print(f"[Server] Warning: delete_project_request to Agent failed: {e}")
 
+    try:
+        import taka_agent
+        taka_agent.remove_from_queue_and_active(clean_story, chapter_id)
+    except Exception as ex:
+        print(f"[Server] Warning: local remove_from_queue_and_active failed: {ex}")
+
     # Remove matching job state
     target_pattern = f"{clean_story}/{chapter_id}" if (chapter_id and chapter_id != "story") else clean_story
     keys_to_del = [k for k in project_jobs.keys() if k == target_pattern or k.startswith(f"{target_pattern}/")]
@@ -839,6 +838,39 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
 
     print(f"[Server] Successfully deleted project directory for story_id={clean_story}, chapter_id={chapter_id}")
     return {"ok": True, "story_id": clean_story, "chapter_id": chapter_id}
+
+
+@app.post("/v1/projects/cancel-all")
+async def cancel_all_jobs(request: Request):
+    ws_id = get_workspace_id_from_request(request)
+    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
+        ws_id = list(agents_by_workspace.keys())[0]
+
+    agent_ws = agents_by_workspace.get(ws_id)
+    if agent_ws:
+        try:
+            await tunnel_request_to_agent("cancel_all_jobs_request", {}, workspace_id=ws_id, timeout=3.0)
+        except Exception as e:
+            print(f"[Server] Warning: cancel_all_jobs_request failed: {e}")
+
+    try:
+        import taka_agent
+        taka_agent.agent_active_tasks.clear()
+        taka_agent.agent_queued_jobs.clear()
+        while not taka_agent.pipeline_queue.empty():
+            try:
+                taka_agent.pipeline_queue.get_nowait()
+            except Exception:
+                break
+    except Exception as ex:
+        print(f"[Server] Clear local queue warning: {ex}")
+
+    for k, v in list(project_jobs.items()):
+        if v.get("status") not in ("completed", "failed", "idle"):
+            v["status"] = "stopped"
+            v["queue_position"] = 0
+
+    return {"message": "All running and queued pipeline jobs have been cancelled and cleared."}
 
 
 @app.post("/v1/projects/music")
@@ -968,10 +1000,14 @@ async def list_projects(request: Request):
         })
         
     if dao_ly_chapters:
+        sorted_dao_ly = sorted(dao_ly_chapters, key=lambda x: x["id"])
+        for idx, item in enumerate(sorted_dao_ly, 1):
+            clean_t = re.sub(r"^#\d+\s*", "", item["title"])
+            item["title"] = f"#{idx:02d} {clean_t}"
         stories.append({
             "story_id": "dao-ly",
             "title": "☯️ Video Đạo Lý",
-            "chapters": sorted(dao_ly_chapters, key=lambda x: x["id"])
+            "chapters": sorted_dao_ly
         })
 
     for story_id in story_ids:
@@ -1050,7 +1086,7 @@ async def get_project_status(request: Request, story_id: str, chapter_id: str):
     if res and isinstance(res, dict):
         for k, v in res.items():
             if v is not None:
-                if k == "status" and v == "idle" and job_state.get("status") not in ("idle", "completed", "failed", None):
+                if k == "status" and v == "idle" and job_state.get("status") not in ("idle", "completed", "failed", "queued", None):
                     continue
                 job_state[k] = v
         return job_state
@@ -1416,6 +1452,15 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
         "error": None
     }
 
+    art_style = request_data.art_style if request_data else None
+    effect_type = request_data.effect_type if (request_data and hasattr(request_data, 'effect_type')) else "leaves"
+    use_watermark = request_data.use_watermark if (request_data and request_data.use_watermark is not None) else True
+    use_waveform = request_data.use_waveform if (request_data and hasattr(request_data, 'use_waveform') and request_data.use_waveform is not None) else True
+    use_subtitles = request_data.use_subtitles if (request_data and request_data.use_subtitles is not None) else True
+    subtitle_preset = request_data.subtitle_preset if (request_data and hasattr(request_data, 'subtitle_preset') and request_data.subtitle_preset) else "viral-bold-yellow"
+    use_whisper = request_data.use_whisper if (request_data and hasattr(request_data, 'use_whisper')) else False
+    force_rerun = request_data.force_rerun if request_data else False
+
     # Read and encode music file if it's a music project
     music_b64 = None
     music_filename = None
@@ -1440,15 +1485,6 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
                     music_filename = music_file.name
                 except Exception as e:
                     print(f"[Server] Failed to read/encode music file: {e}")
-
-    print(f"[Server] Prepared voice config payload to agent ({ws_id}): { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_payload.items()} }")
-    
-    art_style = request_data.art_style if request_data else None
-    effect_type = request_data.effect_type if (request_data and hasattr(request_data, 'effect_type')) else "leaves"
-    use_watermark = request_data.use_watermark if (request_data and request_data.use_watermark is not None) else True
-    use_waveform = request_data.use_waveform if (request_data and hasattr(request_data, 'use_waveform') and request_data.use_waveform is not None) else True
-    use_subtitles = request_data.use_subtitles if (request_data and request_data.use_subtitles is not None) else True
-    force_rerun = request_data.force_rerun if request_data else False
 
     # Save project configuration for video engine
     config_data = {
@@ -1476,6 +1512,8 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
                             job_key = f"{story_id}/{chapter_id}"
                             project_jobs[job_key] = {
                                 "status": data.get("status"),
+                                "queue_position": data.get("queue_position", 0),
+                                "total_queued": data.get("total_queued", 0),
                                 "current_fragment": data.get("current_fragment", 0),
                                 "total_fragments": data.get("total_fragments", 0),
                                 "fragment_status": data.get("fragment_status", {}),
@@ -1486,15 +1524,25 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
                         pass
             
             fake_ws = FakeWS()
-            asyncio.create_task(taka_agent.run_pipeline_task(
+            res_queue = await taka_agent.enqueue_or_run_job(
                 project_name, str(project_dir), fake_ws,
                 voice_config=voice_payload, art_style=art_style,
-                use_watermark=use_watermark, use_subtitles=use_subtitles,
-                story_text=content, force_rerun=force_rerun, effect_type=effect_type
-            ))
-            return {"message": "Pipeline run triggered locally on Taka-Server", "story_id": story_id, "chapter_id": chapter_id}
+                use_watermark=use_watermark, use_waveform=use_waveform,
+                use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
+                use_whisper=use_whisper, story_text=content, force_rerun=force_rerun,
+                effect_type=effect_type, pipeline_type="music" if story_id == "music" else "story",
+                music_b64=music_b64, music_filename=music_filename, music_local_path=music_local_path
+            )
+            return {
+                "message": f"Pipeline run {'queued' if res_queue.get('status') == 'queued' else 'triggered'} locally on Taka-Server",
+                "story_id": story_id,
+                "chapter_id": chapter_id,
+                "status": res_queue.get("status")
+            }
         except Exception as local_err:
-            raise HTTPException(status_code=400, detail=f"No active Taka-Agent connected for workspace '{ws_id}'. Please start taka-agent on your computer.")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Failed to trigger/queue pipeline: {str(local_err)}")
 
     # Send trigger message to target workspace agent
     trigger_message = {
@@ -1509,7 +1557,8 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             "use_watermark": use_watermark,
             "use_waveform": use_waveform,
             "use_subtitles": use_subtitles,
-            "use_whisper": request_data.use_whisper if request_data else False,
+            "subtitle_preset": subtitle_preset,
+            "use_whisper": use_whisper,
             "force_rerun": force_rerun,
             "story_text": content if story_id != "music" else None,
             "music_b64": music_b64,
@@ -2585,16 +2634,27 @@ async def dashboard():
                 </div>
 
                 <!-- Watermark and Subtitle Toggles -->
-                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1.2rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1.2rem; margin-bottom: 0.8rem; flex-wrap: wrap;">
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
                         <input type="checkbox" id="story-use-watermark" checked style="width: auto; margin-bottom: 0;"> Gắn Watermark
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
-                        <input type="checkbox" id="story-use-subtitles" checked style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
+                        <input type="checkbox" id="story-use-subtitles" checked onchange="toggleSubtitlePresetDisplay('story')" style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--danger); font-weight: bold;">
                         <input type="checkbox" id="story-force-rerun" style="width: auto; margin-bottom: 0;"> Chạy lại từ đầu (Xóa Cache)
                     </label>
+                </div>
+
+                <div id="story-preset-container" style="display: flex; gap: 1rem; margin-bottom: 1.5rem; align-items: center; padding: 0.6rem 0.8rem; background: rgba(99, 102, 241, 0.05); border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);">
+                    <label style="font-size: 0.85rem; font-weight: bold; color: var(--primary-light); white-space: nowrap;">✨ Kiểu Phụ Đề Subtitle Engine:</label>
+                    <select id="story-subtitle-preset" style="flex: 1; padding: 0.4rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
+                        <option value="viral-bold-yellow" selected>⚡ Viral Bold Yellow (Vàng Nổi Bật)</option>
+                        <option value="storytelling-serif">📜 Storytelling Serif (Đạo Lý Hoài Cổ)</option>
+                        <option value="karaoke-green">🎤 Karaoke Green (Xanh Ngọc Mượt)</option>
+                        <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương Hiện Đại)</option>
+                        <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
+                    </select>
                 </div>
 
                 <div class="dialog-actions">
@@ -2638,12 +2698,12 @@ async def dashboard():
                 </div>
 
                 <!-- Watermark, Subtitle, and Whisper Toggles -->
-                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1rem; margin-bottom: 0.8rem; flex-wrap: wrap;">
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
                         <input type="checkbox" id="music-use-watermark" style="width: auto; margin-bottom: 0;"> Gắn Watermark
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
-                        <input type="checkbox" id="music-use-subtitles" style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
+                        <input type="checkbox" id="music-use-subtitles" onchange="toggleSubtitlePresetDisplay('music')" style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
                         <input type="checkbox" id="music-use-whisper" style="width: auto; margin-bottom: 0;"> Nhận diện Whisper
@@ -2651,6 +2711,17 @@ async def dashboard():
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--danger); font-weight: bold;">
                         <input type="checkbox" id="music-force-rerun" style="width: auto; margin-bottom: 0;"> Chạy lại từ đầu (Xóa Cache)
                     </label>
+                </div>
+
+                <div id="music-preset-container" style="display: none; gap: 1rem; margin-bottom: 1.5rem; align-items: center; padding: 0.6rem 0.8rem; background: rgba(16, 185, 129, 0.05); border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.2);">
+                    <label style="font-size: 0.85rem; font-weight: bold; color: #10b981; white-space: nowrap;">✨ Kiểu Phụ Đề Subtitle Engine:</label>
+                    <select id="music-subtitle-preset" style="flex: 1; padding: 0.4rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
+                        <option value="karaoke-green" selected>🎤 Karaoke Green (Xanh Ngọc Mượt)</option>
+                        <option value="viral-bold-yellow">⚡ Viral Bold Yellow (Vàng Nổi Bật)</option>
+                        <option value="storytelling-serif">📜 Storytelling Serif (Đạo Lý Hoài Cổ)</option>
+                        <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương Hiện Đại)</option>
+                        <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
+                    </select>
                 </div>
 
                 <div class="dialog-actions">
@@ -2671,11 +2742,11 @@ async def dashboard():
                     <label for="dao-ly-sample-select" style="font-weight: 600; color: #a78bfa;">Chọn Kịch Bản Mẫu (Hoặc Tự Nhập Bằng Tay):</label>
                     <select id="dao-ly-sample-select" onchange="onSelectDaoLySample(this.value)" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;">
                         <option value="custom">-- Kịch bản Tùy Chỉnh (Tự nhập tiêu đề & nội dung bên dưới) --</option>
-                        <option value="s1">📜 Kịch bản 1: Túi Tiền Và Tâm Hồn (Tài chính & Trí tuệ)</option>
-                        <option value="s2">📜 Kịch bản 2: Nhìn Thấu Lòng Người (Ứng xử & Bản chất)</option>
-                        <option value="s3">📜 Kịch bản 3: Bản Lĩnh Và Cơn Giận (Kiểm soát cảm xúc)</option>
-                        <option value="s4">📜 Kịch bản 4: Sự Buông Bỏ Bình Yên (Tĩnh tâm & Quá khứ)</option>
-                        <option value="s5">📜 Kịch bản 5: Sự Im Lặng Trưởng Thành (Thâm trầm & Nội tâm)</option>
+                        <option value="v1">💔 Ngoại Tình: Bản Chất Của Kẻ Phản Bội (Trò chơi dối trá)</option>
+                        <option value="v2">🌹 Yêu Đương: Đừng Yêu Đến Mất Đi Chính Mình (Tự trọng & Giá trị)</option>
+                        <option value="v3">🏡 Gia Đình: Gia Đình Là Điểm Tựa Duy Nhất (Mái ấm & Phụ mẫu)</option>
+                        <option value="v4">🔥 Ngoại Tình: Cái Giá Của Sự Phản Bội (Nhân quả hôn nhân)</option>
+                        <option value="v5">❤️ Yêu Đương: Gặp Đúng Người, Đúng Thời Điểm (Tình yêu trưởng thành)</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -2734,18 +2805,18 @@ async def dashboard():
                         <span>🌊 Sóng âm (Waveform)</span>
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
-                        <input type="checkbox" id="dao-ly-subtitles" checked style="accent-color: #f59e0b; width: 16px; height: 16px;">
+                        <input type="checkbox" id="dao-ly-subtitles" checked onchange="toggleSubtitlePresetDisplay('dao-ly')" style="accent-color: #f59e0b; width: 16px; height: 16px;">
                         <span>💬 Phụ đề (Subtitles)</span>
                     </label>
                 </div>
 
-                <div style="display: flex; gap: 1rem; margin-top: 0.8rem; align-items: center; padding: 0.6rem 0.8rem; background: rgba(245, 158, 11, 0.05); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.2);">
-                    <label style="font-size: 0.85rem; font-weight: bold; color: #f59e0b; white-space: nowrap;">✨ Kiểu Phụ Đề:</label>
+                <div id="dao-ly-preset-container" style="display: flex; gap: 1rem; margin-top: 0.8rem; align-items: center; padding: 0.6rem 0.8rem; background: rgba(245, 158, 11, 0.05); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.2);">
+                    <label style="font-size: 0.85rem; font-weight: bold; color: #f59e0b; white-space: nowrap;">✨ Kiểu Phụ Đề Subtitle Engine:</label>
                     <select id="dao-ly-subtitle-preset" style="flex: 1; padding: 0.4rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
-                        <option value="viral-bold-yellow" selected>⚡ Viral Bold Yellow (Vàng Nổi Bật)</option>
-                        <option value="storytelling-serif">📜 Storytelling Serif (Đạo Lý Hoài Cổ)</option>
-                        <option value="karaoke-green">🎤 Karaoke Green (Xanh Ngọc Mượt)</option>
-                        <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương Hiện Đại)</option>
+                        <option value="storytelling-serif" selected>📜 Storytelling Serif (Đạo Lý Hoài Cổ - Georgia)</option>
+                        <option value="viral-bold-yellow">⚡ Viral Bold Yellow (Vàng Nổi Bật - Montserrat)</option>
+                        <option value="karaoke-green">🎤 Karaoke Green (Xanh Ngọc Mượt - Be Vietnam Pro)</option>
+                        <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương - Outfit)</option>
                         <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
                     </select>
                 </div>
@@ -3064,11 +3135,21 @@ async def dashboard():
                             let btnId = `btn-${s.story_id}-${c.id}`;
                             let isRunning = (c.status !== 'idle' && c.status !== 'completed');
                             
+                            let subtitleP = "No video output yet";
+                            if (c.status === "queued" || (c.progress && c.progress.status === "queued")) {
+                                let pos = (c.progress && c.progress.queue_position) ? c.progress.queue_position : 1;
+                                subtitleP = `<span style="color: #f59e0b; font-weight: 600;">🟡 Queue (#${pos})</span>`;
+                            } else if (c.status !== 'idle' && c.status !== 'completed') {
+                                subtitleP = `<span style="color: #3b82f6; font-weight: 600;">🔵 Running...</span>`;
+                            } else if (c.has_video) {
+                                subtitleP = "🎬 Video completed";
+                            }
+                            
                             item.innerHTML = `
                                 <div class="chapter-info" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
                                     <div style="flex: 1; overflow: hidden; text-overflow: ellipsis;">
                                         <h4>${displayTitle}</h4>
-                                        <p>${c.has_video ? "🎬 Video completed" : "No video output yet"}</p>
+                                        <p>${subtitleP}</p>
                                     </div>
                                     <button class="delete-item-btn" title="Xóa dự án này" onclick="event.stopPropagation(); deleteProject('${targetStoryId}', '${c.id}');" style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; padding: 0.25rem 0.5rem; border-radius: 5px; font-size: 0.75rem; cursor: pointer; font-weight: 600; margin-left: 0.5rem;">🗑️</button>
                                 </div>
@@ -3101,7 +3182,11 @@ async def dashboard():
                 let content = document.getElementById("details-content");
                 if (placeholder) placeholder.style.display = "none";
                 if (content) content.style.display = "block";
-                document.getElementById("current-project-title").innerText = `${storyId} - ${title}`;
+                if (storyId === "dao-ly" || storyId === "dao_ly") {
+                    document.getElementById("current-project-title").innerText = title;
+                } else {
+                    document.getElementById("current-project-title").innerText = `${storyId} - ${title}`;
+                }
                 
                 let runBtn = document.getElementById("details-run-btn");
                 if (runBtn) {
@@ -3246,6 +3331,7 @@ async def dashboard():
                 let limitFragments = parseInt(document.getElementById("vc-limit-fragments").value) || 0;
                 let useWatermark = document.getElementById("story-use-watermark").checked;
                 let useSubtitles = document.getElementById("story-use-subtitles").checked;
+                let subtitlePreset = document.getElementById("story-subtitle-preset") ? document.getElementById("story-subtitle-preset").value : "viral-bold-yellow";
                 let forceRerun = document.getElementById("story-force-rerun") ? document.getElementById("story-force-rerun").checked : false;
 
                 let voiceConfig = {
@@ -3280,6 +3366,7 @@ async def dashboard():
                             art_style: artStyle,
                             use_watermark: useWatermark,
                             use_subtitles: useSubtitles,
+                            subtitle_preset: subtitlePreset,
                             force_rerun: forceRerun
                         })
                     });
@@ -3604,17 +3691,36 @@ async def dashboard():
                     }
                     
                     let banner = document.getElementById("status-banner");
-                    banner.innerText = status.status || "Idle";
-                    banner.className = "status-banner " + (status.status === 'completed' ? 'completed' : (status.status !== 'idle' ? 'processing' : ''));
-
                     let detailsBtn = document.getElementById("details-run-btn");
-                    if (detailsBtn) {
-                        let isRunning = (status.status !== 'idle' && status.status !== 'completed');
-                        detailsBtn.innerText = isRunning ? "Restart Pipeline" : "Run";
-                        detailsBtn.disabled = false;
+                    
+                    if (status.status === "queued") {
+                        let qPos = status.queue_position || 1;
+                        let activeInfo = status.active_project ? ` (Đang chạy: ${status.active_project})` : '';
+                        banner.innerText = `🟡 In Queue (#${qPos})`;
+                        banner.className = "status-banner queued";
+                        banner.style.backgroundColor = "rgba(245, 158, 11, 0.15)";
+                        banner.style.borderColor = "rgba(245, 158, 11, 0.4)";
+                        banner.style.color = "#f59e0b";
+                        
+                        if (detailsBtn) {
+                            detailsBtn.innerText = `Queued (#${qPos})`;
+                            detailsBtn.disabled = true;
+                        }
+                        document.getElementById("current-project-desc").innerText = `Dự án đang xếp hàng ở vị trí #${qPos}${activeInfo}. Hệ thống sẽ tự động chuyển sang ngay khi tới lượt.`;
+                    } else {
+                        banner.innerText = status.status || "Idle";
+                        banner.className = "status-banner " + (status.status === 'completed' ? 'completed' : (status.status !== 'idle' ? 'processing' : ''));
+                        banner.style.backgroundColor = "";
+                        banner.style.borderColor = "";
+                        banner.style.color = "";
+                        
+                        if (detailsBtn) {
+                            let isRunning = (status.status !== 'idle' && status.status !== 'completed');
+                            detailsBtn.innerText = isRunning ? "Restart Pipeline" : "Run";
+                            detailsBtn.disabled = false;
+                        }
+                        document.getElementById("current-project-desc").innerText = "Pipeline step: " + (status.status || "idle");
                     }
-
-                    document.getElementById("current-project-desc").innerText = "Pipeline step: " + (status.status || "idle");
 
                     let progressFill = document.getElementById("progress-bar");
                     let pctText = document.getElementById("progress-percentage");
@@ -3788,75 +3894,75 @@ async def dashboard():
             loadProjects();
 
             const DAO_LY_SAMPLES = {
-                s1: {
-                    title: `Túi Tiền Và Tâm Hồn`,
-                    text: `Kẻ nghèo nhất không phải người không có tiền, mà là người chỉ có tiền trong tay.
+                v1: {
+                    title: `Bản Chất Của Kẻ Phản Bội`,
+                    text: `Kẻ phản bội bạn một lần, chắc chắn sẽ có lần thứ hai.
 
-Khi bạn chỉ sống vì vật chất, sự tôn trọng người khác dành cho bạn cũng chỉ đắt giá bằng túi tiền của bạn mà thôi. Đồng tiền có thể mua được sự nịnh hót tạm thời, nhưng không bao giờ mua được tấm lòng trung thành. Người có trí tuệ coi tiền là công cụ để phụng sự cuộc sống, còn kẻ dại khờ coi tiền là thước đo duy nhất để đánh giá nhân cách.
+Đừng bao giờ tin vào những lời thề thốt muộn màng của một kẻ đã tráo trở quay lưng với tình nghĩa vợ chồng. Sự chung thủy là một loại lựa chọn và là bản lĩnh của người tử tế, chứ không phải là nghĩa vụ tạm thời khi họ chưa tìm thấy mối lợi tốt hơn ngoài kia. Kẻ lấy lý do "say nắng" hay "tạm thời ngã lòng" chỉ là sự ngụy trang hèn nhát cho một tâm hồn tham lam, ích kỷ và thiếu tự trọng.
 
-Nếu một ngày đồng tiền mất đi giá trị, thứ còn lại duy nhất chính là phẩm giá và sự tử tế của bạn. Đừng đánh đổi sức khỏe, gia đình và sự bình yên để chạy theo những con số vô hồn. Hãy nhớ rằng, của cải vật chất khi chết đi không ai mang theo được, chỉ có giá trị bạn để lại cho đời mới là vĩnh cửu.
+Khi một người đã sẵn sàng vứt bỏ người từng cùng mình đi qua những năm tháng gian khó nhất để chạy theo nụ cười xa lạ, thì sự tha thứ của bạn chỉ là chiếc thảm trải đường cho lần phản bội tiếp theo. Người đàn bà hay người đàn ông lén lút nhân danh tình yêu để phá nát một gia đình, bản chất họ cũng sẽ lại phản bội nhau khi sóng gió ập đến.
 
-Cuộc sống này là một chặng đường dài, sự giàu có thật sự không nằm ở chiếc xe bạn đi hay ngôi nhà bạn ở, mà nằm ở bình yên trong tâm trí và sự ấm áp trong trái tim bạn. Kẻ tích góp tiền bạc mà bỏ quên tâm hồn thì chẳng khác nào người đi trong đêm tối ôm một bao vàng nặng nề nhưng không có lấy một ngọn đèn soi đường.
+Hãy nhớ rằng, tha thứ cho kẻ phản bội không phải là bao dung, mà là tự rước lấy mầm mống bi kịch cho tương lai của chính mình. Đừng tiếc nuối một chiếc lá đã ối vàng, cũng đừng níu kéo một kẻ đã không còn xứng đáng với tình cảm chân thành của bạn.
 
-Hãy làm chủ đồng tiền, đừng để nó biến bạn thành nô lệ trong sự giàu có cô độc. Đừng để khi bước đến cuối cuộc đời, bạn mới nhận ra mình có rất nhiều tiền nhưng lại chẳng sở hữu bất kỳ điều gì thực sự có ý nghĩa. Hãy giữ cho mình một tâm hồn giàu có, một trái tim ấm áp trước khi tích lũy của cải.
+Can đảm bước ra khỏi mối quan hệ độc hại, chữa lành bản thân và nâng cao giá trị của mình. Khi bạn tỏa sáng, bạn sẽ gặp được người biết trân trọng bạn như một báu vật.
 
-Hãy nhớ rằng, tâm giàu thì đời an, trí sáng thì đường rộng. Đăng ký và theo dõi kênh để cùng rèn luyện tư duy và tích lũy tri thức mỗi ngày.`
+Đăng ký và theo dõi kênh để cùng rèn luyện sự tỉnh táo và bản lĩnh trong tình cảm mỗi ngày.`
                 },
-                s2: {
-                    title: `Nhìn Thấu Lòng Người`,
-                    text: `Đừng vội tin một người khi họ đối xử tốt với bạn lúc họ đang cần bạn.
+                v2: {
+                    title: `Đừng Yêu Đến Mất Đi Chính Mình`,
+                    text: `Tình yêu đẹp nhất là khi hai người cùng nhau tốt lên, chứ không phải một người liên tục chịu đựng và hạ thấp bản thân.
 
-Bản chất con người giống như một hồ nước sâu, chỉ khi gặp biến cố hoặc lợi ích bị đụng chạm, đáy nước mới hiện rõ. Người chân thành không dùng lời ngon tiếng ngọt để lấy lòng, mà lặng lẽ đứng bên bạn khi thế giới quay lưng. Kẻ dối trá thường rất vội vã với những lời hứa hẹn, còn người tử tế luôn bình thản chứng minh bằng thời gian.
+Trong tình yêu, sai lầm lớn nhất của những kẻ lụy tình là nghĩ rằng sự hy sinh vô điều kiện sẽ đổi lấy tình cảm vĩnh cửu. Sự thật cay đắng là: khi bạn càng coi người khác là cả thế giới, người ta lại càng coi sự hiện diện của bạn là điều hiển nhiên và dễ dàng vứt bỏ. Yêu hết lòng nhưng phải giữ lại sự kiêu hãnh và ranh giới tự trọng của chính mình.
 
-Trải qua sóng gió, bạn mới biết ai là bạn, ai là bè. Sự tử tế thật sự không cần phô trương trên môi lưỡi, nó thể hiện ở sự tôn trọng và cách họ ứng xử khi bạn sa cơ thất thế. Nhìn thấu lòng người là một loại năng lực, nhưng không bóc phốt là một loại giáo dưỡng và bản lĩnh.
+Đừng biến mình thành cây tầm gửi phụ thuộc vào cảm xúc của người khác. Một người thực sự yêu bạn sẽ không bao giờ bắt bạn phải tha thứ hết lần này đến lần khác, không khiến bạn phải thức đêm khóc thầm hay hoài nghi về giá trị của bản thân. Tình yêu chân chính mang lại cảm giác an toàn, bình yên và sự tôn trọng lẫn nhau.
 
-Trong cuộc đời, bạn sẽ gặp rất nhiều loại người: có người đến để dạy bạn bài học, có người đến để thử thách sự kiên nhẫn của bạn, và cũng có người xuất hiện chỉ để bạn nhận ra giá trị của sự chân thành. Đừng buồn vì bị phản bội hay dối lừa, bởi đó là cái giá để bạn trưởng thành và sâu sắc hơn.
+Hãy học cách yêu bản thân mình trước khi chờ đợi ai đó đến yêu thương. Hãy có sự nghiệp riêng, có đam mê riêng và có một tâm hồn độc lập vững vàng. 
 
-Hãy học cách sống như một cây cổ thụ: rễ bám sâu vào lòng đất, mặc cho giông bão bên ngoài vẫn giữ sự vững chãi và bao dung. Chọn bạn mà chơi, chọn người mà tin, và quan trọng nhất là giữ cho tâm mình không bị vẩy bẩn bởi những lọc lừa của thế thái nhân tình.
+Khi bạn đủ tự tin và tỏa sáng, bạn không cần phải van xin tình thương, bởi tình yêu chân thành sẽ tự tìm đến như một lẽ tự nhiên.
 
-Giữ sự tỉnh táo để nhìn đời, và giữ sự bao dung để sống yên bình giữa dòng đời biến động. Bấm đăng ký kênh để đón nhận thêm nhiều bài học triết lý đắt giá mỗi ngày.`
+Nhấn theo dõi kênh để cùng xây dựng tư duy tình cảm làm chủ cuộc đời mình.`
                 },
-                s3: {
-                    title: `Bản Lĩnh Và Cơn Giận`,
-                    text: `Mất kiểm soát cơn giận là cách nhanh nhất để bạn phá hủy thành quả của chính mình.
+                v3: {
+                    title: `Gia Đình Là Điểm Tựa Duy Nhất`,
+                    text: `Thế giới ngoài kia có thể tung hô bạn khi bạn thành công, nhưng chỉ có gia đình mới sẵn sàng ôm lấy bạn khi bạn vấp ngã.
 
-Một khoảnh khắc giận dữ có thể đốt cháy cả một rừng công sức bạn đã chắt chiu xây dựng bao năm. Người nông nổi dùng lời nói xỉa xói để chứng minh mình đúng, còn người bản lĩnh dùng sự im lặng để bao quát toàn cục. Kẻ thù lớn nhất không nằm ở bên ngoài, mà chính là sự bồng bồng và cái tôi ngông cuồng trong tâm trí bạn.
+Ra ngoài xã hội, người ta nhìn vào ví tiền, địa vị và chiếc xe bạn đi để đong đếm sự tôn trọng. Nhưng khi bước qua cánh cửa nhà, mọi danh vọng hay thất bại đều phải bỏ lại bên ngoài. Cha mẹ là những người duy nhất trên đời không bao giờ soi xét hoàn cảnh của bạn, chỉ cần bạn trở về bình an, khỏe mạnh và nở nụ cười trọn vẹn.
 
-Nóng giận là bản năng của con người, nhưng kìm nén và chuyển hóa cơn giận mới là đỉnh cao của bản lĩnh. Khi giận dữ, mọi lời nói thốt ra đều mang độc tố làm tổn thương người khác và tự tàn phá chính năng lượng của bạn. Học cách lùi lại một bước, hít một hơi thật sâu để tâm trí lắng xuống trước khi đưa ra bất kỳ quyết định nào.
+Bữa cơm gia đình đơn sơ với bát canh rau đắng đôi khi lại đắt giá hơn vạn yến tiệc sang trọng ngoài kia. Đừng phung phí thời gian và sự kiên nhẫn cho những cuộc vui xã giao vô bổ, để rồi khi quay về nhà lại vô tình buông ra những lời cộc lốc với người yêu thương mình nhất.
 
-Người trí tuệ hiểu rằng giận dữ giống như việc bạn uống chất độc rồi mong chờ người khác ngộ độc. Sự trả thù tốt nhất không phải là ăn miếng trả miếng, mà là sống một cuộc đời thật rực rỡ và bình an. Khi bạn làm chủ được hơi thở và cảm xúc, không ai trên đời này có thể làm tổn thương bạn.
+Tóc cha thêm sợi bạc, lưng mẹ thêm còng theo từng bước trưởng thành của bạn. Thời gian của cha mẹ không chờ đợi sự nghiệp của bạn thành danh. Hãy yêu thương và trân trọng từng phút giây bên gia đình khi còn có thể.
 
-Làm chủ được cảm xúc, bạn mới có thể làm chủ được vận mệnh và gặt hái thành công bền vững. Bớt một chút tranh cãi đúng sai, bạn sẽ bớt đi hàng ngàn phiền lụy trong đời. 
+Gia đình là gốc rễ của mọi hạnh phúc. Giữ gìn ngọn lửa yêu thương trong mái nhà chính là giữ gìn phước báu lớn nhất của đời người.
 
-Nhấn theo dõi kênh để rèn luyện sự bình thản và xây dựng bản lĩnh vững vàng mỗi ngày.`
+Bấm đăng ký kênh để cùng trân trọng những giá trị tình thân thiêng liêng mỗi ngày.`
                 },
-                s4: {
-                    title: `Sự Buông Bỏ Bình Yên`,
-                    text: `Thứ đang thiêu rụi cuộc đời bạn không phải là quá khứ, mà là sự hối tiếc vô ích.
+                v4: {
+                    title: `Cái Giá Của Sự Phản Bội`,
+                    text: `Cái cướp được từ tay người khác, chưa bao giờ là hạnh phúc thực sự.
 
-Những gì đã xảy ra là điều bắt buộc phải xảy ra, dằn dằn bản thân hàng ngàn lần cũng không thể thay đổi được thực tại. Bạn không thể bắt đầu một chương mới nếu cứ mải miết đọc lại những trang sách cũ đầy nước mắt. Buông bỏ không phải là đầu hàng hay yếu đuối, mà là mỉm cười chấp nhận mọi thứ đã hoàn thành sứ mệnh của nó.
+Nhiều kẻ tưởng rằng mình khôn khéo khi dối vợ phản chồng, lén lút vun vén cho thứ tình cảm bất chính ngoài luồng. Họ mê mải trong thứ cảm giác lén lút nhất thời mà quên mất rằng luật nhân quả trong hôn nhân chưa bao giờ bỏ sót một ai. Sự phản bội như một con dao hai lưỡi: hôm nay bạn làm tổn thương người cùng mình đồng cam cộng khổ, thì ngày mai thứ bạn nhận lại sẽ là sự cô đơn và khinh rẻ.
 
-Cuộc sống quá ngắn để mang theo những gánh nặng tổn thương và sự oán hận từ quá khứ. Người làm bạn đau lòng đã bước tiếp từ lâu, sao bạn vẫn tự tay cứa thêm những vết thương vào tâm hồn mình mỗi đêm? Hãy học cách tha thứ cho người khác để cởi bỏ gông xích, và tha thứ cho chính bản thân mình của những năm tháng dại khờ.
+Người thứ ba chen chân vào tổ ấm của người khác, đừng vội vã đắc ý khi cướp được một người đàn ông hay người đàn bà phản bội. Bởi một kẻ đã sẵn sàng bỏ rơi gia đình mình để theo bạn, thì mai này họ cũng sẽ dễ dàng bỏ rơi bạn để chạy theo một bóng hình mới lạ khác.
 
-Mọi cuộc gặp gỡ trong đời đều là vạn sự tùy duyên, người đến mang cho bạn niềm vui, người đi để lại cho bạn bài học. Đừng tiếc nuối những gì không thuộc về mình, bởi vì khi một cánh cửa đóng lại, vũ trụ sẽ mở ra những chân trời mới rộng lớn hơn.
+Tình yêu bất chính được xây dựng trên sự đau khổ của người khác thì cái kết nhận lại sẽ luôn là cay đắng và tổn thương gấp bội. Hôn nhân là sự cam kết và trách nhiệm, gieo mầm dối trá sẽ thu hoạch đắng ngắt.
 
-Trả lại bình yên cho tâm trí, giải thoát cho bản thân và mở lòng đón nhận những điều tuyệt vời đang chờ phía trước. Sự thanh thản trong tâm hồn chính là món quà lớn nhất bạn có thể tự tặng cho chính mình.
+Sống tử tế, giữ trọn đạo nghĩa vợ chồng để đời đời được an nhiên và không thẹn với lòng.
 
-Theo dõi kênh để cùng tìm lại sự bình an và nuôi dưỡng tâm hồn mỗi ngày.`
+Theo dõi kênh để tìm hiểu những bài học nhân quả sâu sắc trong cuộc sống gia đình.`
                 },
-                s5: {
-                    title: `Sự Im Lặng Trưởng Thành`,
-                    text: `Càng trưởng thành, con người ta càng trở nên im lặng.
+                v5: {
+                    title: `Gặp Đúng Người, Đúng Thời Điểm`,
+                    text: `Yêu đúng người là khi bạn không cần phải giả vờ hoàn hảo, vẫn cảm thấy mình được trân trọng và an toàn.
 
-Không phải vì hết lời để nói, mà vì họ nhận ra không phải ai cũng đủ trình độ và trải nghiệm để hiểu được sự trầm mặc của mình. Giải thích với người không cùng tầng tư duy chỉ làm tổn hại đến năng lượng và thời gian quý báu của bạn. Nước sâu thì chảy chậm, người khôn thì nói ít. Khi bạn ngừng tranh luận đúng sai với đời, đó là lúc trí tuệ lên tiếng.
+Thời trẻ, chúng ta thường say mê những lời thề thốt ngọt ngào và những lãng mạn thoáng qua. Nhưng khi trải qua vài lần tổn thương, bạn mới nhận ra: một người đồng hành tuyệt vời không nằm ở vẻ bề ngoài hay những hứa hẹn xa xôi, mà nằm ở sự kiên định, trách nhiệm và cách họ nắm tay bạn qua những ngày sóng gió nhất của cuộc đời.
 
-Sự trưởng thành thật sự bắt đầu khi bạn không còn khao khát chứng tỏ bản thân với bất kỳ ai. Bạn hiểu rằng thị phi và những lời đàm tiếu ngoài kia chỉ là mây khói thoảng qua, còn sự bình yên trong tâm hồn mới là đích đến cuối cùng. Học cách sống khiêm nhường, lặng lẽ làm việc và tận hưởng từng phút giây của cuộc sống.
+Tình yêu trưởng thành không có sự thao túng hay kiểm soát ích kỷ. Đó là sự thấu hiểu từ những điều nhỏ nhặt, là sự tôn trọng khoảng trời riêng của nhau, và là cảm giác bình yên đến lạ mỗi khi ở bên cạnh người ấy. 
 
-Im lặng không phải là chịu đựng hay cam chịu, mà là sự tĩnh lặng của một tâm trí đã trải qua đủ phong ba bão táp. Người im lặng nghe được tiếng nói của nội tâm, nhìn rõ bản chất của sự vật và biết lúc nào nên tiến, lúc nào nên lui.
+Đừng vội vã kết hôn chỉ vì áp lực tuổi tác hay lời giục giã của số đông. Hạnh phúc cả đời không thể đánh đổi bằng sự vội vàng tạm thời. Thà kiên nhẫn chờ đợi người phù hợp còn hơn bước nhầm vào một cuộc hôn nhân lạnh ngắt.
 
-Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho tất cả những câu trả lời thỏa đáng nhất.
+Hãy cứ sống thật rực rỡ, tu dưỡng tâm hồn và hoàn thiện bản thân. Người thuộc về bạn chắc chắn sẽ xuất hiện vào thời điểm đẹp đẽ nhất.
 
-Đón xem các bài học cuộc sống sâu sắc tiếp theo bằng cách bấm nút đăng ký và theo dõi kênh.`
+Nhấn đăng ký kênh để đón nhận thêm nhiều thông điệp ý nghĩa về tình yêu và cuộc sống.`
                 }
             };
 
@@ -4024,6 +4130,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                 let artStyle = document.getElementById("art-style-music").value;
                 let useWatermark = document.getElementById("music-use-watermark").checked;
                 let useSubtitles = document.getElementById("music-use-subtitles").checked;
+                let subtitlePreset = document.getElementById("music-subtitle-preset") ? document.getElementById("music-subtitle-preset").value : "karaoke-green";
                 let useWhisper = document.getElementById("music-use-whisper").checked;
                 let forceRerun = document.getElementById("music-force-rerun") ? document.getElementById("music-force-rerun").checked : false;
                 
@@ -4071,6 +4178,7 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                                 art_style: artStyle,
                                 use_watermark: useWatermark,
                                 use_subtitles: useSubtitles,
+                                subtitle_preset: subtitlePreset,
                                 use_whisper: useWhisper,
                                 force_rerun: forceRerun
                             })
@@ -4087,6 +4195,14 @@ Lặng lẽ tích lũy sức mạnh và tri thức, rồi thời gian sẽ cho t
                     }
                 } catch (e) {
                     alert("Error: " + e);
+                }
+            }
+
+            function toggleSubtitlePresetDisplay(prefix) {
+                let checkEl = document.getElementById(prefix + "-subtitles") || document.getElementById(prefix + "-use-subtitles");
+                let containerEl = document.getElementById(prefix + "-preset-container");
+                if (checkEl && containerEl) {
+                    containerEl.style.display = checkEl.checked ? "flex" : "none";
                 }
             }
 

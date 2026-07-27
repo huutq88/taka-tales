@@ -54,6 +54,8 @@ def migrate_projects_structure(projects_dir: pathlib.Path):
 migrate_projects_structure(AGENT_PROJECTS_DIR)
 
 agent_active_tasks: Dict[str, asyncio.Task] = {}
+agent_queued_jobs: Dict[str, dict] = {}
+pipeline_queue: asyncio.Queue = asyncio.Queue()
 
 async def safe_send_ws(ws, payload: dict):
     if not ws:
@@ -62,6 +64,183 @@ async def safe_send_ws(ws, payload: dict):
         await ws.send(json.dumps(payload))
     except Exception as e:
         print(f"[Agent] Warning: WS send progress skipped ({e})")
+
+def reorder_queue_positions():
+    pos = 1
+    for p_name, q_info in list(agent_queued_jobs.items()):
+        q_info["position"] = pos
+        ws = q_info.get("websocket")
+        if ws:
+            asyncio.create_task(safe_send_ws(ws, {
+                "type": "pipeline_progress",
+                "project_name": p_name,
+                "status": "queued",
+                "queue_position": pos,
+                "total_queued": len(agent_queued_jobs)
+            }))
+        pos += 1
+
+def remove_from_queue_and_active(story_id: str, chapter_id: str = None):
+    def is_matching(k: str) -> bool:
+        if chapter_id and chapter_id != "story":
+            return k in (f"{story_id}_{chapter_id}", f"{story_id}/{chapter_id}", chapter_id)
+        return k == story_id or k.startswith(f"{story_id}_") or k.startswith(f"{story_id}/")
+
+    # 1. Cancel active running task if matching
+    active_keys = [k for k in list(agent_active_tasks.keys()) if is_matching(k)]
+    for k in active_keys:
+        t = agent_active_tasks.get(k)
+        if t and not t.done():
+            print(f"[Queue Manager] Cancelling running task for deleted project: {k}")
+            t.cancel()
+        agent_active_tasks.pop(k, None)
+
+    # 2. Remove from queued jobs dictionary
+    queued_keys = [k for k in list(agent_queued_jobs.keys()) if is_matching(k)]
+    for k in queued_keys:
+        print(f"[Queue Manager] Removing deleted project '{k}' from queue.")
+        agent_queued_jobs.pop(k, None)
+
+    # 3. Recalculate queue positions for all remaining queued items
+    reorder_queue_positions()
+    
+    # 4. If agent has no active tasks, trigger next queued job
+    if not agent_active_tasks:
+        asyncio.create_task(process_next_queued_job())
+
+async def enqueue_or_run_job(
+    project_name: str,
+    project_path_str: str,
+    websocket,
+    voice_config: dict = None,
+    art_style: str = None,
+    use_watermark: bool = True,
+    use_waveform: bool = True,
+    use_subtitles: bool = True,
+    subtitle_preset: str = "viral-bold-yellow",
+    use_whisper: bool = False,
+    story_text: str = None,
+    force_rerun: bool = False,
+    effect_type: str = "leaves",
+    pipeline_type: str = "story",
+    music_b64: str = None,
+    music_filename: str = None,
+    music_local_path: str = None
+):
+    payload = {
+        "project_name": project_name,
+        "project_path": project_path_str,
+        "voice_config": voice_config,
+        "art_style": art_style,
+        "use_watermark": use_watermark,
+        "use_waveform": use_waveform,
+        "use_subtitles": use_subtitles,
+        "subtitle_preset": subtitle_preset,
+        "use_whisper": use_whisper,
+        "story_text": story_text,
+        "force_rerun": force_rerun,
+        "effect_type": effect_type,
+        "pipeline_type": pipeline_type,
+        "music_b64": music_b64,
+        "music_filename": music_filename,
+        "music_local_path": music_local_path
+    }
+    
+    if agent_active_tasks or not pipeline_queue.empty():
+        q_pos = len(agent_queued_jobs) + 1
+        agent_queued_jobs[project_name] = {
+            "position": q_pos,
+            "status": "queued",
+            "websocket": websocket,
+            "payload": payload
+        }
+        await pipeline_queue.put({
+            "project_name": project_name,
+            "websocket": websocket,
+            "payload": payload,
+            "pipeline_type": pipeline_type
+        })
+        print(f"[Queue Manager] Queued project '{project_name}' at position #{q_pos}. Active tasks: {len(agent_active_tasks)}")
+        await safe_send_ws(websocket, {
+            "type": "pipeline_progress",
+            "project_name": project_name,
+            "status": "queued",
+            "queue_position": q_pos,
+            "total_queued": len(agent_queued_jobs),
+            "message": f"Dự án đã được xếp vào hàng đợi ở vị trí #{q_pos}"
+        })
+        return {"status": "queued", "queue_position": q_pos}
+    else:
+        print(f"[Queue Manager] Agent free. Starting execution immediately for '{project_name}'.")
+        if pipeline_type == "music":
+            t = asyncio.create_task(run_music_pipeline_task(
+                project_name, project_path_str, websocket, voice_config, art_style,
+                use_watermark, use_subtitles, subtitle_preset, use_whisper,
+                music_b64, music_filename, music_local_path, force_rerun
+            ))
+            agent_active_tasks[project_name] = t
+        else:
+            t = asyncio.create_task(run_pipeline_task(
+                project_name, project_path_str, websocket, voice_config, art_style,
+                use_watermark=use_watermark, use_waveform=use_waveform,
+                use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
+                story_text=story_text, force_rerun=force_rerun, effect_type=effect_type
+            ))
+            agent_active_tasks[project_name] = t
+        return {"status": "running"}
+
+async def process_next_queued_job():
+    if agent_active_tasks:
+        return
+    while not pipeline_queue.empty():
+        try:
+            job = await pipeline_queue.get()
+            project_name = job["project_name"]
+            
+            # Skip if job was removed/deleted from queue
+            if project_name not in agent_queued_jobs:
+                print(f"[Queue Manager] Job '{project_name}' was deleted or removed. Skipping queue item.")
+                continue
+
+            websocket = job["websocket"]
+            payload = job["payload"]
+            pipeline_type = job.get("pipeline_type", "story")
+            
+            agent_queued_jobs.pop(project_name, None)
+            reorder_queue_positions()
+
+            print(f"[Queue Manager] Popped job '{project_name}' from queue. Starting execution...")
+
+            if pipeline_type == "music":
+                music_b64 = payload.get("music_b64")
+                music_filename = payload.get("music_filename")
+                music_local_path = payload.get("music_local_path")
+                t = asyncio.create_task(run_music_pipeline_task(
+                    project_name, payload.get("project_path"), websocket,
+                    payload.get("voice_config"), payload.get("art_style"),
+                    payload.get("use_watermark", True), payload.get("use_subtitles", True),
+                    payload.get("subtitle_preset", "karaoke-green"), payload.get("use_whisper", False),
+                    music_b64, music_filename, music_local_path, payload.get("force_rerun", False)
+                ))
+                agent_active_tasks[project_name] = t
+            else:
+                story_text = payload.get("story_text")
+                effect_type = payload.get("effect_type", "leaves")
+                t = asyncio.create_task(run_pipeline_task(
+                    project_name, payload.get("project_path"), websocket,
+                    payload.get("voice_config"), payload.get("art_style"),
+                    use_watermark=payload.get("use_watermark", True),
+                    use_waveform=payload.get("use_waveform", True),
+                    use_subtitles=payload.get("use_subtitles", True),
+                    subtitle_preset=payload.get("subtitle_preset", "viral-bold-yellow"),
+                    story_text=story_text,
+                    force_rerun=payload.get("force_rerun", False),
+                    effect_type=effect_type
+                ))
+                agent_active_tasks[project_name] = t
+            break
+        except Exception as e:
+            print(f"[Queue Manager] Error processing next queued job: {e}")
 
 # Load config
 _CONFIG_PATH = AGENT_DIR / "config.ini"
@@ -393,7 +572,7 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         finally:
             video_engine.VOICE = orig_voice
 
-async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_waveform: bool = True, use_subtitles: bool = True, story_text: str = None, force_rerun: bool = False, effect_type: str = "leaves"):
+async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_waveform: bool = True, use_subtitles: bool = True, subtitle_preset: str = "viral-bold-yellow", story_text: str = None, force_rerun: bool = False, effect_type: str = "leaves"):
     """Executes the full Taka-Tales pipeline and reports progress in real time."""
     try:
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
@@ -428,6 +607,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             "use_watermark": use_watermark,
             "use_waveform": use_waveform,
             "use_subtitles": use_subtitles,
+            "subtitle_preset": subtitle_preset,
             "use_whisper": False,
             "effect_type": effect_type
         }
@@ -624,9 +804,10 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             print(f"[Agent] Failed to send error status: {send_err}")
     finally:
         agent_active_tasks.pop(project_name, None)
+        asyncio.create_task(process_next_queued_job())
 
 
-async def run_music_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = False, use_subtitles: bool = False, use_whisper: bool = False, music_b64: str = None, music_filename: str = None, music_local_path: str = None, force_rerun: bool = False):
+async def run_music_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = False, use_subtitles: bool = False, subtitle_preset: str = "karaoke-green", use_whisper: bool = False, music_b64: str = None, music_filename: str = None, music_local_path: str = None, force_rerun: bool = False):
     """Executes the music-to-video pipeline by transcribing audio and generating images/subtitles."""
     try:
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
@@ -669,6 +850,7 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
         config_data = {
             "use_watermark": use_watermark,
             "use_subtitles": use_subtitles,
+            "subtitle_preset": subtitle_preset,
             "use_whisper": use_whisper
         }
         with open(project_dir / "project_config.json", "w", encoding="utf-8") as f:
@@ -942,6 +1124,7 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
             print(f"[Agent] Failed to send error status: {send_err}")
     finally:
         agent_active_tasks.pop(project_name, None)
+        asyncio.create_task(process_next_queued_job())
 
 
 def start_local_media_server():
@@ -1122,21 +1305,24 @@ async def main():
                         use_watermark = payload.get("use_watermark", True)
                         use_waveform = payload.get("use_waveform", True)
                         use_subtitles = payload.get("use_subtitles", True)
+                        subtitle_preset = payload.get("subtitle_preset", "viral-bold-yellow")
                         use_whisper = payload.get("use_whisper", False)
                         force_rerun = payload.get("force_rerun", False)
                         
-                        # Process project asynchronously in the background
-                        if pipeline_type == "music":
-                            music_b64 = payload.get("music_b64")
-                            music_filename = payload.get("music_filename")
-                            music_local_path = payload.get("music_local_path")
-                            t = asyncio.create_task(run_music_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark, use_subtitles, use_whisper, music_b64, music_filename, music_local_path, force_rerun))
-                            agent_active_tasks[project_name] = t
-                        else:
-                            story_text = payload.get("story_text")
-                            effect_type = payload.get("effect_type", "leaves")
-                            t = asyncio.create_task(run_pipeline_task(project_name, project_path_str, websocket, voice_config, art_style, use_watermark=use_watermark, use_waveform=use_waveform, use_subtitles=use_subtitles, story_text=story_text, force_rerun=force_rerun, effect_type=effect_type))
-                            agent_active_tasks[project_name] = t
+                        story_text = payload.get("story_text")
+                        effect_type = payload.get("effect_type", "leaves")
+                        music_b64 = payload.get("music_b64")
+                        music_filename = payload.get("music_filename")
+                        music_local_path = payload.get("music_local_path")
+
+                        await enqueue_or_run_job(
+                            project_name, project_path_str, websocket, voice_config, art_style,
+                            use_watermark=use_watermark, use_waveform=use_waveform,
+                            use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
+                            use_whisper=use_whisper, story_text=story_text, force_rerun=force_rerun,
+                            effect_type=effect_type, pipeline_type=pipeline_type,
+                            music_b64=music_b64, music_filename=music_filename, music_local_path=music_local_path
+                        )
                     elif msg_type == "delete_project_request":
                         request_id = message.get("request_id")
                         story_id = payload.get("story_id", "").strip()
@@ -1147,15 +1333,8 @@ async def main():
                             search_patterns.append(f"{story_id}/{chapter_id}")
                             search_patterns.append(f"{story_id}_{chapter_id}")
 
-                        # 1. Cancel running pipeline task if any
-                        to_cancel = [k for k in agent_active_tasks.keys() if any(k == p or k.startswith(f"{p}/") or k.startswith(f"{p}_") for p in search_patterns)]
-                        for k in to_cancel:
-                            t = agent_active_tasks.get(k)
-                            if t and not t.done():
-                                print(f"[Agent] Stopping running pipeline task for project: {k}")
-                                t.cancel()
-                            agent_active_tasks.pop(k, None)
-
+                        remove_from_queue_and_active(story_id, chapter_id)
+                        
                         # Clear running jobs state
                         job_keys = [k for k in agent_running_jobs.keys() if any(k == p or k.startswith(f"{p}/") or k.startswith(f"{p}_") for p in search_patterns)]
                         for k in job_keys:
@@ -1188,6 +1367,24 @@ async def main():
                             "type": "delete_project_response",
                             "request_id": request_id,
                             "payload": {"ok": True, "story_id": story_id, "chapter_id": chapter_id}
+                        }))
+                    elif msg_type == "cancel_all_jobs_request":
+                        request_id = message.get("request_id")
+                        for k, t in list(agent_active_tasks.items()):
+                            if t and not t.done():
+                                print(f"[Agent] Cancelling active task: {k}")
+                                t.cancel()
+                        agent_active_tasks.clear()
+                        agent_queued_jobs.clear()
+                        while not pipeline_queue.empty():
+                            try:
+                                pipeline_queue.get_nowait()
+                            except Exception:
+                                break
+                        await websocket.send(json.dumps({
+                            "type": "cancel_all_jobs_response",
+                            "request_id": request_id,
+                            "payload": {"ok": True}
                         }))
                     elif msg_type == "select_file_request":
                         request_id = message.get("request_id")
@@ -1259,13 +1456,24 @@ async def main():
                                 if count > max_frags:
                                     max_frags = count
                                     
-                        job_info = agent_running_jobs.get(f"{story_id}_{chapter_id}") or agent_running_jobs.get(f"{story_id}/{chapter_id}") or agent_running_jobs.get(story_id)
+                        proj_key_1 = f"{story_id}_{chapter_id}"
+                        proj_key_2 = f"{story_id}/{chapter_id}"
+                        
+                        queued_info = agent_queued_jobs.get(proj_key_1) or agent_queued_jobs.get(proj_key_2) or agent_queued_jobs.get(chapter_id)
+                        job_info = agent_running_jobs.get(proj_key_1) or agent_running_jobs.get(proj_key_2) or agent_running_jobs.get(story_id)
+                        
                         current_status = "completed" if has_video else "idle"
-                        if job_info and job_info.get("status") not in ("completed", "failed", "idle", None):
+                        queue_pos = 0
+                        if queued_info:
+                            current_status = "queued"
+                            queue_pos = queued_info.get("position", 1)
+                        elif job_info and job_info.get("status") not in ("completed", "failed", "idle", None):
                             current_status = job_info.get("status")
 
                         status_res = {
                             "status": current_status,
+                            "queue_position": queue_pos,
+                            "total_queued": len(agent_queued_jobs),
                             "total_fragments": job_info.get("total_fragments", max_frags) if job_info else max_frags,
                             "current_fragment": job_info.get("current_fragment", max_frags if has_video else 0) if job_info else (max_frags if has_video else 0),
                             "has_video": has_video

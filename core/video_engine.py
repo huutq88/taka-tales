@@ -305,34 +305,74 @@ def _keywords_fallback(fragment: str) -> str:
     return image_prompt
     
 
+VIETNAMESE_CONCEPT_MAP: Dict[str, str] = {
+    "túi tiền": "an ornate vintage leather coin pouch resting on an ancient carved wooden desk in a quiet study",
+    "tài chính": "golden ancient coins spread on an aged wooden table beside an old inkwell",
+    "tâm hồn": "a serene scholar meditating peacefully beside a tranquil lotus pond with floating petals",
+    "bản lĩnh": "a solitary figure standing firm on a cliff overlooking a misty valley during sunrise",
+    "cơn giận": "dark storm clouds gathering over a mountain ridge with wild wind",
+    "buông bỏ": "gentle autumn leaves drifting down on an ancient mossy stone path leading to a pagoda",
+    "quá khứ": "an old hand-drawn scroll unrolled on a wooden table beside a burning incense burner",
+    "nhìn thấu": "an elderly wise scholar gazing quietly into a clear still water reflection",
+    "lòng người": "a quiet traditional tea set placed on a bamboo table near a sunlit window",
+    "im lặng": "a peaceful bamboo grove shrouded in soft morning mist with sunbeams filtering through",
+    "trưởng thành": "a tall majestic pine tree standing resiliently against mountain breezes",
+    "nội tâm": "a candle flame burning softly in a quiet room, serene peaceful atmosphere",
+    "bản chất": "a calm clear stream flowing over smooth polished stones in a forest",
+    "bình yên": "a sleepy Vietnamese countryside village at dusk with soft glowing lanterns",
+    "trí tuệ": "an old sage writing calligraphy on Xuan paper with a traditional brush",
+    "học hỏi": "an ancient open book resting beside an oil lamp in a traditional library",
+    "thành công": "a sunburst breaking through clouds above a high mountain peak",
+    "thất bại": "falling rain drops on a calm lake surface, reflective mood",
+    "gia đình": "a cozy traditional Vietnamese wooden house surrounded by green gardens",
+    "bạn bè": "two travelers sipping tea under an old banyan tree in a tranquil courtyard"
+}
+
+
+def _smart_vietnamese_prompt(fragment: str) -> str:
+    frag_lower = fragment.lower()
+    for kw, visual in VIETNAMESE_CONCEPT_MAP.items():
+        if kw in frag_lower:
+            return visual
+    
+    # Try KeyBERT if available, else extract meaningful Vietnamese words
+    try:
+        kw = _keywords_fallback(fragment)
+        if kw and len(kw) > 3 and not any(x in kw.lower() for x in ("không", "là", "của", "với")):
+            return f"a traditional Vietnamese visual scene depicting {kw}"
+    except Exception:
+        pass
+        
+    return "a peaceful traditional Vietnamese landscape with misty mountains, bamboo trees, and a calm river"
+
+
 def build_image_prompt(fragment: str, art_style: str = None) -> str:
     style_suffix = ART_STYLES.get(art_style, POSITIVE_SUFFIX) if art_style else POSITIVE_SUFFIX
     color_rule = ""
     if art_style == "thuy_mac_blackwhite":
         color_rule = " CRITICAL: The image MUST be strict monochrome black and white ink wash brush drawing (sumi-e style). DO NOT mention any colors (such as warm, red, blue, green, yellow, watercolor)."
     prompt_instruction = (
-        "You are an expert prompt writer for Stable-Diffusion-XL. "
+        "Translate the specific visual subject, object, and scene of the following Vietnamese sentence into a vivid single-sentence English image prompt for Stable Diffusion. "
         f"Style context: {style_suffix}.{color_rule} "
-        "Describe the scene in a single sentence, max 20 words. "
-        "Do NOT include any explanations or quotes. "
-        "CRITICAL: The output prompt must be in English. Do NOT use any Vietnamese or Chinese characters in the prompt. "
-        "Do NOT include any text, words, or letters on the image itself. "
-        "Force a rich, traditional Vietnamese context by using keywords like 'non la' (conical hat), 'ao dai', 'bamboo trees', 'rustic Vietnamese village scenery', or 'misty Vietnamese countryside' where appropriate to describe the visual scene."
+        "Describe the SPECIFIC OBJECT, PERSON, or ACTION in the text. Max 20 words. "
+        "Do NOT include any text, words, or letters on the image. Output ONLY the English prompt."
     )
 
+    prompt = ""
     if IMAGE_PROMPT_PROVIDER == "chatgpt":
         try:
-            response = openai.Completion.create(
-                engine="text-davinci-003",
-                prompt=f"{prompt_instruction}\n{fragment}",
-                max_tokens=40,
-                temperature=0.9,
-            )
-            prompt = response.choices[0].text.strip()
-                
+            api_key = os.environ.get("OPENAI_TOKEN") or os.environ.get("OPENAI_API_KEY")
+            if api_key:
+                from openai import OpenAI
+                client = OpenAI(api_key=api_key)
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": f"{prompt_instruction}\n{fragment}"}],
+                    max_tokens=50
+                )
+                prompt = response.choices[0].message.content.strip()
         except Exception as e:
-            _log(f"ChatGPT failed: {e}. Using KeyBERT fallback.")
-            prompt = _keywords_fallback(fragment)
+            _log(f"ChatGPT API failed: {e}. Using Smart Concept Fallback.")
 
     elif IMAGE_PROMPT_PROVIDER == "ollama":
         try:
@@ -342,16 +382,11 @@ def build_image_prompt(fragment: str, art_style: str = None) -> str:
             )
             prompt = resp["message"]["content"].strip()
             _log(prompt)
-                
         except Exception as e:
-            _log(f"Ollama failed: {e}. Using KeyBERT fallback.")
-            prompt = _keywords_fallback(fragment)
+            _log(f"Ollama failed: {e}. Using Smart Concept Fallback.")
 
-    else:
-        prompt = _keywords_fallback(fragment)
-
-    if any(x in prompt.lower() for x in ("i cannot", "?")):
-        prompt = _keywords_fallback(fragment)
+    if not prompt or any(x in prompt.lower() for x in ("i cannot", "?", "failed")):
+        prompt = _smart_vietnamese_prompt(fragment)
 
     if CHAR_DESC:
         prompt = _find_characters(fragment) + prompt
@@ -1008,7 +1043,9 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
             font_path = possible_font
             break
 
-    subtitles = split_text_to_subtitles(_read_text(frag_path)) if use_subtitles else []
+    # Subtitles are now handled 100% by modern Subtitle Engine (subtitle_engine) on final concatenated video.
+    # Legacy MoviePy subtitle overlay in fragment video creation is disabled to prevent double subtitle overlays.
+    subtitles = []
     sub_word_counts = [len(sub.split()) for sub in subtitles]
     total_words = sum(sub_word_counts)
     total_duration = audio_clip.duration
@@ -1243,11 +1280,13 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
     # Check if subtitle engine burn is enabled in project_config.json
     config_file = project_dir / "project_config.json"
     use_sub = True
+    preset_id = "viral-bold-yellow"
     if config_file.exists():
         try:
             with open(config_file, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
                 use_sub = cfg.get("use_subtitles", True)
+                preset_id = cfg.get("subtitle_preset", "viral-bold-yellow")
         except Exception:
             pass
 
@@ -1256,13 +1295,182 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
             from subtitle_engine.processor import SubtitleProcessor
             story_file = project_dir / "story.txt"
             story_text = story_file.read_text(encoding="utf-8") if story_file.exists() else None
-            sp = SubtitleProcessor(preset_path_or_id="viral-bold-yellow")
+            sp = SubtitleProcessor(preset_path_or_id=preset_id)
             temp_out = project_dir / f"{project_name}_subtitled.mp4"
             sp.burn_subtitles_to_video(input_video_path=out, output_video_path=temp_out, transcript=story_text)
             if temp_out.exists():
                 shutil.move(str(temp_out), str(out))
         except Exception as err:
             print(f"[VideoEngine] Subtitle Engine burn notice: {err}")
+
+    # Generate Thumbnail Cover Image & Embed Metadata + Cover Art into MP4
+    generate_thumbnail_and_embed_metadata(project_dir, project_name)
+
+
+def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_name: str) -> None:
+    """Generates a high-quality video cover thumbnail and embeds metadata + cover art into the final MP4 file."""
+    try:
+        from PIL import Image as PILImage, ImageDraw, ImageFont as PILFont
+        import subprocess
+
+        video_path = project_dir / f"{project_name}.mp4"
+        if not video_path.exists():
+            return
+
+        # 1. Pick base image
+        img_candidates = list((project_dir / "images").glob("*.jpg")) + list((project_dir / "images").glob("*.png"))
+        if not img_candidates:
+            return
+        
+        base_img_path = sorted(img_candidates)[0]
+        base_img = PILImage.open(base_img_path).convert("RGBA").resize((IMAGE_WIDTH, IMAGE_HEIGHT), PILImage.Resampling.LANCZOS)
+        
+        # 2. Add full-canvas dark gradient overlay
+        overlay = PILImage.new("RGBA", (IMAGE_WIDTH, IMAGE_HEIGHT), (0, 0, 0, 0))
+        draw_ov = ImageDraw.Draw(overlay)
+        for y in range(IMAGE_HEIGHT):
+            alpha = int(130 + (y / IMAGE_HEIGHT) * 50)
+            draw_ov.line([(0, y), (IMAGE_WIDTH, y)], fill=(0, 0, 0, alpha))
+            
+        thumb_img = PILImage.alpha_composite(base_img, overlay).convert("RGB")
+        draw = ImageDraw.Draw(thumb_img)
+
+        # 3. Typography & Styling (Option A - Serif Georgia)
+        title_text = project_name.replace("dao_ly_", "").replace("dao-ly-", "").replace("_", " ").strip().title()
+        
+        ep_match = re.search(r"(\d+)", title_text)
+        ep_num = f"#{int(ep_match.group(1)):02d}" if ep_match else "#01"
+        
+        clean_title = re.sub(r"^\d+\s*", "", title_text).upper()
+        if len(clean_title) > 35:
+            clean_title = clean_title[:35] + "..."
+
+        # Extract dynamic quote & infer topic_tag from title and story.txt
+        quote_text = ""
+        story_content = ""
+        story_file = project_dir / "story.txt"
+        if story_file.exists():
+            try:
+                story_content = story_file.read_text(encoding="utf-8").strip()
+                story_lines = [l.strip() for l in story_content.splitlines() if l.strip()]
+                for line in story_lines:
+                    if not quote_text and not line.startswith("#"):
+                        first_sent = re.split(r"[.!?]", line)[0].strip()
+                        first_sent = re.sub(r'^[“"\'”]+', '', first_sent).strip()
+                        if len(first_sent) > 42:
+                            first_sent = first_sent[:42] + "..."
+                        if first_sent:
+                            quote_text = f"“{first_sent}”"
+                            break
+            except Exception:
+                pass
+                
+        if not quote_text:
+            quote_text = "“Nhìn người nhìn mặt, chớ nhìn nụ cười”"
+
+        # Topic Inference Logic for Tag Badge (Dòng 1)
+        combined_text = (clean_title + " " + story_content).lower()
+        if any(k in combined_text for k in ["phản bội", "ngoại tình", "vợ", "chồng", "gia đình", "con cái", "kẻ thứ ba", "đào hoa"]):
+            topic_tag = "NGOẠI TÌNH & GIA ĐÌNH"
+        elif any(k in combined_text for k in ["bạn", "kẻ thù", "tiểu nhân", "thị phi", "ứng xử", "giao tiếp", "nói dối", "đố đố", "gièm pha"]):
+            topic_tag = "TRIẾT LÝ ỨNG XỬ"
+        elif any(k in combined_text for k in ["buông", "tĩnh tâm", "bình yên", "an nhiên", "tha thứ", "chữa lành", "mưa rào"]):
+            topic_tag = "TĨNH TÂM & BÌNH YÊN"
+        elif any(k in combined_text for k in ["tình yêu", "người yêu", "yêu thương", "tình cảm", "say nắng", "ngã lòng"]):
+            topic_tag = "TÌNH YÊU & HẠNH PHÚC"
+        elif any(k in combined_text for k in ["tiền", "tài chính", "nghèo", "giàu", "sự nghiệp", "thành công"]):
+            topic_tag = "BÀI HỌC THÀNH CÔNG"
+        else:
+            topic_tag = "ĐẠO LÝ NHÂN SINH"
+
+        font_path_title = "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
+        font_path_sub = "/System/Library/Fonts/Supplemental/Georgia.ttf"
+        font_path_tag = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+        
+        try:
+            pil_font_title = PILFont.truetype(font_path_title, int(0.038 * IMAGE_HEIGHT))
+            pil_font_sub = PILFont.truetype(font_path_sub, int(0.020 * IMAGE_HEIGHT))
+            pil_font_tag = PILFont.truetype(font_path_tag, int(0.017 * IMAGE_HEIGHT))
+        except Exception:
+            pil_font_title = PILFont.load_default()
+            pil_font_sub = pil_font_title
+            pil_font_tag = pil_font_title
+
+        # Draw Pill Badge Tag: #01 • ĐẠO LÝ NHÂN SINH
+        tag_text = f"  {ep_num} • {topic_tag}  "
+        tag_bbox = draw.textbbox((0, 0), tag_text, font=pil_font_tag)
+        tag_w = tag_bbox[2] - tag_bbox[0]
+        tag_h = tag_bbox[3] - tag_bbox[1]
+        tag_x = (IMAGE_WIDTH - tag_w) // 2
+        tag_y = int(IMAGE_HEIGHT * 0.28)
+
+        draw.rounded_rectangle([tag_x - 15, tag_y - 10, tag_x + tag_w + 15, tag_y + tag_h + 10], radius=20, fill=(245, 158, 11, 235))
+        draw.text((tag_x, tag_y), tag_text, font=pil_font_tag, fill=(15, 23, 42))
+
+        # Wrap title lines
+        max_w = int(0.80 * IMAGE_WIDTH)
+        words = clean_title.split()
+        lines, curr = [], []
+        for w in words:
+            bbox = draw.textbbox((0, 0), " ".join(curr + [w]), font=pil_font_title)
+            if bbox[2] - bbox[0] <= max_w:
+                curr.append(w)
+            else:
+                if curr: lines.append(" ".join(curr))
+                curr = [w]
+        if curr: lines.append(" ".join(curr))
+
+        curr_y = int(IMAGE_HEIGHT * 0.35)
+        stroke_w = max(4, int(0.004 * IMAGE_HEIGHT))
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=pil_font_title)
+            lw = bbox[2] - bbox[0]
+            lh = bbox[3] - bbox[1]
+            lx = (IMAGE_WIDTH - lw) // 2
+            
+            draw.text((lx, curr_y), line, font=pil_font_title, fill=(248, 250, 252), stroke_width=stroke_w, stroke_fill=(15, 23, 42))
+            curr_y += lh + 22
+
+        # Draw Subtitle Quote
+        quote_text = "“Nhìn người nhìn mặt, chớ nhìn nụ cười”"
+        q_bbox = draw.textbbox((0, 0), quote_text, font=pil_font_sub)
+        qx = (IMAGE_WIDTH - (q_bbox[2] - q_bbox[0])) // 2
+        draw.text((qx, curr_y + 30), quote_text, font=pil_font_sub, fill=(245, 158, 11), stroke_width=2, stroke_fill=(0, 0, 0))
+
+        thumb_jpg = project_dir / "thumbnail.jpg"
+        thumb_img.save(thumb_jpg, "JPEG", quality=95)
+        print(f"[VideoEngine] Saved thumbnail cover image at {thumb_jpg}")
+
+        # 4. Embed Metadata + Cover Art Image into MP4 via FFmpeg
+        meta_title = clean_title
+        meta_artist = "@daoly.giaitri"
+        meta_comment = "#daoly #trietly #nhansinh #thuctinh #cuocsong #daolygiaitri"
+        meta_copyright = "© 2026 Đạo Lý Giải Trí"
+        meta_encoder = "Media Engine v1.0"
+        
+        tagged_mp4 = project_dir / f"{project_name}_tagged.mp4"
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-i", str(thumb_jpg),
+            "-map", "0",
+            "-map", "1",
+            "-c", "copy",
+            "-disposition:v:1", "attached_pic",
+            "-metadata", f"title={meta_title}",
+            "-metadata", f"artist={meta_artist}",
+            "-metadata", f"comment={meta_comment}",
+            "-metadata", f"copyright={meta_copyright}",
+            "-metadata", f"encoder={meta_encoder}",
+            str(tagged_mp4)
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode == 0 and tagged_mp4.exists() and tagged_mp4.stat().st_size > 0:
+            shutil.move(str(tagged_mp4), str(video_path))
+            print(f"[VideoEngine] Successfully embedded Metadata & Thumbnail Cover Art into {video_path}")
+
+    except Exception as e:
+        print(f"[VideoEngine] Warning: Metadata & Thumbnail embedding failed: {e}")
 
 
 def transcribe_audio_file(audio_path: pathlib.Path) -> List[Dict[str, any]]:
