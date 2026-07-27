@@ -3010,6 +3010,24 @@ async def dashboard():
 
             async function updateAgentStatus() {
                 try {
+                    // Auto-detect local machine agent via localhost HTTP endpoint (port 8766)
+                    try {
+                        let controller = new AbortController();
+                        let timeoutId = setTimeout(() => controller.abort(), 800);
+                        let localRes = await fetch("http://127.0.0.1:8766/v1/local/info", { signal: controller.signal });
+                        clearTimeout(timeoutId);
+                        if (localRes.ok) {
+                            let localInfo = await localRes.json();
+                            if (localInfo && localInfo.workspace_id) {
+                                let curWs = localStorage.getItem("taka_workspace_id");
+                                if (curWs !== localInfo.workspace_id) {
+                                    localStorage.setItem("taka_workspace_id", localInfo.workspace_id);
+                                    if (typeof loadProjects === "function") loadProjects();
+                                }
+                            }
+                        }
+                    } catch(e) {}
+
                     let res = await fetch("/v1/agent/status?_t=" + Date.now());
                     let data = await res.json();
                     let badge = document.getElementById("agent-badge");

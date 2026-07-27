@@ -1211,6 +1211,18 @@ def start_local_media_server():
             return str(filepath)
 
         def do_GET(self):
+            if self.path.startswith("/v1/local/info") or self.path == "/v1/local/info":
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                info = {
+                    "workspace_id": WORKSPACE_ID,
+                    "agent_version": "0.4.1"
+                }
+                self.wfile.write(json.dumps(info).encode("utf-8"))
+                return
+
             path = self.translate_path(self.path)
             fpath = pathlib.Path(path)
             if not fpath.exists() or not fpath.is_file():
