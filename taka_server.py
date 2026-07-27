@@ -3012,7 +3012,7 @@ async def dashboard():
                 const musicFile = document.getElementById('music-file');
                 if (musicFile) {
                     musicFile.addEventListener('change', function(e) {
-                        if (e.target.files.length > 0) {
+                        if (e && e.target && e.target.files && e.target.files.length > 0) {
                             document.getElementById('music-path').value = "Staged Upload: " + e.target.files[0].name;
                         }
                     });
@@ -3020,7 +3020,7 @@ async def dashboard():
                 const voiceFile = document.getElementById('new-voice-file-page');
                 if (voiceFile) {
                     voiceFile.addEventListener('change', function(e) {
-                        if (e.target.files.length > 0) {
+                        if (e && e.target && e.target.files && e.target.files.length > 0) {
                             document.getElementById('new-voice-path-page').value = "Staged Upload: " + e.target.files[0].name;
                         }
                     });
@@ -3185,7 +3185,7 @@ async def dashboard():
                     let list = document.getElementById("project-list");
                     list.innerHTML = "";
                     
-                    if (stories.length === 0) {
+                    if (!Array.isArray(stories) || stories.length === 0) {
                         list.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem; padding: 1rem;">No stories loaded yet. Click '+' to load one.</p>`;
                         return;
                     }
@@ -3210,7 +3210,8 @@ async def dashboard():
                         let chList = document.createElement("div");
                         chList.className = "chapter-list";
                         
-                        s.chapters.forEach(c => {
+                        let chapters = Array.isArray(s.chapters) ? s.chapters : [];
+                        chapters.forEach(c => {
                             let targetStoryId = c.story_id || s.story_id;
                             let displayTitle = c.title;
                             if (s.story_id !== "music" && s.story_id !== "dao-ly" && s.story_id !== "dao_ly") {
@@ -3257,7 +3258,7 @@ async def dashboard():
                             chList.appendChild(item);
                         });
                         
-                        if (s.chapters.length === 0) {
+                        if (chapters.length === 0) {
                             chList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.8rem; padding-left: 0.5rem;">No chapters found</p>`;
                         }
                         
@@ -3846,7 +3847,8 @@ async def dashboard():
 
                     // Dynamic fragments
                     let grid = document.getElementById("fragments-grid");
-                    let buildCards = (grid.children.length !== total);
+                    if (!grid) return;
+                    let buildCards = (!grid.children || grid.children.length !== total);
                     if (buildCards) {
                         grid.innerHTML = "";
                     }
