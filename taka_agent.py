@@ -300,37 +300,45 @@ ws_url = f"{ws_base}/v1/system/agent/ws?workspace_id={WORKSPACE_ID}"
 
 active_websocket = None
 
+_env_cache = None
+
 async def check_environment() -> dict:
-    """Check availability of local CUDA/MPS, Ollama, and OmniVoice setup."""
-    # 1. Check PyTorch CUDA / MPS
-    cuda_available = False
-    mps_available = False
-    try:
-        import torch
-        cuda_available = torch.cuda.is_available()
-        mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-    except ImportError:
-        pass
+    """Check availability of local CUDA/MPS, Ollama, and OmniVoice setup non-blockingly."""
+    global _env_cache
+    if _env_cache:
+        return _env_cache
 
-    # 2. Check local Ollama
-    ollama_active = False
-    try:
-        res = requests.get("http://localhost:11434/api/tags", timeout=1.0)
-        if res.status_code == 200:
-            ollama_active = True
-    except Exception:
-        pass
+    def _do_check():
+        cuda_available = False
+        mps_available = False
+        try:
+            import torch
+            cuda_available = torch.cuda.is_available()
+            mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        except Exception:
+            pass
 
-    # 3. Check OmniVoice directory & entrypoints
-    omnivoice_installed = OMNIVOICE_PATH.exists() and (OMNIVOICE_PATH / "pyproject.toml").exists()
+        ollama_active = False
+        try:
+            res = requests.get("http://localhost:11434/api/tags", timeout=1.0)
+            if res.status_code == 200:
+                ollama_active = True
+        except Exception:
+            pass
 
-    return {
-        "cuda_available": cuda_available,
-        "mps_available": mps_available,
-        "ollama_active": ollama_active,
-        "omnivoice_installed": omnivoice_installed,
-        "agent_version": "0.4.0"
-    }
+        omnivoice_installed = OMNIVOICE_PATH.exists() and (OMNIVOICE_PATH / "pyproject.toml").exists()
+
+        return {
+            "cuda_available": cuda_available,
+            "mps_available": mps_available,
+            "ollama_active": ollama_active,
+            "omnivoice_installed": omnivoice_installed,
+            "agent_version": "0.4.0"
+        }
+
+    res = await asyncio.to_thread(_do_check)
+    _env_cache = res
+    return res
 
 def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
     if not voice_dir or not voice_dir.exists():

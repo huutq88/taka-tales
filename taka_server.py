@@ -968,7 +968,7 @@ async def list_projects(request: Request):
     
     agent_ws = agents_by_workspace.get(ws_id)
     if agent_ws:
-        res = await tunnel_request_to_agent("list_projects_request", {}, workspace_id=ws_id, timeout=5.0)
+        res = await tunnel_request_to_agent("list_projects_request", {}, workspace_id=ws_id, timeout=15.0)
         if res:
             story_ids = res.get("story_folders", [])
             agent_files = res.get("local_files", {})
