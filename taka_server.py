@@ -1183,18 +1183,6 @@ async def get_voice_defaults():
         "voice_id": config.get("AUDIO", "VOICE", fallback="vi-VN-HoaiMyNeural")
     }
 
-@app.get("/v1/voices")
-async def list_voices(request: Request):
-    ws_id = get_workspace_id_from_request(request)
-    voices_list = []
-    agent_ws = agents_by_workspace.get(ws_id)
-    if agent_ws:
-        res = await tunnel_request_to_agent("list_voices_request", {}, workspace_id=ws_id, timeout=5.0)
-        if res and "voices" in res:
-            voices_list = res["voices"]
-            print(f"[Server] Fetched voices list from Agent ({ws_id}): {[v['id'] for v in voices_list]}")
-            return sorted(voices_list, key=lambda x: x["id"])
-            
 def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
     if not voice_dir or not voice_dir.exists():
         return
@@ -1233,8 +1221,21 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
             pass
 
 
+@app.get("/v1/voices")
+async def list_voices(request: Request):
+    ws_id = get_workspace_id_from_request(request)
+    voices_list = []
+    agent_ws = agents_by_workspace.get(ws_id)
+    if agent_ws:
+        res = await tunnel_request_to_agent("list_voices_request", {}, workspace_id=ws_id, timeout=5.0)
+        if res and isinstance(res, dict) and isinstance(res.get("voices"), list):
+            v_items = res.get("voices")
+            print(f"[Server] Fetched voices list from Agent ({ws_id}): {[v.get('id') for v in v_items if isinstance(v, dict)]}")
+            return sorted(v_items, key=lambda x: x.get("id", "") if isinstance(x, dict) else "")
+            
     # Fallback to local server folder
-    if VOICES_DIR.exists():
+    voices_list = []
+    if VOICES_DIR and VOICES_DIR.exists():
         for item in VOICES_DIR.iterdir():
             if item.is_dir():
                 sync_and_migrate_voice_dir(item)
@@ -1247,7 +1248,7 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
                     "has_audio": has_audio,
                     "has_text": has_text
                 })
-    return sorted(voices_list, key=lambda x: x["id"])
+    return sorted(voices_list, key=lambda x: x.get("id", "") if isinstance(x, dict) else "")
 
 @app.post("/v1/voices")
 async def create_voice(
