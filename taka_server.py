@@ -716,10 +716,51 @@ async def get_agent_file(filepath: str):
     return FileResponse(str(file_path))
 
 
+def pick_file_cross_platform(prompt: str = "Select a file") -> str:
+    import sys, subprocess
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected = filedialog.askopenfilename(title=prompt)
+        root.destroy()
+        if selected:
+            return selected
+    except Exception:
+        pass
+
+    if sys.platform.startswith("win"):
+        try:
+            ps_cmd = (
+                "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
+                "$f = New-Object System.Windows.Forms.OpenFileDialog; "
+                f"$f.Title = '{prompt}'; "
+                "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName }"
+            )
+            proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True)
+            if proc.returncode == 0 and proc.stdout.strip():
+                return proc.stdout.strip()
+        except Exception:
+            pass
+
+    if sys.platform == "darwin":
+        try:
+            script = f'POSIX path of (choose file with prompt "{prompt}")'
+            proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+            if proc.returncode == 0 and proc.stdout.strip():
+                return proc.stdout.strip()
+        except Exception:
+            pass
+
+    return ""
+
+
 @app.get("/v1/system/select-file")
 async def select_local_file(prompt: str = "Select a file"):
-    # If there is a connected local agent, route the request to it
-    if len(active_agents) > 0:
+    # If there is a connected agent, route the request to it
+    if len(agents_by_workspace) > 0:
         import uuid
         request_id = str(uuid.uuid4())
         event = asyncio.Event()
@@ -732,7 +773,7 @@ async def select_local_file(prompt: str = "Select a file"):
         }
         
         # Send request to the first connected agent
-        agent_ws = list(active_agents)[0]
+        agent_ws = list(agents_by_workspace.values())[0]
         try:
             await agent_ws.send_text(json.dumps(msg))
             # Wait for response with a 60-second timeout
@@ -746,24 +787,9 @@ async def select_local_file(prompt: str = "Select a file"):
             pending_file_selects.pop(request_id, None)
             raise HTTPException(status_code=500, detail=f"Agent error selecting file: {str(ex)}")
 
-    # Fallback: run local osascript (only works if server is on macOS)
-    import subprocess
-    script = f'POSIX path of (choose file with prompt "{prompt}")'
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        file_path = proc.stdout.strip()
-        return {"path": file_path}
-    except Exception as e:
-        # AppleScript returns exit code 1 if user cancels
-        if isinstance(e, subprocess.CalledProcessError):
-            if "User canceled" in e.stderr or "User canceled" in e.stdout or e.returncode == 1:
-                return {"path": ""}
-        raise HTTPException(status_code=500, detail=f"Failed to open file dialog: {str(e)}")
+    # Fallback: run local GUI dialog on Server machine
+    selected_path = await asyncio.to_thread(pick_file_cross_platform, prompt)
+    return {"path": selected_path}
 
 
 @app.post("/v1/projects")
@@ -2881,26 +2907,36 @@ async def dashboard():
             async function browseLocalFileForMusic() {
                 try {
                     let res = await fetch("/v1/system/select-file?prompt=Chọn tệp nhạc (audio file)");
+                    if (!res.ok) {
+                        let errData = await res.json().catch(() => ({ detail: res.statusText }));
+                        alert("Không thể mở chọn file: " + (errData.detail || res.statusText));
+                        return;
+                    }
                     let data = await res.json();
-                    if (data.path) {
+                    if (data && data.path) {
                         document.getElementById("music-path").value = data.path;
                         document.getElementById("music-file").value = "";
                     }
                 } catch(e) {
-                    alert("Không thể mở hộp thoại chọn file: " + e);
+                    alert("Không thể mở hộp thoại chọn file: " + e.message);
                 }
             }
 
             async function browseLocalFileForVoice() {
                 try {
                     let res = await fetch("/v1/system/select-file?prompt=Chọn file âm thanh giọng mẫu");
+                    if (!res.ok) {
+                        let errData = await res.json().catch(() => ({ detail: res.statusText }));
+                        alert("Không thể mở chọn file: " + (errData.detail || res.statusText));
+                        return;
+                    }
                     let data = await res.json();
-                    if (data.path) {
+                    if (data && data.path) {
                         document.getElementById("new-voice-path-page").value = data.path;
                         document.getElementById("new-voice-file-page").value = "";
                     }
                 } catch(e) {
-                    alert("Không thể mở hộp thoại chọn file: " + e);
+                    alert("Không thể mở hộp thoại chọn file: " + e.message);
                 }
             }
 
