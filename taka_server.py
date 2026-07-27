@@ -717,7 +717,11 @@ async def get_agent_file(filepath: str):
 
 
 def pick_file_cross_platform(prompt: str = "Select a file") -> str:
-    import sys, subprocess
+    import sys, os, subprocess
+    # Headless Linux server (VPS without GUI environment)
+    if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+        return ""
+
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -739,7 +743,7 @@ def pick_file_cross_platform(prompt: str = "Select a file") -> str:
                 f"$f.Title = '{prompt}'; "
                 "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName }"
             )
-            proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True)
+            proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=5)
             if proc.returncode == 0 and proc.stdout.strip():
                 return proc.stdout.strip()
         except Exception:
@@ -748,7 +752,7 @@ def pick_file_cross_platform(prompt: str = "Select a file") -> str:
     if sys.platform == "darwin":
         try:
             script = f'POSIX path of (choose file with prompt "{prompt}")'
-            proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+            proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=5)
             if proc.returncode == 0 and proc.stdout.strip():
                 return proc.stdout.strip()
         except Exception:
@@ -776,19 +780,13 @@ async def select_local_file(prompt: str = "Select a file"):
         agent_ws = list(agents_by_workspace.values())[0]
         try:
             await agent_ws.send_text(json.dumps(msg))
-            # Wait for response with a 30-second timeout
-            await asyncio.wait_for(event.wait(), timeout=30.0)
+            # Wait for response with a short 10-second timeout to avoid Nginx/Cloudflare 502/504 Bad Gateway
+            await asyncio.wait_for(event.wait(), timeout=10.0)
             result = pending_file_selects.pop(request_id, {"path": ""})
             return {"path": result.get("path", "")}
-        except asyncio.TimeoutError:
+        except Exception:
             pending_file_selects.pop(request_id, None)
-            raise HTTPException(
-                status_code=504, 
-                detail="Đã hết thời gian chờ phản hồi mở chọn file từ Agent. Nếu bạn muốn chọn file từ máy cá nhân của bạn để đẩy lên Server Production, hãy nhấn dòng chữ 'upload file manually' ngay bên dưới ô nhập."
-            )
-        except Exception as ex:
-            pending_file_selects.pop(request_id, None)
-            raise HTTPException(status_code=500, detail=f"Lỗi từ Agent khi chọn file: {str(ex)}")
+            return {"path": ""}
 
     # Fallback: run local GUI dialog on Server machine
     selected_path = await asyncio.to_thread(pick_file_cross_platform, prompt)
