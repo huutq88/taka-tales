@@ -3531,7 +3531,9 @@ async def dashboard():
             async function loadVoicesDropdown() {
                 try {
                     let res = await fetch("/v1/voices");
-                    let voices = await res.json();
+                    if (!res.ok) return;
+                    let data = await res.json();
+                    let voices = Array.isArray(data) ? data : (data && Array.isArray(data.voices) ? data.voices : []);
                     
                     // 1. Populate #vc-voice-id
                     let selectVc = document.getElementById("vc-voice-id");
@@ -3577,9 +3579,14 @@ async def dashboard():
                 container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">Loading...</p>';
                 try {
                     let res = await fetch("/v1/voices");
-                    let voices = await res.json();
+                    if (!res.ok) {
+                        container.innerHTML = '<p style="color: #ff6b6b; font-size: 0.85rem; padding: 0.5rem; text-align: center;">Error loading voices.</p>';
+                        return;
+                    }
+                    let data = await res.json();
+                    let voices = Array.isArray(data) ? data : (data && Array.isArray(data.voices) ? data.voices : []);
                     container.innerHTML = "";
-                    if (voices.length === 0) {
+                    if (!voices || voices.length === 0) {
                         container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">No voices cloned yet.</p>';
                         return;
                     }
