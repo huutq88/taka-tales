@@ -332,6 +332,43 @@ async def check_environment() -> dict:
         "agent_version": "0.4.0"
     }
 
+def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
+    if not voice_dir or not voice_dir.exists():
+        return
+    local_path_file = voice_dir / "local_path.txt"
+    if local_path_file.exists():
+        try:
+            with open(local_path_file, "r", encoding="utf-8") as f:
+                src_str = f.read().strip()
+            if src_str:
+                src_path = pathlib.Path(src_str)
+                if src_path.exists():
+                    import shutil
+                    ext = src_path.suffix.lower() or ".wav"
+                    dest_file = voice_dir / f"ref{ext}"
+                    shutil.copy2(str(src_path), str(dest_file))
+                    if ext != ".wav":
+                        dest_wav = voice_dir / "ref.wav"
+                        shutil.copy2(str(src_path), str(dest_wav))
+                    local_path_file.unlink()
+        except Exception as ex:
+            print(f"[VoiceMigrate] Error migrating local_path.txt for {voice_dir.name}: {ex}")
+
+    ref_text_file = voice_dir / "ref_text.txt"
+    ref_txt_file = voice_dir / "ref.txt"
+    if ref_text_file.exists() and not ref_txt_file.exists():
+        try:
+            import shutil
+            shutil.copy2(str(ref_text_file), str(ref_txt_file))
+        except Exception:
+            pass
+    elif ref_txt_file.exists() and not ref_text_file.exists():
+        try:
+            import shutil
+            shutil.copy2(str(ref_txt_file), str(ref_text_file))
+        except Exception:
+            pass
+
 async def setup_omnivoice():
     """Download/Clone and set up OmniVoice repo and checkpoints."""
     if not OMNIVOICE_PATH.exists():
@@ -1589,44 +1626,6 @@ async def main():
                             "request_id": request_id,
                             "payload": res_payload
                         }))
-
-def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
-    if not voice_dir or not voice_dir.exists():
-        return
-    local_path_file = voice_dir / "local_path.txt"
-    if local_path_file.exists():
-        try:
-            with open(local_path_file, "r", encoding="utf-8") as f:
-                src_str = f.read().strip()
-            if src_str:
-                src_path = pathlib.Path(src_str)
-                if src_path.exists():
-                    import shutil
-                    ext = src_path.suffix.lower() or ".wav"
-                    dest_file = voice_dir / f"ref{ext}"
-                    shutil.copy2(str(src_path), str(dest_file))
-                    if ext != ".wav":
-                        dest_wav = voice_dir / "ref.wav"
-                        shutil.copy2(str(src_path), str(dest_wav))
-                    local_path_file.unlink()
-        except Exception as ex:
-            print(f"[VoiceMigrate] Error migrating local_path.txt for {voice_dir.name}: {ex}")
-
-    ref_text_file = voice_dir / "ref_text.txt"
-    ref_txt_file = voice_dir / "ref.txt"
-    if ref_text_file.exists() and not ref_txt_file.exists():
-        try:
-            import shutil
-            shutil.copy2(str(ref_text_file), str(ref_txt_file))
-        except Exception:
-            pass
-    elif ref_txt_file.exists() and not ref_text_file.exists():
-        try:
-            import shutil
-            shutil.copy2(str(ref_txt_file), str(ref_text_file))
-        except Exception:
-            pass
-
 
                     elif msg_type == "list_voices_request":
                         request_id = message.get("request_id")
