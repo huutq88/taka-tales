@@ -2975,7 +2975,7 @@ async def dashboard():
                 options.headers = options.headers || {};
                 let wsId = getWorkspaceId();
                 let urlStr = typeof url === 'string' ? url : (url ? url.toString() : '');
-                if (wsId && !urlStr.includes("/v1/agent/status")) {
+                if (wsId) {
                     if (options.headers instanceof Headers) {
                         options.headers.set("X-Workspace-ID", wsId);
                     } else if (Array.isArray(options.headers)) {
