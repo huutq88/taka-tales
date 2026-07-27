@@ -333,7 +333,7 @@ async def check_environment() -> dict:
             "mps_available": mps_available,
             "ollama_active": ollama_active,
             "omnivoice_installed": omnivoice_installed,
-            "agent_version": "0.4.0"
+            "agent_version": "0.4.1"
         }
 
     res = await asyncio.to_thread(_do_check)

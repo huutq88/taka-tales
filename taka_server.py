@@ -20,7 +20,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-AGENT_VERSION = "0.4.0"
+AGENT_VERSION = "0.4.1"
 
 LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "http://lore-keeper:8080"
 LORE_KEEPER_URL = LORE_KEEPER_URL.rstrip("/")
@@ -499,6 +499,9 @@ python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt
 
 echo "============================================="
 echo "🎉 Taka Agent Installation / Update Complete!"
+echo "============================================="
+echo "👉 Workspace ID của máy bạn là: $WORKSPACE_ID"
+echo "👉 Mở https://tales.taka.zone và chọn Workspace ID: $WORKSPACE_ID"
 echo "============================================="
 echo "Restarting Taka Agent in the background..."
 pkill -f "python.*taka_agent.py" || true
@@ -2488,10 +2491,14 @@ async def dashboard():
                 <a id="nav-voices" onclick="showPage('voices')">Voices</a>
                 <a id="nav-music" onclick="showPage('music')">Music</a>
             </nav>
-            <div style="display: flex; align-items: center; gap: 1rem;">
+            <div style="display: flex; align-items: center; gap: 0.8rem;">
                 <div id="agent-badge" class="agent-badge">
                     <span class="badge-dot"></span>
                     <span id="agent-text">Agent Offline</span>
+                </div>
+                <div onclick="changeWorkspacePrompt()" style="cursor: pointer; background: var(--bg-tertiary); border: 1px solid var(--border); padding: 0.35rem 0.7rem; border-radius: 8px; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.4rem; transition: border-color 0.2s ease;" title="Bấm để đổi không gian làm việc (Workspace ID)">
+                    <span>💻 Workspace:</span>
+                    <strong id="workspace-id-text" style="color: var(--accent-primary);">--</strong>
                 </div>
             </div>
         </header>
@@ -2994,6 +3001,10 @@ async def dashboard():
 
 
 
+                    let curWs = getWorkspaceId();
+                    let wsEl = document.getElementById("workspace-id-text");
+                    if (wsEl) wsEl.innerText = curWs || "Chưa chọn (Bấm để chọn)";
+
                     if (data.connected) {
                         badge.classList.add("connected");
                         let info = Object.values(data.agents)[0] || {};
@@ -3008,7 +3019,7 @@ async def dashboard():
                                 welcomeStatus.style.color = "#f59e0b";
                             }
                             if (welcomeText) {
-                                welcomeText.innerHTML = `Taka Agent Connected (v${version}) but an update is available (v${data.server_version})! <a href="/v1/system/install-agent.sh" style="color: #f59e0b; font-weight: bold; text-decoration: underline;">Update Now</a>`;
+                                welcomeText.innerHTML = `Taka Agent Connected (v${version}) nhưng đã có bản cập nhật mới (v${data.server_version})! <a href="/v1/system/install-agent.sh" style="color: #f59e0b; font-weight: bold; text-decoration: underline;">Cập nhật ngay</a>`;
                             }
                             if (welcomeDot) {
                                 welcomeDot.style.background = "#f59e0b";
@@ -3023,7 +3034,7 @@ async def dashboard():
                                 welcomeStatus.style.color = "#10b981";
                             }
                             if (welcomeText) {
-                                welcomeText.innerText = "Taka Agent connected successfully! Select a story chapter from the list on the left to start.";
+                                welcomeText.innerText = `Taka Agent đã kết nối thành công (${curWs})! Chọn chương truyện ở danh sách bên trái để bắt đầu.`;
                             }
                             if (welcomeDot) {
                                 welcomeDot.style.background = "#10b981";
@@ -3040,7 +3051,12 @@ async def dashboard():
                             welcomeStatus.style.color = "#ef4444";
                         }
                         if (welcomeText) {
-                            welcomeText.innerText = "Waiting for Taka Agent to connect...";
+                            if (data.active_workspaces && data.active_workspaces.length > 0) {
+                                let linksHtml = data.active_workspaces.map(w => `<button onclick="setWorkspaceId('${w}')" style="background: rgba(167, 139, 250, 0.2); border: 1px solid #a78bfa; color: #a78bfa; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-weight: bold; margin: 0 2px;">${w}</button>`).join(' ');
+                                welcomeText.innerHTML = `Agent chưa kết nối cho Workspace <strong>'${curWs || "Chưa chọn"}'</strong>. Máy đang kết nối online: ${linksHtml}`;
+                            } else {
+                                welcomeText.innerText = curWs ? `Đang chờ Taka Agent kết nối cho Workspace '${curWs}'...` : "Chưa chọn Workspace ID. Hãy chạy Agent trên máy tính hoặc chọn Workspace ID ở góc trên.";
+                            }
                         }
                         if (welcomeDot) {
                             welcomeDot.style.background = "#ef4444";
