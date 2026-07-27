@@ -566,9 +566,9 @@ Write-Host "Agent Version:      {AGENT_VERSION}"
 Write-Host "====================================================="
 
 # 1. Create and change to agent directory
-Write-Host "[1/6] Creating directory '$HOME\.taka-agent'..." -ForegroundColor Green
-New-Item -ItemType Directory -Force -Path "$HOME\.taka-agent" | Out-Null
-Set-Location -Path "$HOME\.taka-agent"
+Write-Host "[1/6] Creating directory '$HOME/.taka-agent'..." -ForegroundColor Green
+New-Item -ItemType Directory -Force -Path "$HOME/.taka-agent" | Out-Null
+Set-Location -Path "$HOME/.taka-agent"
 
 # 2. Download agent files from Server
 Write-Host "[2/6] Downloading agent files from server..." -ForegroundColor Green
@@ -660,12 +660,12 @@ with open('config.ini', 'w', encoding='utf-8') as f:
 
 # 4. Set up virtual environment
 Write-Host "[4/6] Setting up Python virtual environment..." -ForegroundColor Green
-if (-not (Test-Path "env\Scripts\python.exe")) {{
+if (-not (Test-Path "env/Scripts/python.exe")) {{
     & $PYTHON_EXE -m venv env
 }}
 
-$ENV_PYTHON = "$HOME\.taka-agent\env\Scripts\python.exe"
-$ENV_PIP = "$HOME\.taka-agent\env\Scripts\pip.exe"
+$ENV_PYTHON = "$HOME/.taka-agent/env/Scripts/python.exe"
+$ENV_PIP = "$HOME/.taka-agent/env/Scripts/pip.exe"
 if (-not (Test-Path $ENV_PYTHON)) {{
     $ENV_PYTHON = $PYTHON_EXE
     $ENV_PIP = "$PYTHON_EXE -m pip"
@@ -682,7 +682,7 @@ Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundCo
 Write-Host "👉 Tự động mở trình duyệt $SERVER_URL/?ws=$WORKSPACE_ID..." -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
-cmd /c "cd /d $HOME\.taka-agent && start /b ""$ENV_PYTHON"" -u taka_agent.py > agent.log 2>&1"
+cmd /c "cd /d $HOME/.taka-agent && start /b ""$ENV_PYTHON"" -u taka_agent.py > agent.log 2>&1"
 Start-Process "$SERVER_URL/?ws=$WORKSPACE_ID"
 
 Write-Host "Installing PyTorch and AI rendering packages (in background)..." -ForegroundColor Yellow
