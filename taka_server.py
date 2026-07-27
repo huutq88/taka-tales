@@ -453,12 +453,14 @@ curl -fsSL "$SERVER_URL/v1/system/agent/files/core/characters_descriptions.ini" 
 # 3. Configure config.ini with SERVER_URL and WORKSPACE_ID
 echo "[3/6] Configuring config.ini..."
 python3 -c "
-import configparser, uuid, hashlib, socket
+import configparser, getpass, uuid, hashlib, socket
 
+user = getpass.getuser().lower()
+clean_user = ''.join(c for c in user if c.isalnum() or c in ('-', '_')).strip() or 'user'
 mac = uuid.getnode()
 hostname = socket.gethostname()
-device_hash = hashlib.md5((str(mac) + '-' + hostname).encode()).hexdigest()[:12]
-default_ws = 'device_' + device_hash
+dev_hash = hashlib.md5(f'{mac}-{hostname}'.encode()).hexdigest()[:6]
+default_ws = f'{clean_user}_{dev_hash}'
 
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
@@ -467,7 +469,7 @@ if not config.has_section('TAKA_AGENT'):
 config.set('TAKA_AGENT', 'SERVER_URL', '$SERVER_URL')
 
 ws_id = '$WORKSPACE_ID'
-if ws_id == 'default_workspace' or not ws_id:
+if ws_id == 'default_workspace' or not ws_id or ws_id.startswith('device_'):
     ws_id = default_ws
 config.set('TAKA_AGENT', 'WORKSPACE_ID', ws_id)
 

@@ -270,7 +270,7 @@ if server_env:
 else:
     SERVER_URL = config.get("TAKA_AGENT", "SERVER_URL", fallback="https://tales.taka.zone")
 config_ws = config.get("TAKA_AGENT", "WORKSPACE_ID", fallback="").strip()
-if config_ws and config_ws != "default_workspace":
+if config_ws and config_ws != "default_workspace" and not config_ws.startswith("device_"):
     WORKSPACE_ID = config_ws
 else:
     WORKSPACE_ID = get_default_workspace_id()
