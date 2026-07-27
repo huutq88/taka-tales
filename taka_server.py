@@ -678,7 +678,7 @@ Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundCo
 Write-Host "👉 Hãy mở https://tales.taka.zone (Web đã tự nhận diện Workspace ID)" -ForegroundColor Yellow
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
-Start-Process -FilePath $ENV_PYTHON -ArgumentList "-u", "taka_agent.py" -WindowStyle Hidden -WorkingDirectory "$HOME\.taka-agent" -RedirectStandardOutput "$HOME\.taka-agent\agent.log" -RedirectStandardError "$HOME\.taka-agent\agent_err.log"
+cmd /c "cd /d $HOME\.taka-agent && start /b env\Scripts\python.exe -u taka_agent.py > agent.log 2>&1"
 
 Write-Host "Installing PyTorch and AI rendering packages (in background)..." -ForegroundColor Yellow
 & $ENV_PIP install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
