@@ -672,13 +672,14 @@ Write-Host "[5/6] Installing core connection dependencies..." -ForegroundColor G
 & $ENV_PIP install websockets requests configparser edge-tts psutil
 
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "🎉 Taka Agent Core Connected!" -ForegroundColor Green
+Write-Host "🎉 Taka Agent Connected Successfully!" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundColor Yellow
-Write-Host "👉 Hãy mở https://tales.taka.zone (Web đã tự nhận diện Workspace ID)" -ForegroundColor Yellow
+Write-Host "👉 Tự động mở trình duyệt $SERVER_URL..." -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
 cmd /c "cd /d $HOME\.taka-agent && start /b env\Scripts\python.exe -u taka_agent.py > agent.log 2>&1"
+Start-Process "$SERVER_URL"
 
 Write-Host "Installing PyTorch and AI rendering packages (in background)..." -ForegroundColor Yellow
 & $ENV_PIP install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
