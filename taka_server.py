@@ -2519,7 +2519,7 @@ async def dashboard():
                     <span class="badge-dot"></span>
                     <span id="agent-text">Agent Offline</span>
                 </div>
-                <div onclick="changeWorkspacePrompt()" style="cursor: pointer; background: var(--bg-tertiary); border: 1px solid var(--border); padding: 0.35rem 0.7rem; border-radius: 8px; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.4rem; transition: border-color 0.2s ease;" title="Bấm để đổi không gian làm việc (Workspace ID)">
+                <div style="background: var(--bg-tertiary); border: 1px solid var(--border); padding: 0.35rem 0.7rem; border-radius: 8px; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.4rem;" title="Không gian làm việc (Workspace ID)">
                     <span>💻 Workspace:</span>
                     <strong id="workspace-id-text" style="color: var(--accent-primary);">--</strong>
                 </div>
@@ -2981,11 +2981,7 @@ async def dashboard():
             }
 
             function changeWorkspacePrompt() {
-                let current = getWorkspaceId();
-                let newWs = prompt("Không gian làm việc (Workspace ID):", current || "");
-                if (newWs && newWs.trim()) {
-                    setWorkspaceId(newWs.trim());
-                }
+                // Workspace ID is automatically assigned from local Agent installation
             }
 
             // Intercept window.fetch to automatically append X-Workspace-ID header
@@ -3084,12 +3080,7 @@ async def dashboard():
                             welcomeStatus.style.color = "#ef4444";
                         }
                         if (welcomeText) {
-                            if (data.active_workspaces && data.active_workspaces.length > 0) {
-                                let linksHtml = data.active_workspaces.map(w => `<button onclick="setWorkspaceId('${w}')" style="background: rgba(167, 139, 250, 0.2); border: 1px solid #a78bfa; color: #a78bfa; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-weight: bold; margin: 0 2px;">${w}</button>`).join(' ');
-                                welcomeText.innerHTML = `Agent chưa kết nối cho Workspace <strong>'${curWs || "Chưa chọn"}'</strong>. Máy đang kết nối online: ${linksHtml}`;
-                            } else {
-                                welcomeText.innerText = curWs ? `Đang chờ Taka Agent kết nối cho Workspace '${curWs}'...` : "Chưa chọn Workspace ID. Hãy chạy Agent trên máy tính hoặc chọn Workspace ID ở góc trên.";
-                            }
+                            welcomeText.innerText = curWs ? `Đang chờ Taka Agent kết nối cho Workspace '${curWs}'... (Hãy đảm bảo Agent đã được chạy trên máy tính của bạn)` : "Đang chờ Taka Agent kết nối... Hãy chạy lệnh cài đặt Agent trên máy tính của bạn.";
                         }
                         if (welcomeDot) {
                             welcomeDot.style.background = "#ef4444";
