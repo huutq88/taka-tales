@@ -20,7 +20,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-AGENT_VERSION = "0.4.2"
+AGENT_VERSION = "0.4.3"
 
 LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "http://lore-keeper:8080"
 LORE_KEEPER_URL = LORE_KEEPER_URL.rstrip("/")
