@@ -1257,14 +1257,23 @@ async def create_voice(
         if local_path_file.exists():
             local_path_file.unlink()
     elif local_path.strip():
-        with open(voice_dir / "local_path.txt", "w", encoding="utf-8") as f:
-            f.write(local_path.strip())
-        ref_audio = voice_dir / "ref.wav"
-        if ref_audio.exists():
-            ref_audio.unlink()
+        src_path = pathlib.Path(local_path.strip())
+        if src_path.exists():
+            import shutil
+            ext = src_path.suffix.lower() or ".wav"
+            dest_file = voice_dir / f"ref{ext}"
+            shutil.copy2(str(src_path), str(dest_file))
+            if ext != ".wav":
+                dest_wav = voice_dir / "ref.wav"
+                shutil.copy2(str(src_path), str(dest_wav))
+        else:
+            with open(voice_dir / "local_path.txt", "w", encoding="utf-8") as f:
+                f.write(local_path.strip())
             
     if ref_text.strip():
         with open(voice_dir / "ref_text.txt", "w", encoding="utf-8") as f:
+            f.write(ref_text.strip())
+        with open(voice_dir / "ref.txt", "w", encoding="utf-8") as f:
             f.write(ref_text.strip())
     else:
         ref_text_file = voice_dir / "ref_text.txt"
