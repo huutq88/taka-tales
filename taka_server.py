@@ -80,8 +80,6 @@ def get_workspace_id_from_request(request: Request) -> str:
         ws_id = ""
     else:
         ws_id = ws_id.strip()
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
-        ws_id = list(agents_by_workspace.keys())[0]
     return ws_id
 
 async def tunnel_request_to_agent(message_type: str, payload: dict, workspace_id: str = "", timeout: float = 10.0) -> Optional[dict]:
@@ -207,8 +205,6 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
 
     # If file not found on server disk, tunnel request to connected WebSocket agent
     ws_id = get_workspace_id_from_request(request)
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
-        ws_id = list(agents_by_workspace.keys())[0]
 
     if not found_local:
         res = await tunnel_request_to_agent("get_media_file_request", {"story_id": story_id, "chapter_id": chapter_id, "file_path": file_path}, workspace_id=ws_id, timeout=15.0)
@@ -467,11 +463,7 @@ config.read('config.ini', encoding='utf-8')
 if not config.has_section('TAKA_AGENT'):
     config.add_section('TAKA_AGENT')
 config.set('TAKA_AGENT', 'SERVER_URL', '$SERVER_URL')
-
-ws_id = '$WORKSPACE_ID'
-if ws_id == 'default_workspace' or not ws_id or ws_id.startswith('device_'):
-    ws_id = default_ws
-config.set('TAKA_AGENT', 'WORKSPACE_ID', ws_id)
+config.set('TAKA_AGENT', 'WORKSPACE_ID', default_ws)
 
 with open('config.ini', 'w', encoding='utf-8') as f:
     config.write(f)
@@ -531,16 +523,13 @@ async def get_install_script_ps1(request: Request, workspace_id: str = "default_
     
     script_content = f"""
 $SERVER_URL = "{server_url}"
-$WORKSPACE_ID = "{workspace_id}"
-if (-not $WORKSPACE_ID -or $WORKSPACE_ID -eq "default_workspace") {{
-    $uName = $env:USERNAME.ToLower() -replace '[^a-zA-Z0-9_-]', ''
-    if (-not $uName) {{ $uName = "user" }}
-    $hName = $env:COMPUTERNAME
-    $md5 = [System.Security.Cryptography.MD5]::Create()
-    $hashBytes = $md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$hName-$uName"))
-    $devHash = ([BitConverter]::ToString($hashBytes).Replace("-","").ToLower()).Substring(0, 6)
-    $WORKSPACE_ID = "${{uName}}_${{devHash}}"
-}}
+$uName = $env:USERNAME.ToLower() -replace '[^a-zA-Z0-9_-]', ''
+if (-not $uName) {{ $uName = "user" }}
+$hName = $env:COMPUTERNAME
+$md5 = [System.Security.Cryptography.MD5]::Create()
+$hashBytes = $md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$hName-$uName"))
+$devHash = ([BitConverter]::ToString($hashBytes).Replace("-","").ToLower()).Substring(0, 6)
+$WORKSPACE_ID = "${{uName}}_${{devHash}}"
 
 Write-Host "=====================================================" -ForegroundColor Cyan
 Write-Host "   Taka Agent Installer v{AGENT_VERSION} (Windows PowerShell) " -ForegroundColor Cyan
