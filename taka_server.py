@@ -776,16 +776,19 @@ async def select_local_file(prompt: str = "Select a file"):
         agent_ws = list(agents_by_workspace.values())[0]
         try:
             await agent_ws.send_text(json.dumps(msg))
-            # Wait for response with a 60-second timeout
-            await asyncio.wait_for(event.wait(), timeout=60.0)
+            # Wait for response with a 30-second timeout
+            await asyncio.wait_for(event.wait(), timeout=30.0)
             result = pending_file_selects.pop(request_id, {"path": ""})
             return {"path": result.get("path", "")}
         except asyncio.TimeoutError:
             pending_file_selects.pop(request_id, None)
-            raise HTTPException(status_code=504, detail="Timeout waiting for agent to select file")
+            raise HTTPException(
+                status_code=504, 
+                detail="Đã hết thời gian chờ phản hồi mở chọn file từ Agent. Nếu bạn muốn chọn file từ máy cá nhân của bạn để đẩy lên Server Production, hãy nhấn dòng chữ 'upload file manually' ngay bên dưới ô nhập."
+            )
         except Exception as ex:
             pending_file_selects.pop(request_id, None)
-            raise HTTPException(status_code=500, detail=f"Agent error selecting file: {str(ex)}")
+            raise HTTPException(status_code=500, detail=f"Lỗi từ Agent khi chọn file: {str(ex)}")
 
     # Fallback: run local GUI dialog on Server machine
     selected_path = await asyncio.to_thread(pick_file_cross_platform, prompt)
