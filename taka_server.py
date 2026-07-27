@@ -679,6 +679,9 @@ try {{
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "🎉 Taka Agent Installation Complete!" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundColor Yellow
+Write-Host "👉 Hãy mở https://tales.taka.zone và chọn Workspace ID: $WORKSPACE_ID" -ForegroundColor Yellow
+Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent in the background..." -ForegroundColor Yellow
 Start-Process -FilePath $ENV_PYTHON -ArgumentList "-u", "taka_agent.py" -WindowStyle Hidden -WorkingDirectory "$HOME\.taka-agent" -RedirectStandardOutput "$HOME\.taka-agent\agent.log" -RedirectStandardError "$HOME\.taka-agent\agent_err.log"
 Write-Host "Agent is running. You can check logs in $HOME\.taka-agent\agent.log"
