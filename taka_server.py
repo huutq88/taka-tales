@@ -675,11 +675,11 @@ Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "🎉 Taka Agent Connected Successfully!" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundColor Yellow
-Write-Host "👉 Tự động mở trình duyệt $SERVER_URL..." -ForegroundColor Green
+Write-Host "👉 Tự động mở trình duyệt $SERVER_URL/?ws=$WORKSPACE_ID..." -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
 cmd /c "cd /d $HOME\.taka-agent && start /b env\Scripts\python.exe -u taka_agent.py > agent.log 2>&1"
-Start-Process "$SERVER_URL"
+Start-Process "$SERVER_URL/?ws=$WORKSPACE_ID"
 
 Write-Host "Installing PyTorch and AI rendering packages (in background)..." -ForegroundColor Yellow
 & $ENV_PIP install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -2540,7 +2540,7 @@ async def dashboard():
                     <span class="badge-dot"></span>
                     <span id="agent-text">Agent Offline</span>
                 </div>
-                <div style="background: var(--bg-tertiary); border: 1px solid var(--border); padding: 0.35rem 0.7rem; border-radius: 8px; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.4rem;" title="Không gian làm việc (Workspace ID)">
+                <div onclick="changeWorkspacePrompt()" style="cursor: pointer; background: var(--bg-tertiary); border: 1px solid var(--border); padding: 0.35rem 0.7rem; border-radius: 8px; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.4rem; transition: border-color 0.2s ease;" title="Bấm để nhập hoặc đổi không gian làm việc (Workspace ID)">
                     <span>💻 Workspace:</span>
                     <strong id="workspace-id-text" style="color: var(--accent-primary);">--</strong>
                 </div>
@@ -2981,7 +2981,26 @@ async def dashboard():
                 }
             });
 
+            function checkUrlWorkspace() {
+                try {
+                    let urlParams = new URLSearchParams(window.location.search);
+                    let wsParam = urlParams.get("ws") || urlParams.get("workspace_id") || urlParams.get("workspace");
+                    if (wsParam && wsParam.trim()) {
+                        let cleanWs = wsParam.trim();
+                        localStorage.setItem("taka_workspace_id", cleanWs);
+                        let el = document.getElementById("workspace-id-text");
+                        if (el) el.innerText = cleanWs;
+                        if (window.history && window.history.replaceState) {
+                            let cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+                            window.history.replaceState({path: cleanUrl}, '', cleanUrl);
+                        }
+                    }
+                } catch(e) {}
+            }
+            checkUrlWorkspace();
+
             function getWorkspaceId() {
+                checkUrlWorkspace();
                 let wsId = localStorage.getItem("taka_workspace_id");
                 if (!wsId || wsId === "null" || wsId === "undefined") {
                     wsId = "";
@@ -3002,7 +3021,11 @@ async def dashboard():
             }
 
             function changeWorkspacePrompt() {
-                // Workspace ID is automatically assigned from local Agent installation
+                let current = getWorkspaceId();
+                let newWs = prompt("Nhập/Đổi không gian làm việc (Workspace ID):", current || "");
+                if (newWs && newWs.trim()) {
+                    setWorkspaceId(newWs.trim());
+                }
             }
 
             // Intercept window.fetch to automatically append X-Workspace-ID header
