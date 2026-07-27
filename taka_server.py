@@ -762,9 +762,13 @@ def pick_file_cross_platform(prompt: str = "Select a file") -> str:
 
 
 @app.get("/v1/system/select-file")
-async def select_local_file(prompt: str = "Select a file"):
-    # If there is a connected agent, route the request to it
-    if len(agents_by_workspace) > 0:
+async def select_local_file(request: Request, prompt: str = "Select a file"):
+    ws_id = get_workspace_id_from_request(request)
+    agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
+    if not agent_ws and len(agents_by_workspace) > 0:
+        agent_ws = list(agents_by_workspace.values())[0]
+
+    if agent_ws:
         import uuid
         request_id = str(uuid.uuid4())
         event = asyncio.Event()
@@ -776,19 +780,17 @@ async def select_local_file(prompt: str = "Select a file"):
             "payload": {"prompt": prompt}
         }
         
-        # Send request to the first connected agent
-        agent_ws = list(agents_by_workspace.values())[0]
         try:
             await agent_ws.send_text(json.dumps(msg))
-            # Wait for response with a short 10-second timeout to avoid Nginx/Cloudflare 502/504 Bad Gateway
-            await asyncio.wait_for(event.wait(), timeout=10.0)
+            # Wait up to 30s for the local user to choose file on their desktop/laptop
+            await asyncio.wait_for(event.wait(), timeout=30.0)
             result = pending_file_selects.pop(request_id, {"path": ""})
             return {"path": result.get("path", "")}
         except Exception:
             pending_file_selects.pop(request_id, None)
             return {"path": ""}
 
-    # Fallback: run local GUI dialog on Server machine
+    # Fallback: run local GUI dialog on Server machine (if not headless)
     selected_path = await asyncio.to_thread(pick_file_cross_platform, prompt)
     return {"path": selected_path}
 
