@@ -666,6 +666,10 @@ if (-not (Test-Path "env\Scripts\python.exe")) {{
 
 $ENV_PYTHON = "$HOME\.taka-agent\env\Scripts\python.exe"
 $ENV_PIP = "$HOME\.taka-agent\env\Scripts\pip.exe"
+if (-not (Test-Path $ENV_PYTHON)) {{
+    $ENV_PYTHON = $PYTHON_EXE
+    $ENV_PIP = "$PYTHON_EXE -m pip"
+}}
 
 # 5. Install core connection requirements first and start Agent immediately
 Write-Host "[5/6] Installing core connection dependencies..." -ForegroundColor Green
@@ -678,7 +682,7 @@ Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundCo
 Write-Host "👉 Tự động mở trình duyệt $SERVER_URL/?ws=$WORKSPACE_ID..." -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
-cmd /c "cd /d $HOME\.taka-agent && start /b env\Scripts\python.exe -u taka_agent.py > agent.log 2>&1"
+cmd /c "cd /d $HOME\.taka-agent && start /b ""$ENV_PYTHON"" -u taka_agent.py > agent.log 2>&1"
 Start-Process "$SERVER_URL/?ws=$WORKSPACE_ID"
 
 Write-Host "Installing PyTorch and AI rendering packages (in background)..." -ForegroundColor Yellow
