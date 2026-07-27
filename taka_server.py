@@ -1046,18 +1046,25 @@ async def list_projects(request: Request):
             "chapters": sorted_dao_ly
         })
 
-    for story_id in story_ids:
-        if story_id in ("music", "dao-ly", "dao_ly", "affiliate", "test_project_1") or story_id.startswith("dao_ly_"):
-            continue
-            
-        local_chaps_for_story = [k.split("/", 1)[1] for k in agent_files.keys() if k.startswith(f"{story_id}/")]
-        
-        from fastapi.concurrency import run_in_threadpool
-        db_chapters = []
+    valid_story_ids = [
+        s_id for s_id in story_ids 
+        if s_id not in ("music", "dao-ly", "dao_ly", "affiliate", "test_project_1") and not s_id.startswith("dao_ly_")
+    ]
+    
+    from fastapi.concurrency import run_in_threadpool
+    async def get_chaps_safe(s_id):
         try:
-            db_chapters = await run_in_threadpool(fetch_story_chapters, story_id)
+            return s_id, await run_in_threadpool(fetch_story_chapters, s_id)
         except Exception as e:
-            print(f"[Server] Warning fetching story chapters for {story_id}: {e}")
+            print(f"[Server] Warning fetching story chapters for {s_id}: {e}")
+            return s_id, []
+
+    db_chaps_results = await asyncio.gather(*[get_chaps_safe(s_id) for s_id in valid_story_ids])
+    db_chaps_map = dict(db_chaps_results)
+
+    for story_id in valid_story_ids:
+        local_chaps_for_story = [k.split("/", 1)[1] for k in agent_files.keys() if k.startswith(f"{story_id}/")]
+        db_chapters = db_chaps_map.get(story_id, [])
             
         existing_ch_ids = set()
         chapters = []
