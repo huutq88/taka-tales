@@ -946,8 +946,8 @@ async def list_projects(request: Request):
             agent_files = res.get("local_files", {})
             print(f"[Server] Fetched project folders from Agent ({ws_id}): {story_ids}")
             
-    if not agent_ws or not story_ids:
-        # Fallback to local server Projects directory
+    if not agent_ws and not ws_id:
+        # Fallback to local server Projects directory only if no workspace_id header provided
         if PROJECTS_DIR.exists():
             story_ids = [item.name for item in PROJECTS_DIR.iterdir() if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1"]
             for s_id in story_ids:
