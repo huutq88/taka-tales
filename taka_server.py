@@ -1852,6 +1852,34 @@ async def welcome_page():
                 el.innerText = window.location.origin;
             });
 
+            (function checkUrlWorkspace() {
+                try {
+                    let urlParams = new URLSearchParams(window.location.search);
+                    let wsParam = urlParams.get("ws") || urlParams.get("workspace_id") || urlParams.get("workspace");
+                    if (wsParam && wsParam.trim()) {
+                        localStorage.setItem("taka_workspace_id", wsParam.trim());
+                    }
+                } catch(e) {}
+            })();
+
+            const originalFetch = window.fetch;
+            window.fetch = async function(...args) {
+                let [resource, config] = args;
+                config = config || {};
+                config.headers = config.headers || {};
+                let wsId = localStorage.getItem("taka_workspace_id");
+                if (wsId && wsId.trim()) {
+                    if (config.headers instanceof Headers) {
+                        config.headers.set("X-Workspace-ID", wsId.trim());
+                    } else if (Array.isArray(config.headers)) {
+                        config.headers.push(["X-Workspace-ID", wsId.trim()]);
+                    } else {
+                        config.headers["X-Workspace-ID"] = wsId.trim();
+                    }
+                }
+                return originalFetch(resource, config);
+            };
+
             async function updateAgentStatus() {
                 try {
                     let res = await fetch("/v1/agent/status");
