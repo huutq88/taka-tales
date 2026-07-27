@@ -987,95 +987,54 @@ async def list_projects(request: Request):
                             "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{s_id}_{ch_id}.mp4").exists()
                         }
 
-    music_chapters = []
-    dao_ly_chapters = []
-    
+    stories_map = {}
     for key, info in agent_files.items():
-        if key.startswith("music/"):
-            ch_id = key.split("/", 1)[1]
-            ch_title = ch_id.replace("-", " ").replace("_", " ").title()
-            job_key = f"music/{ch_id}"
-            job_state = project_jobs.get(job_key, {"status": "idle"})
-            if info.get("has_video") and job_state.get("status") == "idle":
-                job_state["status"] = "completed"
-            music_chapters.append({
-                "id": ch_id,
-                "story_id": "music",
-                "title": ch_title,
-                "has_story": info.get("has_story", False),
-                "has_video": info.get("has_video", False),
-                "status": job_state.get("status", "idle"),
-                "progress": job_state,
-                "is_music": True
-            })
-        elif key.startswith("dao-ly/") or key.startswith("dao_ly/") or key.startswith("dao_ly_"):
-            parts = key.split("/")
-            category_id = "dao-ly"
-            ch_id = parts[1] if len(parts) > 1 else parts[0]
-            clean_title = ch_id.replace("dao_ly_", "").replace("dao-ly-", "").replace("-", " ").replace("_", " ").title()
-            job_key = f"dao-ly/{ch_id}"
-            job_state = project_jobs.get(job_key, {"status": "idle"})
-            if info.get("has_video") and job_state.get("status") == "idle":
-                job_state["status"] = "completed"
-            dao_ly_chapters.append({
-                "id": ch_id,
-                "story_id": "dao-ly",
-                "title": clean_title,
-                "has_story": info.get("has_story", False),
-                "has_video": info.get("has_video", False),
-                "status": job_state.get("status", "idle"),
-                "progress": job_state,
-                "is_dao_ly": True
-            })
-
-    if music_chapters:
+        if "/" not in key:
+            continue
+        s_id, ch_id = key.split("/", 1)
+        if s_id in ("affiliate", "test_project_1"):
+            continue
+            
+        if s_id not in stories_map:
+            stories_map[s_id] = []
+            
+        job_key = f"{s_id}/{ch_id}"
+        job_state = project_jobs.get(job_key, {"status": "idle"}).copy()
+        if info.get("has_video") and job_state.get("status") == "idle":
+            job_state["status"] = "completed"
+            
+        clean_title = ch_id.replace("-", " ").replace("_", " ").title()
+        item_data = {
+            "id": ch_id,
+            "title": clean_title,
+            "has_story": info.get("has_story", False),
+            "has_video": info.get("has_video", False),
+            "status": job_state.get("status", "idle"),
+            "progress": job_state
+        }
+        if s_id in ("music", "dao-ly", "dao_ly") or s_id.startswith("dao_ly_"):
+            item_data["story_id"] = "dao-ly" if s_id != "music" else "music"
+        stories_map[s_id].append(item_data)
+        
+    for s_id in sorted(list(stories_map.keys())):
+        chaps = sorted(stories_map[s_id], key=lambda x: x["id"])
+        if s_id == "music":
+            title = "🎵 Music Projects"
+        elif s_id in ("dao-ly", "dao_ly") or s_id.startswith("dao_ly_"):
+            title = "☯️ Video Đạo Lý"
+            for idx, item in enumerate(chaps, 1):
+                clean_t = re.sub(r"^#\d+\s*", "", item["title"])
+                item["title"] = f"#{idx:02d} {clean_t}"
+        else:
+            title = f"📖 Story: {s_id}"
+            
         stories.append({
-            "story_id": "music",
-            "title": "🎵 Music Projects",
-            "chapters": sorted(music_chapters, key=lambda x: x["id"])
+            "story_id": s_id,
+            "title": title,
+            "chapters": chaps
         })
         
-    if dao_ly_chapters:
-        sorted_dao_ly = sorted(dao_ly_chapters, key=lambda x: x["id"])
-        for idx, item in enumerate(sorted_dao_ly, 1):
-            clean_t = re.sub(r"^#\d+\s*", "", item["title"])
-            item["title"] = f"#{idx:02d} {clean_t}"
-        stories.append({
-            "story_id": "dao-ly",
-            "title": "☯️ Video Đạo Lý",
-            "chapters": sorted_dao_ly
-        })
-
-    valid_story_ids = [
-        s_id for s_id in story_ids 
-        if s_id not in ("music", "dao-ly", "dao_ly", "affiliate", "test_project_1") and not s_id.startswith("dao_ly_")
-    ]
-    
-    for story_id in valid_story_ids:
-        local_chaps_for_story = sorted(list(set([k.split("/", 1)[1] for k in agent_files.keys() if k.startswith(f"{story_id}/")])))
-        chapters = []
-        for ch_id in local_chaps_for_story:
-            key = f"{story_id}/{ch_id}"
-            job_key = f"{story_id}/{ch_id}"
-            job_state = project_jobs.get(job_key, {"status": "idle"})
-            info = agent_files.get(key, {})
-            if info.get("has_video") and job_state.get("status") == "idle":
-                job_state["status"] = "completed"
-            clean_title = ch_id.replace("-", " ").replace("_", " ").title()
-            chapters.append({
-                "id": ch_id,
-                "title": clean_title,
-                "has_story": info.get("has_story", False),
-                "has_video": info.get("has_video", False),
-                "status": job_state.get("status", "idle"),
-                "progress": job_state
-            })
-            
-        if chapters:
-            stories.append({
-                "story_id": story_id,
-                "chapters": chapters
-            })
+    return stories
         
     return stories
 

@@ -1478,27 +1478,29 @@ async def main():
                         }))
                     elif msg_type == "list_projects_request":
                         request_id = message.get("request_id")
-                        story_folders = []
+                        story_folders = set()
                         local_files = {}
                         
-                        projects_dir = AGENT_PROJECTS_DIR
-                        if projects_dir.exists():
-                            for item in projects_dir.iterdir():
-                                if item.is_dir() and not item.name.startswith(".") and item.name not in ("test_project_1", "affiliate"):
-                                    story_folders.append(item.name)
-                                    for ch_dir in item.iterdir():
-                                        if ch_dir.is_dir() and not ch_dir.name.startswith("."):
-                                            ch_id = ch_dir.name
-                                            key = f"{item.name}/{ch_id}"
-                                            local_files[key] = {
-                                                "has_story": (ch_dir / "story.txt").exists(),
-                                                "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
-                                            }
+                        search_dirs = [AGENT_PROJECTS_DIR, AGENT_DIR / "projects", pathlib.Path.cwd() / "projects"]
+                        for projects_dir in search_dirs:
+                            if projects_dir and projects_dir.exists():
+                                for item in projects_dir.iterdir():
+                                    if item.is_dir() and not item.name.startswith(".") and item.name not in ("test_project_1", "affiliate"):
+                                        story_folders.add(item.name)
+                                        for ch_dir in item.iterdir():
+                                            if ch_dir.is_dir() and not ch_dir.name.startswith("."):
+                                                ch_id = ch_dir.name
+                                                key = f"{item.name}/{ch_id}"
+                                                if key not in local_files:
+                                                    local_files[key] = {
+                                                        "has_story": (ch_dir / "story.txt").exists(),
+                                                        "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
+                                                    }
                         await websocket.send(json.dumps({
                             "type": "list_projects_response",
                             "request_id": request_id,
                             "payload": {
-                                "story_folders": story_folders,
+                                "story_folders": list(story_folders),
                                 "local_files": local_files
                             }
                         }))
