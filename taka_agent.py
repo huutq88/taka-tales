@@ -1340,439 +1340,439 @@ async def main():
                         if msg_type == "heartbeat":
                             continue
 
-                    if msg_type == "run_pipeline":
-                        project_name = payload.get("project_name")
-                        project_path_str = payload.get("project_path")
-                        voice_config = payload.get("voice_config")
-                        pipeline_type = payload.get("pipeline_type", "story")
-                        print(f"[Agent] Received run_pipeline message. project_name={project_name}, pipeline_type={pipeline_type}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_config.items() if k != 'ref_audio_b64'} if voice_config else None}")
-                        art_style = payload.get("art_style")
-                        use_watermark = payload.get("use_watermark", True)
-                        use_waveform = payload.get("use_waveform", True)
-                        use_subtitles = payload.get("use_subtitles", True)
-                        subtitle_preset = payload.get("subtitle_preset", "viral-bold-yellow")
-                        use_whisper = payload.get("use_whisper", False)
-                        force_rerun = payload.get("force_rerun", False)
-                        
-                        story_text = payload.get("story_text")
-                        effect_type = payload.get("effect_type", "leaves")
-                        music_b64 = payload.get("music_b64")
-                        music_filename = payload.get("music_filename")
-                        music_local_path = payload.get("music_local_path")
+                        if msg_type == "run_pipeline":
+                            project_name = payload.get("project_name")
+                            project_path_str = payload.get("project_path")
+                            voice_config = payload.get("voice_config")
+                            pipeline_type = payload.get("pipeline_type", "story")
+                            print(f"[Agent] Received run_pipeline message. project_name={project_name}, pipeline_type={pipeline_type}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in voice_config.items() if k != 'ref_audio_b64'} if voice_config else None}")
+                            art_style = payload.get("art_style")
+                            use_watermark = payload.get("use_watermark", True)
+                            use_waveform = payload.get("use_waveform", True)
+                            use_subtitles = payload.get("use_subtitles", True)
+                            subtitle_preset = payload.get("subtitle_preset", "viral-bold-yellow")
+                            use_whisper = payload.get("use_whisper", False)
+                            force_rerun = payload.get("force_rerun", False)
+                            
+                            story_text = payload.get("story_text")
+                            effect_type = payload.get("effect_type", "leaves")
+                            music_b64 = payload.get("music_b64")
+                            music_filename = payload.get("music_filename")
+                            music_local_path = payload.get("music_local_path")
 
-                        await enqueue_or_run_job(
-                            project_name, project_path_str, websocket, voice_config, art_style,
-                            use_watermark=use_watermark, use_waveform=use_waveform,
-                            use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
-                            use_whisper=use_whisper, story_text=story_text, force_rerun=force_rerun,
-                            effect_type=effect_type, pipeline_type=pipeline_type,
-                            music_b64=music_b64, music_filename=music_filename, music_local_path=music_local_path
-                        )
-                    elif msg_type == "delete_project_request":
-                        request_id = message.get("request_id")
-                        story_id = payload.get("story_id", "").strip()
-                        chapter_id = payload.get("chapter_id")
-                        
-                        search_patterns = [story_id]
-                        if chapter_id:
-                            search_patterns.append(f"{story_id}/{chapter_id}")
-                            search_patterns.append(f"{story_id}_{chapter_id}")
+                            await enqueue_or_run_job(
+                                project_name, project_path_str, websocket, voice_config, art_style,
+                                use_watermark=use_watermark, use_waveform=use_waveform,
+                                use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
+                                use_whisper=use_whisper, story_text=story_text, force_rerun=force_rerun,
+                                effect_type=effect_type, pipeline_type=pipeline_type,
+                                music_b64=music_b64, music_filename=music_filename, music_local_path=music_local_path
+                            )
+                        elif msg_type == "delete_project_request":
+                            request_id = message.get("request_id")
+                            story_id = payload.get("story_id", "").strip()
+                            chapter_id = payload.get("chapter_id")
+                            
+                            search_patterns = [story_id]
+                            if chapter_id:
+                                search_patterns.append(f"{story_id}/{chapter_id}")
+                                search_patterns.append(f"{story_id}_{chapter_id}")
 
-                        remove_from_queue_and_active(story_id, chapter_id)
-                        
-                        # Clear running jobs state
-                        job_keys = [k for k in agent_running_jobs.keys() if any(k == p or k.startswith(f"{p}/") or k.startswith(f"{p}_") for p in search_patterns)]
-                        for k in job_keys:
-                            agent_running_jobs.pop(k, None)
+                            remove_from_queue_and_active(story_id, chapter_id)
+                            
+                            # Clear running jobs state
+                            job_keys = [k for k in agent_running_jobs.keys() if any(k == p or k.startswith(f"{p}/") or k.startswith(f"{p}_") for p in search_patterns)]
+                            for k in job_keys:
+                                agent_running_jobs.pop(k, None)
 
-                        # 2. Delete project directory on Agent
-                        dirs_to_check = []
-                        if chapter_id and chapter_id != "story":
-                            dirs_to_check.append(AGENT_PROJECTS_DIR / story_id / chapter_id)
-                            dirs_to_check.append(AGENT_PROJECTS_DIR / "dao-ly" / chapter_id)
-                            dirs_to_check.append(AGENT_PROJECTS_DIR / "dao_ly" / chapter_id)
-                            dirs_to_check.append(AGENT_PROJECTS_DIR / chapter_id)
-                        else:
-                            dirs_to_check.append(AGENT_PROJECTS_DIR / story_id)
+                            # 2. Delete project directory on Agent
+                            dirs_to_check = []
+                            if chapter_id and chapter_id != "story":
+                                dirs_to_check.append(AGENT_PROJECTS_DIR / story_id / chapter_id)
+                                dirs_to_check.append(AGENT_PROJECTS_DIR / "dao-ly" / chapter_id)
+                                dirs_to_check.append(AGENT_PROJECTS_DIR / "dao_ly" / chapter_id)
+                                dirs_to_check.append(AGENT_PROJECTS_DIR / chapter_id)
+                            else:
+                                dirs_to_check.append(AGENT_PROJECTS_DIR / story_id)
 
-                        for d in dirs_to_check:
-                            if d.exists():
+                            for d in dirs_to_check:
+                                if d.exists():
+                                    try:
+                                        shutil.rmtree(d, ignore_errors=True)
+                                        print(f"[Agent] Successfully deleted agent folder: {d}")
+                                    except Exception as ex:
+                                        print(f"[Agent] Failed to delete agent folder {d}: {ex}")
+
+                            for cat in ("dao-ly", "dao_ly", "music", story_id):
+                                cat_dir = AGENT_PROJECTS_DIR / cat
+                                if cat_dir.exists() and cat_dir.is_dir() and not any(p for p in cat_dir.iterdir() if not p.name.startswith(".")):
+                                    shutil.rmtree(cat_dir, ignore_errors=True)
+
+                            await websocket.send(json.dumps({
+                                "type": "delete_project_response",
+                                "request_id": request_id,
+                                "payload": {"ok": True, "story_id": story_id, "chapter_id": chapter_id}
+                            }))
+                        elif msg_type == "cancel_all_jobs_request":
+                            request_id = message.get("request_id")
+                            for k, t in list(agent_active_tasks.items()):
+                                if t and not t.done():
+                                    print(f"[Agent] Cancelling active task: {k}")
+                                    t.cancel()
+                            agent_active_tasks.clear()
+                            agent_queued_jobs.clear()
+                            while not pipeline_queue.empty():
                                 try:
-                                    shutil.rmtree(d, ignore_errors=True)
-                                    print(f"[Agent] Successfully deleted agent folder: {d}")
-                                except Exception as ex:
-                                    print(f"[Agent] Failed to delete agent folder {d}: {ex}")
+                                    pipeline_queue.get_nowait()
+                                except Exception:
+                                    break
+                            await websocket.send(json.dumps({
+                                "type": "cancel_all_jobs_response",
+                                "request_id": request_id,
+                                "payload": {"ok": True}
+                            }))
+                        elif msg_type == "select_file_request":
+                            request_id = message.get("request_id")
+                            prompt = payload.get("prompt", "Select a file")
+                            
+                            def pick_file():
+                                import sys, os, subprocess
+                                clean_prompt = prompt.replace('"', '').replace("'", "").replace("\n", " ").strip() or "Select a file"
 
-                        for cat in ("dao-ly", "dao_ly", "music", story_id):
-                            cat_dir = AGENT_PROJECTS_DIR / cat
-                            if cat_dir.exists() and cat_dir.is_dir() and not any(p for p in cat_dir.iterdir() if not p.name.startswith(".")):
-                                shutil.rmtree(cat_dir, ignore_errors=True)
+                                if sys.platform == "darwin":
+                                    try:
+                                        script = f'POSIX path of (choose file with prompt "{clean_prompt}")'
+                                        proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=60)
+                                        if proc.returncode == 0 and proc.stdout.strip():
+                                            return proc.stdout.strip()
+                                    except Exception as ex:
+                                        print(f"[Agent] Error choosing file on macOS: {ex}")
 
-                        await websocket.send(json.dumps({
-                            "type": "delete_project_response",
-                            "request_id": request_id,
-                            "payload": {"ok": True, "story_id": story_id, "chapter_id": chapter_id}
-                        }))
-                    elif msg_type == "cancel_all_jobs_request":
-                        request_id = message.get("request_id")
-                        for k, t in list(agent_active_tasks.items()):
-                            if t and not t.done():
-                                print(f"[Agent] Cancelling active task: {k}")
-                                t.cancel()
-                        agent_active_tasks.clear()
-                        agent_queued_jobs.clear()
-                        while not pipeline_queue.empty():
-                            try:
-                                pipeline_queue.get_nowait()
-                            except Exception:
-                                break
-                        await websocket.send(json.dumps({
-                            "type": "cancel_all_jobs_response",
-                            "request_id": request_id,
-                            "payload": {"ok": True}
-                        }))
-                    elif msg_type == "select_file_request":
-                        request_id = message.get("request_id")
-                        prompt = payload.get("prompt", "Select a file")
-                        
-                        def pick_file():
-                            import sys, os, subprocess
-                            clean_prompt = prompt.replace('"', '').replace("'", "").replace("\n", " ").strip() or "Select a file"
+                                if sys.platform.startswith("win"):
+                                    try:
+                                        ps_cmd = (
+                                            "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
+                                            "$f = New-Object System.Windows.Forms.OpenFileDialog; "
+                                            f"$f.Title = '{clean_prompt}'; "
+                                            "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName }"
+                                        )
+                                        proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=60)
+                                        if proc.returncode == 0 and proc.stdout.strip():
+                                            return proc.stdout.strip()
+                                    except Exception as ex:
+                                        print(f"[Agent] Error choosing file on Windows: {ex}")
 
-                            if sys.platform == "darwin":
-                                try:
-                                    script = f'POSIX path of (choose file with prompt "{clean_prompt}")'
-                                    proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=60)
-                                    if proc.returncode == 0 and proc.stdout.strip():
-                                        return proc.stdout.strip()
-                                except Exception as ex:
-                                    print(f"[Agent] Error choosing file on macOS: {ex}")
+                                if not (sys.platform.startswith("linux") and not os.environ.get("DISPLAY")):
+                                    try:
+                                        import tkinter as tk
+                                        from tkinter import filedialog
+                                        root = tk.Tk()
+                                        root.withdraw()
+                                        root.attributes("-topmost", True)
+                                        selected = filedialog.askopenfilename(title=clean_prompt)
+                                        root.destroy()
+                                        if selected:
+                                            return selected
+                                    except Exception as ex:
+                                        print(f"[Agent] Tkinter error: {ex}")
 
-                            if sys.platform.startswith("win"):
-                                try:
-                                    ps_cmd = (
-                                        "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
-                                        "$f = New-Object System.Windows.Forms.OpenFileDialog; "
-                                        f"$f.Title = '{clean_prompt}'; "
-                                        "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName }"
-                                    )
-                                    proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=60)
-                                    if proc.returncode == 0 and proc.stdout.strip():
-                                        return proc.stdout.strip()
-                                except Exception as ex:
-                                    print(f"[Agent] Error choosing file on Windows: {ex}")
-
-                            if not (sys.platform.startswith("linux") and not os.environ.get("DISPLAY")):
-                                try:
-                                    import tkinter as tk
-                                    from tkinter import filedialog
-                                    root = tk.Tk()
-                                    root.withdraw()
-                                    root.attributes("-topmost", True)
-                                    selected = filedialog.askopenfilename(title=clean_prompt)
-                                    root.destroy()
-                                    if selected:
-                                        return selected
-                                except Exception as ex:
-                                    print(f"[Agent] Tkinter error: {ex}")
-
-                            return ""
-                        
-                        selected_path = await asyncio.to_thread(pick_file)
-                        await websocket.send(json.dumps({
-                            "type": "select_file_response",
-                            "request_id": request_id,
-                            "payload": {"path": selected_path}
-                        }))
-                    elif msg_type == "list_projects_request":
-                        request_id = message.get("request_id")
-                        story_folders = set()
-                        local_files = {}
-                        
-                        search_dirs = [AGENT_PROJECTS_DIR, AGENT_DIR / "projects", pathlib.Path.cwd() / "projects"]
-                        for projects_dir in search_dirs:
-                            if projects_dir and projects_dir.exists():
-                                for item in projects_dir.iterdir():
-                                    if item.is_dir() and not item.name.startswith(".") and item.name not in ("test_project_1", "affiliate"):
-                                        story_folders.add(item.name)
-                                        for ch_dir in item.iterdir():
-                                            if ch_dir.is_dir() and not ch_dir.name.startswith("."):
-                                                ch_id = ch_dir.name
-                                                key = f"{item.name}/{ch_id}"
-                                                if key not in local_files:
-                                                    local_files[key] = {
-                                                        "has_story": (ch_dir / "story.txt").exists(),
-                                                        "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
-                                                    }
-                        await websocket.send(json.dumps({
-                            "type": "list_projects_response",
-                            "request_id": request_id,
-                            "payload": {
-                                "story_folders": list(story_folders),
-                                "local_files": local_files
-                            }
-                        }))
-
-                    elif msg_type == "get_chapter_status_request":
-                        request_id = message.get("request_id")
-                        payload = message.get("payload", {})
-                        story_id = payload.get("story_id", "")
-                        chapter_id = payload.get("chapter_id", "")
-                        
-                        projects_dir = AGENT_PROJECTS_DIR
-                        ch_dir = projects_dir / story_id / chapter_id
-                        has_video = (ch_dir / "final.mp4").exists() or (ch_dir / f"{story_id}_{chapter_id}.mp4").exists()
-                        
-                        max_frags = 0
-                        for sub_path in ["images", "audio", "videos", "text/story_fragments", "text/image_prompts"]:
-                            d = ch_dir / sub_path
-                            if d.exists() and d.is_dir():
-                                count = len([f for f in d.iterdir() if not f.name.startswith(".") and not f.name.startswith("processed_") and not f.is_dir()])
-                                if count > max_frags:
-                                    max_frags = count
-                                    
-                        proj_key_1 = f"{story_id}_{chapter_id}"
-                        proj_key_2 = f"{story_id}/{chapter_id}"
-                        
-                        queued_info = agent_queued_jobs.get(proj_key_1) or agent_queued_jobs.get(proj_key_2) or agent_queued_jobs.get(chapter_id)
-                        job_info = agent_running_jobs.get(proj_key_1) or agent_running_jobs.get(proj_key_2) or agent_running_jobs.get(story_id)
-                        
-                        current_status = "completed" if has_video else "idle"
-                        queue_pos = 0
-                        if queued_info:
-                            current_status = "queued"
-                            queue_pos = queued_info.get("position", 1)
-                        elif job_info and job_info.get("status") not in ("completed", "failed", "idle", None):
-                            current_status = job_info.get("status")
-
-                        status_res = {
-                            "status": current_status,
-                            "queue_position": queue_pos,
-                            "total_queued": len(agent_queued_jobs),
-                            "total_fragments": job_info.get("total_fragments", max_frags) if job_info else max_frags,
-                            "current_fragment": job_info.get("current_fragment", max_frags if has_video else 0) if job_info else (max_frags if has_video else 0),
-                            "has_video": has_video
-                        }
-                        
-                        await websocket.send(json.dumps({
-                            "type": "get_chapter_status_response",
-                            "request_id": request_id,
-                            "payload": status_res
-                        }))
-
-                    elif msg_type == "get_media_file_request":
-                        request_id = message.get("request_id")
-                        payload = message.get("payload", {})
-                        story_id = payload.get("story_id", "")
-                        chapter_id = payload.get("chapter_id", "")
-                        file_path = payload.get("file_path", "")
-                        
-                        projects_dir = AGENT_PROJECTS_DIR
-                        base_dir = (projects_dir / story_id / chapter_id).resolve()
-                        target_file = (base_dir / file_path).resolve()
-                        
-                        found_file = None
-                        if target_file.exists() and target_file.is_file():
-                            found_file = target_file
-                        else:
-                            p = pathlib.Path(file_path)
-                            if p.parent.name == "images" or "images/" in file_path:
-                                stem = p.stem
-                                parent = base_dir / p.parent
-                                for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-                                    alt_img = parent / f"{stem}{ext}"
-                                    if alt_img.exists() and alt_img.is_file():
-                                        found_file = alt_img
-                                        break
-                            if not found_file and (file_path == "final.mp4" or file_path.endswith(".mp4")):
-                                for bdir in [base_dir, AGENT_PROJECTS_DIR / "dao-ly" / chapter_id, AGENT_PROJECTS_DIR / "dao_ly" / chapter_id, AGENT_PROJECTS_DIR / chapter_id]:
-                                    if bdir.exists():
-                                        for cand_name in ["final.mp4", f"{story_id}_{chapter_id}.mp4", f"{chapter_id}.mp4"]:
-                                            cand = bdir / cand_name
-                                            if cand.exists() and cand.is_file():
-                                                found_file = cand
-                                                break
-                                        if not found_file:
-                                            mp4_files = [f for f in bdir.glob("*.mp4") if not f.name.startswith(".")]
-                                            if mp4_files:
-                                                found_file = mp4_files[0]
-                                    if found_file:
-                                        break
-
-                        if found_file:
-                            import base64
-                            import mimetypes
-                            content_type, _ = mimetypes.guess_type(str(found_file))
-                            if not content_type:
-                                if str(found_file).endswith(".mp4"):
-                                    content_type = "video/mp4"
-                                elif str(found_file).endswith(".jpg") or str(found_file).endswith(".jpeg"):
-                                    content_type = "image/jpeg"
-                                elif str(found_file).endswith(".png"):
-                                    content_type = "image/png"
-                                elif str(found_file).endswith(".wav"):
-                                    content_type = "audio/wav"
-                                elif str(found_file).endswith(".mp3"):
-                                    content_type = "audio/mpeg"
-                                else:
-                                    content_type = "application/octet-stream"
-
-                            try:
-                                with open(found_file, "rb") as f:
-                                    data_b64 = base64.b64encode(f.read()).decode("utf-8")
-                                res_payload = {
-                                    "exists": True,
-                                    "content_b64": data_b64,
-                                    "content_type": content_type,
-                                    "filename": found_file.name
+                                return ""
+                            
+                            selected_path = await asyncio.to_thread(pick_file)
+                            await websocket.send(json.dumps({
+                                "type": "select_file_response",
+                                "request_id": request_id,
+                                "payload": {"path": selected_path}
+                            }))
+                        elif msg_type == "list_projects_request":
+                            request_id = message.get("request_id")
+                            story_folders = set()
+                            local_files = {}
+                            
+                            search_dirs = [AGENT_PROJECTS_DIR, AGENT_DIR / "projects", pathlib.Path.cwd() / "projects"]
+                            for projects_dir in search_dirs:
+                                if projects_dir and projects_dir.exists():
+                                    for item in projects_dir.iterdir():
+                                        if item.is_dir() and not item.name.startswith(".") and item.name not in ("test_project_1", "affiliate"):
+                                            story_folders.add(item.name)
+                                            for ch_dir in item.iterdir():
+                                                if ch_dir.is_dir() and not ch_dir.name.startswith("."):
+                                                    ch_id = ch_dir.name
+                                                    key = f"{item.name}/{ch_id}"
+                                                    if key not in local_files:
+                                                        local_files[key] = {
+                                                            "has_story": (ch_dir / "story.txt").exists(),
+                                                            "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
+                                                        }
+                            await websocket.send(json.dumps({
+                                "type": "list_projects_response",
+                                "request_id": request_id,
+                                "payload": {
+                                    "story_folders": list(story_folders),
+                                    "local_files": local_files
                                 }
-                            except Exception as read_err:
-                                res_payload = {"exists": False, "error": str(read_err)}
-                        else:
-                            res_payload = {"exists": False}
+                            }))
 
-                        await websocket.send(json.dumps({
-                            "type": "get_media_file_response",
-                            "request_id": request_id,
-                            "payload": res_payload
-                        }))
+                        elif msg_type == "get_chapter_status_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            story_id = payload.get("story_id", "")
+                            chapter_id = payload.get("chapter_id", "")
+                            
+                            projects_dir = AGENT_PROJECTS_DIR
+                            ch_dir = projects_dir / story_id / chapter_id
+                            has_video = (ch_dir / "final.mp4").exists() or (ch_dir / f"{story_id}_{chapter_id}.mp4").exists()
+                            
+                            max_frags = 0
+                            for sub_path in ["images", "audio", "videos", "text/story_fragments", "text/image_prompts"]:
+                                d = ch_dir / sub_path
+                                if d.exists() and d.is_dir():
+                                    count = len([f for f in d.iterdir() if not f.name.startswith(".") and not f.name.startswith("processed_") and not f.is_dir()])
+                                    if count > max_frags:
+                                        max_frags = count
+                                        
+                            proj_key_1 = f"{story_id}_{chapter_id}"
+                            proj_key_2 = f"{story_id}/{chapter_id}"
+                            
+                            queued_info = agent_queued_jobs.get(proj_key_1) or agent_queued_jobs.get(proj_key_2) or agent_queued_jobs.get(chapter_id)
+                            job_info = agent_running_jobs.get(proj_key_1) or agent_running_jobs.get(proj_key_2) or agent_running_jobs.get(story_id)
+                            
+                            current_status = "completed" if has_video else "idle"
+                            queue_pos = 0
+                            if queued_info:
+                                current_status = "queued"
+                                queue_pos = queued_info.get("position", 1)
+                            elif job_info and job_info.get("status") not in ("completed", "failed", "idle", None):
+                                current_status = job_info.get("status")
 
-                    elif msg_type == "list_voices_request":
-                        request_id = message.get("request_id")
-                        voices_list = []
-                        voices_base = AGENT_VOICES_DIR
-                        if voices_base.exists():
-                            for item in voices_base.iterdir():
-                                if item.is_dir():
-                                    sync_and_migrate_voice_dir(item)
-                                    voice_id = item.name
-                                    has_audio = (item / "ref.wav").exists() or (item / "local_path.txt").exists()
-                                    has_text = (item / "ref_text.txt").exists() or (item / "ref.txt").exists()
-                                    voices_list.append({
-                                        "id": voice_id,
-                                        "name": voice_id,
-                                        "has_audio": has_audio,
-                                        "has_text": has_text
-                                    })
-                        await websocket.send(json.dumps({
-                            "type": "list_voices_response",
-                            "request_id": request_id,
-                            "payload": {"voices": voices_list}
-                        }))
+                            status_res = {
+                                "status": current_status,
+                                "queue_position": queue_pos,
+                                "total_queued": len(agent_queued_jobs),
+                                "total_fragments": job_info.get("total_fragments", max_frags) if job_info else max_frags,
+                                "current_fragment": job_info.get("current_fragment", max_frags if has_video else 0) if job_info else (max_frags if has_video else 0),
+                                "has_video": has_video
+                            }
+                            
+                            await websocket.send(json.dumps({
+                                "type": "get_chapter_status_response",
+                                "request_id": request_id,
+                                "payload": status_res
+                            }))
 
-                    elif msg_type == "save_voice_request":
-                        request_id = message.get("request_id")
-                        voice_id = payload.get("voice_id")
-                        ref_text = payload.get("ref_text", "")
-                        local_path = payload.get("local_path", "")
-                        ref_audio_b64 = payload.get("ref_audio_b64")
-                        
-                        voices_base = AGENT_VOICES_DIR
-                        voice_dir = voices_base / voice_id
-                        voice_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        out_b64 = ref_audio_b64
-                        if ref_audio_b64:
-                            import base64
-                            with open(voice_dir / "ref.wav", "wb") as buffer:
-                                buffer.write(base64.b64decode(ref_audio_b64))
-                            local_path_file = voice_dir / "local_path.txt"
-                            if local_path_file.exists():
-                                local_path_file.unlink()
-                        elif local_path.strip():
-                            src_path = pathlib.Path(local_path.strip())
-                            if src_path.exists():
-                                import shutil, base64
-                                ext = src_path.suffix.lower() or ".wav"
-                                dest_file = voice_dir / f"ref{ext}"
-                                shutil.copy2(str(src_path), str(dest_file))
-                                if ext != ".wav":
-                                    dest_wav = voice_dir / "ref.wav"
-                                    shutil.copy2(str(src_path), str(dest_wav))
+                        elif msg_type == "get_media_file_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            story_id = payload.get("story_id", "")
+                            chapter_id = payload.get("chapter_id", "")
+                            file_path = payload.get("file_path", "")
+                            
+                            projects_dir = AGENT_PROJECTS_DIR
+                            base_dir = (projects_dir / story_id / chapter_id).resolve()
+                            target_file = (base_dir / file_path).resolve()
+                            
+                            found_file = None
+                            if target_file.exists() and target_file.is_file():
+                                found_file = target_file
+                            else:
+                                p = pathlib.Path(file_path)
+                                if p.parent.name == "images" or "images/" in file_path:
+                                    stem = p.stem
+                                    parent = base_dir / p.parent
+                                    for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                                        alt_img = parent / f"{stem}{ext}"
+                                        if alt_img.exists() and alt_img.is_file():
+                                            found_file = alt_img
+                                            break
+                                if not found_file and (file_path == "final.mp4" or file_path.endswith(".mp4")):
+                                    for bdir in [base_dir, AGENT_PROJECTS_DIR / "dao-ly" / chapter_id, AGENT_PROJECTS_DIR / "dao_ly" / chapter_id, AGENT_PROJECTS_DIR / chapter_id]:
+                                        if bdir.exists():
+                                            for cand_name in ["final.mp4", f"{story_id}_{chapter_id}.mp4", f"{chapter_id}.mp4"]:
+                                                cand = bdir / cand_name
+                                                if cand.exists() and cand.is_file():
+                                                    found_file = cand
+                                                    break
+                                            if not found_file:
+                                                mp4_files = [f for f in bdir.glob("*.mp4") if not f.name.startswith(".")]
+                                                if mp4_files:
+                                                    found_file = mp4_files[0]
+                                        if found_file:
+                                            break
+
+                            if found_file:
+                                import base64
+                                import mimetypes
+                                content_type, _ = mimetypes.guess_type(str(found_file))
+                                if not content_type:
+                                    if str(found_file).endswith(".mp4"):
+                                        content_type = "video/mp4"
+                                    elif str(found_file).endswith(".jpg") or str(found_file).endswith(".jpeg"):
+                                        content_type = "image/jpeg"
+                                    elif str(found_file).endswith(".png"):
+                                        content_type = "image/png"
+                                    elif str(found_file).endswith(".wav"):
+                                        content_type = "audio/wav"
+                                    elif str(found_file).endswith(".mp3"):
+                                        content_type = "audio/mpeg"
+                                    else:
+                                        content_type = "application/octet-stream"
+
+                                try:
+                                    with open(found_file, "rb") as f:
+                                        data_b64 = base64.b64encode(f.read()).decode("utf-8")
+                                    res_payload = {
+                                        "exists": True,
+                                        "content_b64": data_b64,
+                                        "content_type": content_type,
+                                        "filename": found_file.name
+                                    }
+                                except Exception as read_err:
+                                    res_payload = {"exists": False, "error": str(read_err)}
+                            else:
+                                res_payload = {"exists": False}
+
+                            await websocket.send(json.dumps({
+                                "type": "get_media_file_response",
+                                "request_id": request_id,
+                                "payload": res_payload
+                            }))
+
+                        elif msg_type == "list_voices_request":
+                            request_id = message.get("request_id")
+                            voices_list = []
+                            voices_base = AGENT_VOICES_DIR
+                            if voices_base.exists():
+                                for item in voices_base.iterdir():
+                                    if item.is_dir():
+                                        sync_and_migrate_voice_dir(item)
+                                        voice_id = item.name
+                                        has_audio = (item / "ref.wav").exists() or (item / "local_path.txt").exists()
+                                        has_text = (item / "ref_text.txt").exists() or (item / "ref.txt").exists()
+                                        voices_list.append({
+                                            "id": voice_id,
+                                            "name": voice_id,
+                                            "has_audio": has_audio,
+                                            "has_text": has_text
+                                        })
+                            await websocket.send(json.dumps({
+                                "type": "list_voices_response",
+                                "request_id": request_id,
+                                "payload": {"voices": voices_list}
+                            }))
+
+                        elif msg_type == "save_voice_request":
+                            request_id = message.get("request_id")
+                            voice_id = payload.get("voice_id")
+                            ref_text = payload.get("ref_text", "")
+                            local_path = payload.get("local_path", "")
+                            ref_audio_b64 = payload.get("ref_audio_b64")
+                            
+                            voices_base = AGENT_VOICES_DIR
+                            voice_dir = voices_base / voice_id
+                            voice_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            out_b64 = ref_audio_b64
+                            if ref_audio_b64:
+                                import base64
+                                with open(voice_dir / "ref.wav", "wb") as buffer:
+                                    buffer.write(base64.b64decode(ref_audio_b64))
                                 local_path_file = voice_dir / "local_path.txt"
                                 if local_path_file.exists():
                                     local_path_file.unlink()
-                                try:
-                                    ref_audio_target = voice_dir / "ref.wav"
-                                    if ref_audio_target.exists():
-                                        with open(ref_audio_target, "rb") as bf:
-                                            out_b64 = base64.b64encode(bf.read()).decode("utf-8")
-                                except Exception:
-                                    pass
+                            elif local_path.strip():
+                                src_path = pathlib.Path(local_path.strip())
+                                if src_path.exists():
+                                    import shutil, base64
+                                    ext = src_path.suffix.lower() or ".wav"
+                                    dest_file = voice_dir / f"ref{ext}"
+                                    shutil.copy2(str(src_path), str(dest_file))
+                                    if ext != ".wav":
+                                        dest_wav = voice_dir / "ref.wav"
+                                        shutil.copy2(str(src_path), str(dest_wav))
+                                    local_path_file = voice_dir / "local_path.txt"
+                                    if local_path_file.exists():
+                                        local_path_file.unlink()
+                                    try:
+                                        ref_audio_target = voice_dir / "ref.wav"
+                                        if ref_audio_target.exists():
+                                            with open(ref_audio_target, "rb") as bf:
+                                                out_b64 = base64.b64encode(bf.read()).decode("utf-8")
+                                    except Exception:
+                                        pass
+                                else:
+                                    with open(voice_dir / "local_path.txt", "w", encoding="utf-8") as f:
+                                        f.write(local_path.strip())
+                                    
+                            if ref_text.strip():
+                                with open(voice_dir / "ref_text.txt", "w", encoding="utf-8") as f:
+                                    f.write(ref_text.strip())
+                                with open(voice_dir / "ref.txt", "w", encoding="utf-8") as f:
+                                    f.write(ref_text.strip())
                             else:
-                                with open(voice_dir / "local_path.txt", "w", encoding="utf-8") as f:
+                                ref_text_file = voice_dir / "ref_text.txt"
+                                if ref_text_file.exists():
+                                    ref_text_file.unlink()
+                                    
+                            await websocket.send(json.dumps({
+                                "type": "save_voice_response",
+                                "request_id": request_id,
+                                "payload": {"ok": True, "ref_audio_b64": out_b64}
+                            }))
+
+                        elif msg_type == "create_project_request":
+                            request_id = message.get("request_id")
+                            story_id = payload.get("story_id")
+                            projects_base = AGENT_PROJECTS_DIR
+                            story_dir = projects_base / story_id
+                            story_dir.mkdir(parents=True, exist_ok=True)
+                            await websocket.send(json.dumps({
+                                "type": "create_project_response",
+                                "request_id": request_id,
+                                "payload": {"ok": True}
+                            }))
+
+                        elif msg_type == "create_music_project_request":
+                            request_id = message.get("request_id")
+                            project_name = payload.get("project_name")
+                            local_path = payload.get("local_path", "")
+                            music_b64 = payload.get("music_b64")
+                            
+                            projects_base = AGENT_PROJECTS_DIR
+                            project_dir = projects_base / "music" / project_name
+                            if project_dir.exists():
+                                shutil.rmtree(project_dir)
+                            project_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            if music_b64:
+                                import base64
+                                music_filename = payload.get("music_filename") or "music.mp3"
+                                ext = pathlib.Path(music_filename).suffix or ".mp3"
+                                audio_path = project_dir / f"music{ext}"
+                                with open(audio_path, "wb") as buffer:
+                                    buffer.write(base64.b64decode(music_b64))
+                            elif local_path.strip():
+                                with open(project_dir / "local_music_path.txt", "w", encoding="utf-8") as f:
                                     f.write(local_path.strip())
-                                
-                        if ref_text.strip():
-                            with open(voice_dir / "ref_text.txt", "w", encoding="utf-8") as f:
-                                f.write(ref_text.strip())
-                            with open(voice_dir / "ref.txt", "w", encoding="utf-8") as f:
-                                f.write(ref_text.strip())
-                        else:
-                            ref_text_file = voice_dir / "ref_text.txt"
-                            if ref_text_file.exists():
-                                ref_text_file.unlink()
-                                
-                        await websocket.send(json.dumps({
-                            "type": "save_voice_response",
-                            "request_id": request_id,
-                            "payload": {"ok": True, "ref_audio_b64": out_b64}
-                        }))
+                                    
+                            await websocket.send(json.dumps({
+                                "type": "create_music_project_response",
+                                "request_id": request_id,
+                                "payload": {"ok": True}
+                            }))
 
-                    elif msg_type == "create_project_request":
-                        request_id = message.get("request_id")
-                        story_id = payload.get("story_id")
-                        projects_base = AGENT_PROJECTS_DIR
-                        story_dir = projects_base / story_id
-                        story_dir.mkdir(parents=True, exist_ok=True)
-                        await websocket.send(json.dumps({
-                            "type": "create_project_response",
-                            "request_id": request_id,
-                            "payload": {"ok": True}
-                        }))
-
-                    elif msg_type == "create_music_project_request":
-                        request_id = message.get("request_id")
-                        project_name = payload.get("project_name")
-                        local_path = payload.get("local_path", "")
-                        music_b64 = payload.get("music_b64")
-                        
-                        projects_base = AGENT_PROJECTS_DIR
-                        project_dir = projects_base / "music" / project_name
-                        if project_dir.exists():
-                            shutil.rmtree(project_dir)
-                        project_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        if music_b64:
-                            import base64
-                            music_filename = payload.get("music_filename") or "music.mp3"
-                            ext = pathlib.Path(music_filename).suffix or ".mp3"
-                            audio_path = project_dir / f"music{ext}"
-                            with open(audio_path, "wb") as buffer:
-                                buffer.write(base64.b64decode(music_b64))
-                        elif local_path.strip():
-                            with open(project_dir / "local_music_path.txt", "w", encoding="utf-8") as f:
-                                f.write(local_path.strip())
-                                
-                        await websocket.send(json.dumps({
-                            "type": "create_music_project_response",
-                            "request_id": request_id,
-                            "payload": {"ok": True}
-                        }))
-
-                    elif msg_type == "delete_voice_request":
-                        request_id = message.get("request_id")
-                        voice_id = payload.get("voice_id")
-                        
-                        voices_base = AGENT_VOICES_DIR
-                        voice_dir = voices_base / voice_id
-                        if voice_dir.exists() and voice_dir.is_dir():
-                            shutil.rmtree(voice_dir)
-                        await websocket.send(json.dumps({
-                            "type": "delete_voice_response",
-                            "request_id": request_id,
-                            "payload": {"ok": True}
-                        }))
+                        elif msg_type == "delete_voice_request":
+                            request_id = message.get("request_id")
+                            voice_id = payload.get("voice_id")
+                            
+                            voices_base = AGENT_VOICES_DIR
+                            voice_dir = voices_base / voice_id
+                            if voice_dir.exists() and voice_dir.is_dir():
+                                shutil.rmtree(voice_dir)
+                            await websocket.send(json.dumps({
+                                "type": "delete_voice_response",
+                                "request_id": request_id,
+                                "payload": {"ok": True}
+                            }))
                 finally:
                     heartbeat_task.cancel()
                         
