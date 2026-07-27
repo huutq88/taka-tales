@@ -762,6 +762,14 @@ def pick_file_cross_platform(prompt: str = "Select a file") -> str:
 
 @app.get("/v1/system/select-file")
 async def select_local_file(request: Request, prompt: str = "Select a file"):
+    import sys, os
+    # 1. Direct local GUI file picker if server is running locally on desktop (macOS / Windows / Linux GUI)
+    if not (sys.platform.startswith("linux") and not os.environ.get("DISPLAY")):
+        local_path = await asyncio.to_thread(pick_file_cross_platform, prompt)
+        if local_path:
+            return {"path": local_path}
+
+    # 2. Route to connected Agent via WebSocket if running on headless server
     ws_id = get_workspace_id_from_request(request)
     agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
     if not agent_ws and len(agents_by_workspace) > 0:
@@ -781,7 +789,6 @@ async def select_local_file(request: Request, prompt: str = "Select a file"):
         
         try:
             await agent_ws.send_text(json.dumps(msg))
-            # Wait up to 30s for the local user to choose file on their desktop/laptop
             await asyncio.wait_for(event.wait(), timeout=30.0)
             result = pending_file_selects.pop(request_id, {"path": ""})
             return {"path": result.get("path", "")}
@@ -789,9 +796,7 @@ async def select_local_file(request: Request, prompt: str = "Select a file"):
             pending_file_selects.pop(request_id, None)
             return {"path": ""}
 
-    # Fallback: run local GUI dialog on Server machine (if not headless)
-    selected_path = await asyncio.to_thread(pick_file_cross_platform, prompt)
-    return {"path": selected_path}
+    return {"path": ""}
 
 
 @app.post("/v1/projects")
