@@ -511,11 +511,14 @@ echo "Pre-downloading AI models and NLTK assets (this may take a few minutes)...
 python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True); from huggingface_hub import snapshot_download; snapshot_download(repo_id='k2-fsa/OmniVoice'); snapshot_download(repo_id='openai/whisper-small'); from keybert import KeyBERT; KeyBERT()" || echo "Warning: Failed to pre-download some models, they will download on first run."
 
 echo "============================================="
-echo "🎉 Taka Agent Installation Complete!"
+echo "🎉 Taka Agent Installation / Update Complete!"
 echo "============================================="
-echo "Starting Taka Agent in the background..."
+echo "Restarting Taka Agent in the background..."
+pkill -f "python.*taka_agent.py" || true
+pkill -f "taka_agent.py" || true
+sleep 1
 nohup python -u taka_agent.py > agent.log 2>&1 &
-echo "Agent is running. You can check logs in ~/.taka-agent/agent.log"
+echo "Agent is running (v{AGENT_VERSION}). You can check logs in ~/.taka-agent/agent.log"
 echo "============================================="
 """
     return PlainTextResponse(content=script_content, media_type="text/x-shellscript")
