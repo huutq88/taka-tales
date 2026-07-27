@@ -1391,42 +1391,45 @@ async def main():
                         prompt = payload.get("prompt", "Select a file")
                         
                         def pick_file():
-                            import sys, subprocess
-                            try:
-                                import tkinter as tk
-                                from tkinter import filedialog
-                                root = tk.Tk()
-                                root.withdraw()
-                                root.attributes("-topmost", True)
-                                selected = filedialog.askopenfilename(title=prompt)
-                                root.destroy()
-                                if selected:
-                                    return selected
-                            except Exception:
-                                pass
+                            import sys, os, subprocess
+                            clean_prompt = prompt.replace('"', '').replace("'", "").replace("\n", " ").strip() or "Select a file"
+
+                            if sys.platform == "darwin":
+                                try:
+                                    script = f'POSIX path of (choose file with prompt "{clean_prompt}")'
+                                    proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=60)
+                                    if proc.returncode == 0 and proc.stdout.strip():
+                                        return proc.stdout.strip()
+                                except Exception as ex:
+                                    print(f"[Agent] Error choosing file on macOS: {ex}")
 
                             if sys.platform.startswith("win"):
                                 try:
                                     ps_cmd = (
                                         "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
                                         "$f = New-Object System.Windows.Forms.OpenFileDialog; "
-                                        f"$f.Title = '{prompt}'; "
+                                        f"$f.Title = '{clean_prompt}'; "
                                         "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName }"
                                     )
-                                    proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True)
+                                    proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=60)
                                     if proc.returncode == 0 and proc.stdout.strip():
                                         return proc.stdout.strip()
                                 except Exception as ex:
                                     print(f"[Agent] Error choosing file on Windows: {ex}")
 
-                            if sys.platform == "darwin":
+                            if not (sys.platform.startswith("linux") and not os.environ.get("DISPLAY")):
                                 try:
-                                    script = f'POSIX path of (choose file with prompt "{prompt}")'
-                                    proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-                                    if proc.returncode == 0 and proc.stdout.strip():
-                                        return proc.stdout.strip()
+                                    import tkinter as tk
+                                    from tkinter import filedialog
+                                    root = tk.Tk()
+                                    root.withdraw()
+                                    root.attributes("-topmost", True)
+                                    selected = filedialog.askopenfilename(title=clean_prompt)
+                                    root.destroy()
+                                    if selected:
+                                        return selected
                                 except Exception as ex:
-                                    print(f"[Agent] Error choosing file on macOS: {ex}")
+                                    print(f"[Agent] Tkinter error: {ex}")
 
                             return ""
                         
