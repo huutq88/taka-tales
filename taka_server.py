@@ -682,7 +682,7 @@ Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundCo
 Write-Host "👉 Tự động mở trình duyệt $SERVER_URL/?ws=$WORKSPACE_ID..." -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
-cmd /c "cd /d $HOME/.taka-agent && start /b ""$ENV_PYTHON"" -u taka_agent.py > agent.log 2>&1"
+Start-Process -FilePath "$ENV_PYTHON" -ArgumentList "-u", "taka_agent.py" -WorkingDirectory "$HOME/.taka-agent" -WindowStyle Hidden
 Start-Process "$SERVER_URL/?ws=$WORKSPACE_ID"
 
 Write-Host "Installing PyTorch and AI rendering packages (in background)..." -ForegroundColor Yellow
