@@ -1051,65 +1051,26 @@ async def list_projects(request: Request):
         if s_id not in ("music", "dao-ly", "dao_ly", "affiliate", "test_project_1") and not s_id.startswith("dao_ly_")
     ]
     
-    from fastapi.concurrency import run_in_threadpool
-    async def get_chaps_safe(s_id):
-        try:
-            return s_id, await run_in_threadpool(fetch_story_chapters, s_id)
-        except Exception as e:
-            print(f"[Server] Warning fetching story chapters for {s_id}: {e}")
-            return s_id, []
-
-    db_chaps_results = await asyncio.gather(*[get_chaps_safe(s_id) for s_id in valid_story_ids])
-    db_chaps_map = dict(db_chaps_results)
-
     for story_id in valid_story_ids:
-        local_chaps_for_story = [k.split("/", 1)[1] for k in agent_files.keys() if k.startswith(f"{story_id}/")]
-        db_chapters = db_chaps_map.get(story_id, [])
-            
-        existing_ch_ids = set()
+        local_chaps_for_story = sorted(list(set([k.split("/", 1)[1] for k in agent_files.keys() if k.startswith(f"{story_id}/")])))
         chapters = []
-        for ch in db_chapters:
-            ch_id = ch["id"]
-            ch_title = ch["title"]
-            existing_ch_ids.add(ch_id)
+        for ch_id in local_chaps_for_story:
             key = f"{story_id}/{ch_id}"
-            
             job_key = f"{story_id}/{ch_id}"
             job_state = project_jobs.get(job_key, {"status": "idle"})
-            
-            has_story = agent_files.get(key, {}).get("has_story", False)
-            has_video = agent_files.get(key, {}).get("has_video", False)
-            
-            if has_video and job_state.get("status") == "idle":
+            info = agent_files.get(key, {})
+            if info.get("has_video") and job_state.get("status") == "idle":
                 job_state["status"] = "completed"
-                
+            clean_title = ch_id.replace("-", " ").replace("_", " ").title()
             chapters.append({
                 "id": ch_id,
-                "title": ch_title,
-                "has_story": has_story,
-                "has_video": has_video,
+                "title": clean_title,
+                "has_story": info.get("has_story", False),
+                "has_video": info.get("has_video", False),
                 "status": job_state.get("status", "idle"),
                 "progress": job_state
             })
             
-        for ch_id in local_chaps_for_story:
-            if ch_id not in existing_ch_ids:
-                key = f"{story_id}/{ch_id}"
-                job_key = f"{story_id}/{ch_id}"
-                job_state = project_jobs.get(job_key, {"status": "idle"})
-                info = agent_files.get(key, {})
-                if info.get("has_video") and job_state.get("status") == "idle":
-                    job_state["status"] = "completed"
-                clean_title = ch_id.replace("-", " ").replace("_", " ").title()
-                chapters.append({
-                    "id": ch_id,
-                    "title": clean_title,
-                    "has_story": info.get("has_story", False),
-                    "has_video": info.get("has_video", False),
-                    "status": job_state.get("status", "idle"),
-                    "progress": job_state
-                })
-                
         if chapters:
             stories.append({
                 "story_id": story_id,
