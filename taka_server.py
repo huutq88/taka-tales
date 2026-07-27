@@ -661,22 +661,22 @@ Write-Host "Installing PyTorch with CUDA support..." -ForegroundColor Yellow
 
 # 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
 Write-Host "[6/6] Pre-installing OmniVoice tool..." -ForegroundColor Green
-if (-not (Test-Path "tools\OmniVoice")) {{
+if (-not (Test-Path "tools/OmniVoice")) {{
     New-Item -ItemType Directory -Force -Path "tools" | Out-Null
     if (Get-Command git -ErrorAction SilentlyContinue) {{
         Write-Host "Cloning OmniVoice repository via Git..." -ForegroundColor Yellow
         & git clone https://github.com/k2-fsa/OmniVoice tools/OmniVoice
     }} else {{
         Write-Host "Git not found. Downloading OmniVoice zip archive..." -ForegroundColor Yellow
-        Invoke-WebRequest -Uri "https://github.com/k2-fsa/OmniVoice/archive/refs/heads/main.zip" -OutFile "tools\omnivoice.zip"
-        Expand-Archive -Path "tools\omnivoice.zip" -DestinationPath "tools" -Force
-        if (Test-Path "tools\OmniVoice-main") {{
-            Rename-Item -Path "tools\OmniVoice-main" -NewName "OmniVoice" -Force
+        Invoke-WebRequest -Uri "https://github.com/k2-fsa/OmniVoice/archive/refs/heads/main.zip" -OutFile "tools/omnivoice.zip"
+        Expand-Archive -Path "tools/omnivoice.zip" -DestinationPath "tools" -Force
+        if (Test-Path "tools/OmniVoice-main") {{
+            Rename-Item -Path "tools/OmniVoice-main" -NewName "OmniVoice" -Force
         }}
-        Remove-Item -Path "tools\omnivoice.zip" -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "tools/omnivoice.zip" -Force -ErrorAction SilentlyContinue
     }}
 
-    if (Test-Path "tools\OmniVoice\requirements.txt") {{
+    if (Test-Path "tools/OmniVoice/requirements.txt") {{
         Write-Host "Installing OmniVoice requirements..." -ForegroundColor Yellow
         & $ENV_PIP install -r tools/OmniVoice/requirements.txt
     }}
