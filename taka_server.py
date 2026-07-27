@@ -2916,6 +2916,8 @@ async def dashboard():
                     if (data && data.path) {
                         document.getElementById("music-path").value = data.path;
                         document.getElementById("music-file").value = "";
+                    } else {
+                        alert("Không thể mở hộp thoại chọn file ổ đĩa local. Nếu bạn đang dùng trang web trên Server Production từ xa, vui lòng nhấn dòng chữ 'upload file manually' ngay bên dưới ô nhập để chọn file từ máy bạn.");
                     }
                 } catch(e) {
                     alert("Không thể mở hộp thoại chọn file: " + e.message);
@@ -2934,6 +2936,8 @@ async def dashboard():
                     if (data && data.path) {
                         document.getElementById("new-voice-path-page").value = data.path;
                         document.getElementById("new-voice-file-page").value = "";
+                    } else {
+                        alert("Không thể mở hộp thoại chọn file ổ đĩa local. Nếu bạn đang dùng trang web trên Server Production từ xa, vui lòng nhấn dòng chữ 'upload file manually' ngay bên dưới ô nhập để chọn file từ máy bạn.");
                     }
                 } catch(e) {
                     alert("Không thể mở hộp thoại chọn file: " + e.message);
