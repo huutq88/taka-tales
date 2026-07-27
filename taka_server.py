@@ -487,19 +487,29 @@ echo "[4/6] Setting up Python virtual environment..."
 python3 -m venv env
 source env/bin/activate
 
-# 5. Install PyTorch and dependencies
-echo "[5/6] Installing dependencies..."
-# Simple platform detection for PyTorch
+# 5. Install core connection requirements first and start Agent immediately
+echo "[5/6] Installing core connection dependencies..."
+pip3 install websockets requests configparser edge-tts psutil
+
+echo "============================================="
+echo "🎉 Taka Agent Core Connected!"
+echo "============================================="
+echo "👉 Workspace ID của máy bạn là: $WORKSPACE_ID"
+echo "👉 Mở https://tales.taka.zone và chọn Workspace ID: $WORKSPACE_ID"
+echo "============================================="
+echo "Starting Taka Agent connection..."
+pkill -f "python.*taka_agent.py" || true
+pkill -f "taka_agent.py" || true
+sleep 1
+nohup python -u taka_agent.py > agent.log 2>&1 &
+
+echo "Installing PyTorch and AI rendering packages (in background)..."
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "macOS detected. Installing default PyTorch..."
     pip3 install torch torchvision torchaudio
 else
-    echo "Linux/Other detected. Installing PyTorch with CUDA support..."
     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 fi
-
 pip install -r requirements.txt
-pip install psycopg2-binary || echo "psycopg2-binary not installed, continuing..."
 
 # 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
 echo "[6/6] Pre-installing OmniVoice tool..."
@@ -657,12 +667,22 @@ if (-not (Test-Path "env\Scripts\python.exe")) {{
 $ENV_PYTHON = "$HOME\.taka-agent\env\Scripts\python.exe"
 $ENV_PIP = "$HOME\.taka-agent\env\Scripts\pip.exe"
 
-# 5. Install PyTorch and dependencies
-Write-Host "[5/6] Installing dependencies..." -ForegroundColor Green
-Write-Host "Installing PyTorch with CUDA support..." -ForegroundColor Yellow
+# 5. Install core connection requirements first and start Agent immediately
+Write-Host "[5/6] Installing core connection dependencies..." -ForegroundColor Green
+& $ENV_PIP install websockets requests configparser edge-tts psutil
+
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "🎉 Taka Agent Core Connected!" -ForegroundColor Green
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundColor Yellow
+Write-Host "👉 Hãy mở https://tales.taka.zone (Web đã tự nhận diện Workspace ID)" -ForegroundColor Yellow
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
+Start-Process -FilePath $ENV_PYTHON -ArgumentList "-u", "taka_agent.py" -WindowStyle Hidden -WorkingDirectory "$HOME\.taka-agent" -RedirectStandardOutput "$HOME\.taka-agent\agent.log" -RedirectStandardError "$HOME\.taka-agent\agent_err.log"
+
+Write-Host "Installing PyTorch and AI rendering packages (in background)..." -ForegroundColor Yellow
 & $ENV_PIP install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 & $ENV_PIP install -r requirements.txt
-& $ENV_PIP install psycopg2-binary
 
 # 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
 Write-Host "[6/6] Pre-installing OmniVoice tool..." -ForegroundColor Green
