@@ -70,6 +70,7 @@ migrate_projects_structure(PROJECTS_DIR)
 # In-memory stores
 agents_by_workspace: Dict[str, WebSocket] = {}  # workspace_id -> websocket
 agent_status: Dict[str, dict] = {}              # workspace_id -> status dict
+agent_ip_map: Dict[str, str] = {}               # client_ip -> workspace_id
 project_jobs: Dict[str, dict] = {}              # project_name -> job state
 pending_file_selects: Dict[str, dict] = {}
 pending_agent_requests: Dict[str, dict] = {}
@@ -80,6 +81,20 @@ def get_workspace_id_from_request(request: Request) -> str:
         ws_id = ""
     else:
         ws_id = ws_id.strip()
+
+    if not ws_id or ws_id not in agents_by_workspace:
+        client_ip = ""
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            client_ip = forwarded_for.split(",")[0].strip()
+        elif request.client and request.client.host:
+            client_ip = request.client.host
+
+        if client_ip:
+            matched_ws = agent_ip_map.get(client_ip)
+            if matched_ws and matched_ws in agents_by_workspace:
+                ws_id = matched_ws
+
     return ws_id
 
 async def tunnel_request_to_agent(message_type: str, payload: dict, workspace_id: str = "", timeout: float = 10.0) -> Optional[dict]:
@@ -303,7 +318,10 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
 async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default_workspace"):
     await websocket.accept()
     agents_by_workspace[workspace_id] = websocket
-    print(f"[Server] Taka-Agent connected. Workspace: {workspace_id}")
+    client_ip = websocket.client.host if (websocket.client and websocket.client.host) else ""
+    if client_ip:
+        agent_ip_map[client_ip] = workspace_id
+    print(f"[Server] Taka-Agent connected. Workspace: {workspace_id} (IP: {client_ip})")
     try:
         while True:
             data_str = await websocket.receive_text()
@@ -348,6 +366,8 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default_w
     finally:
         agents_by_workspace.pop(workspace_id, None)
         agent_status.pop(workspace_id, None)
+        if client_ip and agent_ip_map.get(client_ip) == workspace_id:
+            agent_ip_map.pop(client_ip, None)
 
 @app.get("/v1/agent/workspaces")
 async def list_active_workspaces():
@@ -3006,7 +3026,17 @@ async def dashboard():
 
                     let curWs = getWorkspaceId();
                     let wsEl = document.getElementById("workspace-id-text");
-                    if (wsEl) wsEl.innerText = curWs || "Chưa chọn (Bấm để chọn)";
+
+                    if (data.connected && data.workspace_id) {
+                        if (curWs !== data.workspace_id) {
+                            localStorage.setItem("taka_workspace_id", data.workspace_id);
+                            curWs = data.workspace_id;
+                            if (typeof loadProjects === "function") loadProjects();
+                        }
+                        if (wsEl) wsEl.innerText = curWs;
+                    } else {
+                        if (wsEl) wsEl.innerText = curWs || "Chưa chọn";
+                    }
 
                     if (data.connected) {
                         badge.classList.add("connected");
