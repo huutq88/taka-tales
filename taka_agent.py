@@ -1662,6 +1662,7 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
                         voice_dir = voices_base / voice_id
                         voice_dir.mkdir(parents=True, exist_ok=True)
                         
+                        out_b64 = ref_audio_b64
                         if ref_audio_b64:
                             import base64
                             with open(voice_dir / "ref.wav", "wb") as buffer:
@@ -1672,13 +1673,23 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
                         elif local_path.strip():
                             src_path = pathlib.Path(local_path.strip())
                             if src_path.exists():
-                                import shutil
+                                import shutil, base64
                                 ext = src_path.suffix.lower() or ".wav"
                                 dest_file = voice_dir / f"ref{ext}"
                                 shutil.copy2(str(src_path), str(dest_file))
                                 if ext != ".wav":
                                     dest_wav = voice_dir / "ref.wav"
                                     shutil.copy2(str(src_path), str(dest_wav))
+                                local_path_file = voice_dir / "local_path.txt"
+                                if local_path_file.exists():
+                                    local_path_file.unlink()
+                                try:
+                                    ref_audio_target = voice_dir / "ref.wav"
+                                    if ref_audio_target.exists():
+                                        with open(ref_audio_target, "rb") as bf:
+                                            out_b64 = base64.b64encode(bf.read()).decode("utf-8")
+                                except Exception:
+                                    pass
                             else:
                                 with open(voice_dir / "local_path.txt", "w", encoding="utf-8") as f:
                                     f.write(local_path.strip())
@@ -1696,7 +1707,7 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
                         await websocket.send(json.dumps({
                             "type": "save_voice_response",
                             "request_id": request_id,
-                            "payload": {"ok": True}
+                            "payload": {"ok": True, "ref_audio_b64": out_b64}
                         }))
 
                     elif msg_type == "create_project_request":

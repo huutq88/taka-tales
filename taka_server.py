@@ -1284,6 +1284,8 @@ async def create_voice(
         }
         res = await tunnel_request_to_agent("save_voice_request", tunnel_payload, workspace_id=ws_id, timeout=10.0)
         print(f"[Server] Saved voice profile on Agent ({ws_id}): {res}")
+        if res and res.get("ref_audio_b64"):
+            file_b64 = res.get("ref_audio_b64")
         
     # Fallback/also save on Server local disk
     voice_dir = VOICES_DIR / clean_id
@@ -1305,6 +1307,9 @@ async def create_voice(
             if ext != ".wav":
                 dest_wav = voice_dir / "ref.wav"
                 shutil.copy2(str(src_path), str(dest_wav))
+            local_path_file = voice_dir / "local_path.txt"
+            if local_path_file.exists():
+                local_path_file.unlink()
         else:
             with open(voice_dir / "local_path.txt", "w", encoding="utf-8") as f:
                 f.write(local_path.strip())
