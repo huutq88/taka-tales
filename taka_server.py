@@ -372,19 +372,12 @@ def get_default_workspace_id():
 @app.get("/v1/agent/status")
 async def get_agent_status(request: Request):
     active_ws_list = list(agents_by_workspace.keys())
-    connected = len(active_ws_list) > 0
+    request_ws = get_workspace_id_from_request(request)
+    
+    connected = bool(request_ws and request_ws in agents_by_workspace)
+    st = agent_status.get(request_ws, {}) if (request_ws and connected) else {}
 
-    default_ws = get_default_workspace_id()
-    if active_ws_list:
-        resolved_ws = active_ws_list[0]
-    else:
-        resolved_ws = get_workspace_id_from_request(request) or default_ws
-
-    st = agent_status.get(resolved_ws, {})
-    if not st and len(agent_status) > 0:
-        st = list(agent_status.values())[0]
-
-    agent_ver = st.get("agent_version", AGENT_VERSION)
+    agent_ver = st.get("agent_version", AGENT_VERSION) if connected else AGENT_VERSION
     needs_update = (agent_ver != AGENT_VERSION) if connected else False
 
     running_jobs = [k for k, v in project_jobs.items() if v.get("status") not in ("idle", "completed", "failed", "stopped", "queued", None)]
@@ -394,9 +387,9 @@ async def get_agent_status(request: Request):
     return JSONResponse(
         content={
             "connected": connected,
-            "workspace_id": resolved_ws,
-            "active_workspaces": active_ws_list or [resolved_ws],
-            "agents": agent_status if agent_status else {resolved_ws: st},
+            "workspace_id": request_ws,
+            "active_workspaces": active_ws_list,
+            "agents": {request_ws: st} if (request_ws and connected) else {},
             "server_version": AGENT_VERSION,
             "needs_update": needs_update,
             "agent_version": agent_ver,
@@ -766,8 +759,6 @@ async def select_local_file(request: Request, prompt: str = "Select a file"):
     # 2. Route to connected Agent via WebSocket if running on headless server
     ws_id = get_workspace_id_from_request(request)
     agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
-    if not agent_ws and len(agents_by_workspace) > 0:
-        agent_ws = list(agents_by_workspace.values())[0]
 
     if agent_ws:
         import uuid
@@ -815,10 +806,7 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
         raise HTTPException(status_code=400, detail="Invalid story_id format")
 
     ws_id = get_workspace_id_from_request(request)
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
-        ws_id = list(agents_by_workspace.keys())[0]
-
-    agent_ws = agents_by_workspace.get(ws_id)
+    agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
     if agent_ws:
         try:
             await tunnel_request_to_agent("delete_project_request", {
@@ -870,10 +858,7 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
 @app.post("/v1/projects/cancel-all")
 async def cancel_all_jobs(request: Request):
     ws_id = get_workspace_id_from_request(request)
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
-        ws_id = list(agents_by_workspace.keys())[0]
-
-    agent_ws = agents_by_workspace.get(ws_id)
+    agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
     if agent_ws:
         try:
             await tunnel_request_to_agent("cancel_all_jobs_request", {}, workspace_id=ws_id, timeout=3.0)
@@ -949,13 +934,11 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
 @app.get("/v1/projects")
 async def list_projects(request: Request):
     ws_id = get_workspace_id_from_request(request)
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
-        ws_id = list(agents_by_workspace.keys())[0]
     stories = []
     story_ids = []
     agent_files = {}
     
-    agent_ws = agents_by_workspace.get(ws_id)
+    agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
     if agent_ws:
         res = await tunnel_request_to_agent("list_projects_request", {}, workspace_id=ws_id, timeout=15.0)
         if res:
@@ -1365,9 +1348,7 @@ async def get_project_fragments(story_id: str, chapter_id: str):
 @app.post("/v1/projects/{story_id}/{chapter_id}/run")
 async def run_project_pipeline(request: Request, story_id: str, chapter_id: str, request_data: Optional[RunPipelineRequest] = None):
     ws_id = get_workspace_id_from_request(request)
-    if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) > 0:
-        ws_id = list(agents_by_workspace.keys())[0]
-    agent_ws = agents_by_workspace.get(ws_id)
+    agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
     
     project_dir = PROJECTS_DIR / story_id / chapter_id
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -2971,7 +2952,7 @@ async def dashboard():
 
             function changeWorkspacePrompt() {
                 let current = getWorkspaceId();
-                let newWs = prompt("Không gian làm việc (Workspace ID):", current || "huutq");
+                let newWs = prompt("Không gian làm việc (Workspace ID):", current || "");
                 if (newWs && newWs.trim()) {
                     setWorkspaceId(newWs.trim());
                 }
@@ -3011,22 +2992,7 @@ async def dashboard():
                     let welcomeText = document.getElementById("welcome-status-text");
                     let welcomeDot = document.getElementById("welcome-status-dot");
 
-                    // Auto-select online workspace if none saved or current is offline
-                    if (data.active_workspaces && data.active_workspaces.length === 1) {
-                        let autoWs = data.active_workspaces[0];
-                        let currentWs = localStorage.getItem("taka_workspace_id");
-                        if (currentWs !== autoWs) {
-                            localStorage.setItem("taka_workspace_id", autoWs);
-                            let wsEl = document.getElementById("workspace-id-text");
-                            if (wsEl) wsEl.innerText = autoWs;
-                            if (typeof fetchStories === "function") fetchStories();
-                            if (typeof loadProjects === "function") loadProjects();
-                            // Re-fetch status with updated workspace header
-                            if (!data.connected) {
-                                return updateAgentStatus();
-                            }
-                        }
-                    }
+
 
                     if (data.connected) {
                         badge.classList.add("connected");
