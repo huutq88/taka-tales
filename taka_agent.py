@@ -1214,7 +1214,6 @@ def start_local_media_server():
             if self.path.startswith("/v1/local/info") or self.path == "/v1/local/info":
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 info = {
                     "workspace_id": WORKSPACE_ID,
@@ -1252,10 +1251,6 @@ def start_local_media_server():
                     self.send_header('Content-Type', ctype or 'application/octet-stream')
                     self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
                     self.send_header('Content-Length', str(length))
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
-                    self.send_header('Access-Control-Allow-Headers', '*')
-                    self.send_header('Accept-Ranges', 'bytes')
                     self.end_headers()
 
                     with open(fpath, 'rb') as f:
@@ -1776,14 +1771,23 @@ async def main():
                             request_id = message.get("request_id")
                             voice_id = payload.get("voice_id")
                             
-                            voices_base = AGENT_VOICES_DIR
-                            voice_dir = voices_base / voice_id
-                            if voice_dir.exists() and voice_dir.is_dir():
-                                shutil.rmtree(voice_dir)
+                            try:
+                                PROTECTED_VOICES = {"nam-dao-ly", "nu-doc-truyen", "nam_dao_ly", "nu_doc_truyen"}
+                                if voice_id in PROTECTED_VOICES:
+                                    raise ValueError(f"Giọng '{voice_id}' là giọng đọc hệ thống được bảo vệ, không thể xóa!")
+                                voices_base = AGENT_VOICES_DIR
+                                voice_dir = voices_base / voice_id
+                                if voice_dir.exists() and voice_dir.is_dir():
+                                    shutil.rmtree(voice_dir)
+                                res_payload = {"ok": True}
+                            except Exception as del_err:
+                                print(f"[Agent] Error deleting voice directory '{voice_id}': {del_err}")
+                                res_payload = {"ok": False, "error": str(del_err)}
+
                             await websocket.send(json.dumps({
                                 "type": "delete_voice_response",
                                 "request_id": request_id,
-                                "payload": {"ok": True}
+                                "payload": res_payload
                             }))
                 finally:
                     heartbeat_task.cancel()

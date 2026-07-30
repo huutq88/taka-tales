@@ -394,6 +394,9 @@ async def get_agent_status(request: Request):
     active_ws_list = list(agents_by_workspace.keys())
     request_ws = get_workspace_id_from_request(request)
     
+    if (not request_ws or request_ws not in agents_by_workspace) and len(active_ws_list) == 1:
+        request_ws = active_ws_list[0]
+
     connected = bool(request_ws and request_ws in agents_by_workspace)
     st = agent_status.get(request_ws, {}) if (request_ws and connected) else {}
 
@@ -2556,7 +2559,7 @@ async def dashboard():
             </div>
             <nav class="header-menu">
                 <a id="nav-home" onclick="showPage('home')" class="active">Home</a>
-                <a id="nav-dao-ly" onclick="showPage('dao-ly')" style="display: flex; align-items: center; gap: 0.3rem;" title="Tạo video Đạo Lý 1-Click">☯️ Đạo Lý</a>
+                <a id="nav-dao-ly" onclick="showPage('dao-ly')" style="display: flex; align-items: center; gap: 0.3rem;" title="Tạo video Social 1-Click">📱 Video Social</a>
                 <a id="nav-voices" onclick="showPage('voices')">Voices</a>
                 <a id="nav-music" onclick="showPage('music')">Music</a>
             </nav>
@@ -2796,101 +2799,119 @@ async def dashboard():
             </form>
         </dialog>
 
-        <!-- Đạo Lý Studio Dialog -->
-        <dialog id="dao-ly-dialog" style="max-width: 680px; width: 90%;">
-            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; color: #f59e0b;">
-                <span>☯️ Đạo Lý — Tạo Video Triết Lý 1-Click</span>
-                <span style="font-size:0.8rem; opacity:0.6; color: var(--text-muted);">Shorts / Reels Generator</span>
-            </h3>
-            <form id="dao-ly-form" onsubmit="submitDaoLyProject(event)">
-                <div class="form-group" style="margin-top: 1rem;">
-                    <label for="dao-ly-sample-select" style="font-weight: 600; color: #a78bfa;">Chọn Kịch Bản Mẫu (Hoặc Tự Nhập Bằng Tay):</label>
-                    <select id="dao-ly-sample-select" onchange="onSelectDaoLySample(this.value)" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;">
-                        <option value="custom">-- Kịch bản Tùy Chỉnh (Tự nhập tiêu đề & nội dung bên dưới) --</option>
-                        <option value="v1">💔 Ngoại Tình: Bản Chất Của Kẻ Phản Bội (Trò chơi dối trá)</option>
-                        <option value="v2">🌹 Yêu Đương: Đừng Yêu Đến Mất Đi Chính Mình (Tự trọng & Giá trị)</option>
-                        <option value="v3">🏡 Gia Đình: Gia Đình Là Điểm Tựa Duy Nhất (Mái ấm & Phụ mẫu)</option>
-                        <option value="v4">🔥 Ngoại Tình: Cái Giá Của Sự Phản Bội (Nhân quả hôn nhân)</option>
-                        <option value="v5">❤️ Yêu Đương: Gặp Đúng Người, Đúng Thời Điểm (Tình yêu trưởng thành)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="dao-ly-title" style="font-weight: 600; color: #f59e0b;">1. Tiêu đề Video / Tên Kịch Bản:</label>
-                    <input type="text" id="dao-ly-title" required placeholder="Nhập tiêu đề video (e.g. Sự Im Lặng Của Người Trưởng Thành)..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.65rem; border-radius: 6px; outline: none; font-size: 0.95rem; font-weight: 600;">
-                </div>
-                <div class="form-group">
-                    <label for="dao-ly-story-text" style="font-weight: 600; color: #10b981;">2. Nội dung Kịch bản Đọc (Plain Text cho TTS):</label>
-                    <textarea id="dao-ly-story-text" rows="6" required placeholder="Nhập văn bản kịch bản đọc để chuyển thành giọng nói tại đây..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-family: inherit; font-size: 0.9rem; resize: vertical; line-height: 1.5;"></textarea>
-                </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                    <div class="form-group">
-                        <label for="dao-ly-voice" style="font-weight: 600;">Giọng đọc Đạo Lý:</label>
-                        <select id="dao-ly-voice" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
-                            <option value="nam-dao-ly">👨 Nam Đạo Lý (OmniVoice - nam-dao-ly)</option>
-                            <option value="nu-doc-truyen">👩 Nữ Đọc Truyện (OmniVoice - nu-doc-truyen)</option>
-                        </select>
+        <!-- Video Social Full-Screen Dialog -->
+        <dialog id="dao-ly-dialog" style="position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; margin: 0; padding: 0; border: none; background: #0b0f19; color: var(--text-primary); z-index: 9999; box-sizing: border-box;">
+            <div style="display: flex; flex-direction: column; height: 100vh; width: 100vw; box-sizing: border-box;">
+                <!-- Header Bar -->
+                <div style="background: rgba(15, 23, 42, 0.95); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+                    <div style="display: flex; align-items: center; gap: 0.8rem;">
+                        <span style="font-size: 1.6rem;">📱</span>
+                        <div>
+                            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 700; color: #a78bfa; display: flex; align-items: center; gap: 0.5rem;">
+                                <span>Video Social — Tạo Video Ngắn 1-Click</span>
+                            </h2>
+                            <span style="font-size: 0.8rem; color: var(--text-muted);">Tự động tạo video TikTok / Reels / Shorts chuyên nghiệp</span>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="dao-ly-art-style" style="font-weight: 600;">Phong cách vẽ ảnh AI:</label>
-                        <select id="dao-ly-art-style" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
-                            <option value="thuy_mac_blackwhite">☯️ Thủy mặc Đen - Trắng (Khuyên dùng)</option>
-                            <option value="thuy_mac">🖌️ Thủy mặc Đen - Xám mờ sương</option>
-                            <option value="woodblock">🪵 Mộc bản khắc gỗ trắng đen</option>
-                            <option value="watercolor">🎨 Tranh màu nước hoài niệm</option>
-                        </select>
-                    </div>
-                </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem;">
-                    <div class="form-group">
-                        <label for="dao-ly-aspect" style="font-weight: 600;">Tỷ lệ khung hình:</label>
-                        <select id="dao-ly-aspect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
-                            <option value="vertical">📱 Video Dọc (Shorts / TikTok / Reels 9:16)</option>
-                            <option value="horizontal">💻 Video Ngang (YouTube 16:9)</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="dao-ly-effect" style="font-weight: 600;">Hiệu ứng hạt / Khí khí:</label>
-                        <select id="dao-ly-effect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none;">
-                            <option value="leaves">🍁 Lá vàng rơi (Khuyên dùng Đạo Lý)</option>
-                            <option value="snow">❄️ Tuyết rơi lất phất</option>
-                            <option value="rain">🌧️ Mưa bay lất phất</option>
-                            <option value="wind">🍃 Gió thổi chao nghiêng</option>
-                            <option value="none">🚫 Không hiệu ứng</option>
-                        </select>
-                    </div>
+                    <button type="button" onclick="closeDaoLyStudioModal()" style="background: rgba(255,255,255,0.08); border: 1px solid var(--border); color: #fff; width: 38px; height: 38px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s ease;" title="Đóng modal (Esc)">✕</button>
                 </div>
 
-                <div style="display: flex; gap: 1.5rem; margin-top: 1rem; padding: 0.8rem; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--border); justify-content: space-around;">
-                    <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
-                        <input type="checkbox" id="dao-ly-watermark" style="accent-color: #f59e0b; width: 16px; height: 16px;">
-                        <span>🏷️ Watermark</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
-                        <input type="checkbox" id="dao-ly-waveform" style="accent-color: #f59e0b; width: 16px; height: 16px;">
-                        <span>🌊 Sóng âm (Waveform)</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
-                        <input type="checkbox" id="dao-ly-subtitles" checked onchange="toggleSubtitlePresetDisplay('dao-ly')" style="accent-color: #f59e0b; width: 16px; height: 16px;">
-                        <span>💬 Phụ đề (Subtitles)</span>
-                    </label>
-                </div>
+                <!-- Form Body Grid -->
+                <form id="dao-ly-form" onsubmit="submitDaoLyProject(event)" style="display: grid; grid-template-columns: 1fr 440px; gap: 2rem; padding: 1.8rem 2rem; height: calc(100vh - 75px); box-sizing: border-box; overflow: hidden;">
+                    <!-- Left Column: Story Workspace -->
+                    <div style="display: flex; flex-direction: column; gap: 1rem; height: 100%; min-height: 0;">
+                        <div>
+                            <label for="dao-ly-title" style="font-weight: 700; color: #a78bfa; font-size: 0.95rem; margin-bottom: 0.4rem; display: block;">1. Tiêu đề Video / Tên Kịch Bản:</label>
+                            <input type="text" id="dao-ly-title" required placeholder="Nhập tiêu đề video (VD: 5 Thói Quen Của Người Thành Công)..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: #fff; padding: 0.75rem 1rem; border-radius: 8px; font-size: 1rem; font-weight: 600; outline: none; box-sizing: border-box;">
+                        </div>
+                        
+                        <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+                            <label for="dao-ly-story-text" style="font-weight: 700; color: #10b981; font-size: 0.95rem; margin-bottom: 0.4rem; display: flex; justify-content: space-between; align-items: center;">
+                                <span>2. Nội dung Kịch bản Đọc (Plain Text cho TTS):</span>
+                                <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;">(Tự động phân đoạn & sinh lời thoại)</span>
+                            </label>
+                            <textarea id="dao-ly-story-text" required placeholder="Nhập nội dung kịch bản đọc tại đây..." style="flex: 1; width: 100%; background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: #fff; padding: 1rem; border-radius: 8px; font-family: inherit; font-size: 1rem; line-height: 1.65; resize: none; outline: none; box-sizing: border-box;"></textarea>
+                        </div>
+                    </div>
 
-                <div id="dao-ly-preset-container" style="display: flex; gap: 1rem; margin-top: 0.8rem; align-items: center; padding: 0.6rem 0.8rem; background: rgba(245, 158, 11, 0.05); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.2);">
-                    <label style="font-size: 0.85rem; font-weight: bold; color: #f59e0b; white-space: nowrap;">✨ Kiểu Phụ Đề Subtitle Engine:</label>
-                    <select id="dao-ly-subtitle-preset" style="flex: 1; padding: 0.4rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
-                        <option value="storytelling-serif" selected>📜 Storytelling Serif (Đạo Lý Hoài Cổ - Georgia)</option>
-                        <option value="viral-bold-yellow">⚡ Viral Bold Yellow (Vàng Nổi Bật - Montserrat)</option>
-                        <option value="karaoke-green">🎤 Karaoke Green (Xanh Ngọc Mượt - Be Vietnam Pro)</option>
-                        <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương - Outfit)</option>
-                        <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
-                    </select>
-                </div>
+                    <!-- Right Column: Settings Panel -->
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; display: flex; flex-direction: column; gap: 1.2rem; height: 100%; box-sizing: border-box; overflow-y: auto;">
+                        <h4 style="margin: 0; color: #f59e0b; border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; font-size: 1rem; display: flex; align-items: center; gap: 0.4rem;">
+                            <span>⚙️ Cấu Hình Render Video</span>
+                        </h4>
 
-                <div class="dialog-actions" style="margin-top: 1.5rem;">
-                    <button type="button" class="btn-cancel" onclick="closeDaoLyStudioModal()">Hủy</button>
-                    <button type="submit" id="dao-ly-submit-btn" class="btn-submit" style="background: linear-gradient(135deg, #f59e0b, #d97706); border: none; font-weight: bold; font-size: 0.95rem; color: #fff;">🚀 Khởi Tạo & Render Video Đạo Lý</button>
-                </div>
-            </form>
+                        <div class="form-group">
+                            <label for="dao-ly-voice" style="font-weight: 600; font-size: 0.9rem; display: block; margin-bottom: 0.3rem;">🎙️ Giọng đọc TTS:</label>
+                            <select id="dao-ly-voice" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.65rem; border-radius: 6px; outline: none; font-size: 0.9rem;">
+                                <option value="nam-dao-ly">👨 Nam Đạo Lý (OmniVoice - nam-dao-ly)</option>
+                                <option value="nu-doc-truyen">👩 Nữ Đọc Truyện (OmniVoice - nu-doc-truyen)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="dao-ly-art-style" style="font-weight: 600; font-size: 0.9rem; display: block; margin-bottom: 0.3rem;">🎨 Phong cách vẽ ảnh AI:</label>
+                            <select id="dao-ly-art-style" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.65rem; border-radius: 6px; outline: none; font-size: 0.9rem;">
+                                <option value="2d_stick_figure" selected>🎨 2D Stick Figure Cartoon (Người Que 2D Tối Giản)</option>
+                                <option value="thuy_mac_blackwhite">☯️ Thủy mặc Đen - Trắng (Hoài cổ)</option>
+                                <option value="thuy_mac">🖌️ Thủy mặc Đen - Xám mờ sương</option>
+                                <option value="woodblock">🪵 Mộc bản khắc gỗ trắng đen</option>
+                                <option value="watercolor">🎨 Tranh màu nước hoài niệm</option>
+                            </select>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="form-group">
+                                <label for="dao-ly-aspect" style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.3rem;">📐 Khung hình:</label>
+                                <select id="dao-ly-aspect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-size: 0.85rem;">
+                                    <option value="vertical">📱 Dọc (9:16)</option>
+                                    <option value="horizontal">💻 Ngang (16:9)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="dao-ly-effect" style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.3rem;">✨ Hiệu ứng Hạt:</label>
+                                <select id="dao-ly-effect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-size: 0.85rem;">
+                                    <option value="leaves">🍁 Lá vàng rơi</option>
+                                    <option value="snow">❄️ Tuyết rơi</option>
+                                    <option value="rain">🌧️ Mưa bay</option>
+                                    <option value="wind">🍃 Gió thổi</option>
+                                    <option value="none">🚫 Không hiệu ứng</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="dao-ly-preset-container" style="display: flex; flex-direction: column; gap: 0.4rem; padding: 0.8rem; background: rgba(245, 158, 11, 0.06); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.25);">
+                            <label style="font-size: 0.85rem; font-weight: bold; color: #f59e0b;">💬 Kiểu Phụ Đề Subtitle Preset:</label>
+                            <select id="dao-ly-subtitle-preset" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
+                                <option value="2d-stick-figure-cartoon" selected>🎨 2D Stick Figure Cartoon (Nền Cream #ECE7D8)</option>
+                                <option value="viral-bold-yellow">⚡ Viral Bold Yellow (Vàng Nổi Bật - Montserrat)</option>
+                                <option value="karaoke-green">🎤 Karaoke Green (Xanh Ngọc Mượt)</option>
+                                <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương - Outfit)</option>
+                                <option value="storytelling-serif">📜 Storytelling Serif (Hoài Cổ - Georgia)</option>
+                                <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
+                            </select>
+                        </div>
+
+                        <div style="display: flex; gap: 1rem; padding: 0.8rem; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--border); justify-content: space-around;">
+                            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
+                                <input type="checkbox" id="dao-ly-watermark" style="accent-color: #8b5cf6; width: 16px; height: 16px;">
+                                <span>🏷️ Watermark</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
+                                <input type="checkbox" id="dao-ly-waveform" style="accent-color: #8b5cf6; width: 16px; height: 16px;">
+                                <span>🌊 Waveform</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
+                                <input type="checkbox" id="dao-ly-subtitles" checked onchange="toggleSubtitlePresetDisplay('dao-ly')" style="accent-color: #8b5cf6; width: 16px; height: 16px;">
+                                <span>💬 Phụ đề</span>
+                            </label>
+                        </div>
+
+                        <div style="margin-top: auto; padding-top: 1rem;">
+                            <button type="submit" id="dao-ly-submit-btn" class="btn-submit" style="width: 100%; padding: 0.95rem; background: linear-gradient(135deg, #6366f1, #8b5cf6); border: none; font-weight: 700; font-size: 1.05rem; color: #fff; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.35);">🚀 Khởi Tạo & Render Video Social</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
         </dialog>
 
         <!-- Voices Page Layout (Hidden by default) -->
@@ -3060,7 +3081,7 @@ async def dashboard():
                 options.headers = options.headers || {};
                 let wsId = getWorkspaceId();
                 let urlStr = typeof url === 'string' ? url : (url ? url.toString() : '');
-                if (wsId) {
+                if (wsId && !urlStr.includes(":8766")) {
                     if (options.headers instanceof Headers) {
                         options.headers.set("X-Workspace-ID", wsId);
                     } else if (Array.isArray(options.headers)) {
@@ -3083,7 +3104,7 @@ async def dashboard():
                     try {
                         let controller = new AbortController();
                         let timeoutId = setTimeout(() => controller.abort(), 800);
-                        let localRes = await fetch("http://127.0.0.1:8766/v1/local/info", { signal: controller.signal });
+                        let localRes = await originalFetch("http://127.0.0.1:8766/v1/local/info", { signal: controller.signal });
                         clearTimeout(timeoutId);
                         if (localRes.ok) {
                             let localInfo = await localRes.json();
@@ -3105,8 +3126,6 @@ async def dashboard():
                     let welcomeText = document.getElementById("welcome-status-text");
                     let welcomeDot = document.getElementById("welcome-status-dot");
 
-
-
                     let curWs = getWorkspaceId();
                     let wsEl = document.getElementById("workspace-id-text");
 
@@ -3122,12 +3141,12 @@ async def dashboard():
                     }
 
                     if (data.connected) {
-                        badge.classList.add("connected");
-                        let info = Object.values(data.agents)[0] || {};
-                        let version = info.agent_version || "";
+                        if (badge) badge.classList.add("connected");
+                        let info = (data.agents && data.workspace_id && data.agents[data.workspace_id]) || (data.agents ? Object.values(data.agents)[0] : {}) || {};
+                        let version = info.agent_version || data.agent_version || "";
                         
                         if (data.needs_update) {
-                            text.innerHTML = `Agent Connected ${version} <span style="background: #f59e0b; color: #000; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-left: 0.5rem; display: inline-block;">Update Available (v${data.server_version})</span>`;
+                            if (text) text.innerHTML = `Agent Connected ${version} <span style="background: #f59e0b; color: #000; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-left: 0.5rem; display: inline-block;">Update Available (v${data.server_version})</span>`;
                             
                             if (welcomeStatus) {
                                 welcomeStatus.style.background = "rgba(245, 158, 11, 0.1)";
@@ -3142,7 +3161,7 @@ async def dashboard():
                                 welcomeDot.style.boxShadow = "0 0 8px #f59e0b";
                             }
                         } else {
-                            text.innerText = "Agent Connected " + version;
+                            if (text) text.innerText = "Agent Connected " + version;
                             
                             if (welcomeStatus) {
                                 welcomeStatus.style.background = "rgba(16, 185, 129, 0.1)";
@@ -3158,8 +3177,8 @@ async def dashboard():
                             }
                         }
                     } else {
-                        badge.classList.remove("connected");
-                        text.innerText = "Agent Offline";
+                        if (badge) badge.classList.remove("connected");
+                        if (text) text.innerText = "Agent Offline";
                         
                         if (welcomeStatus) {
                             welcomeStatus.style.background = "rgba(239, 68, 68, 0.1)";
@@ -3174,7 +3193,9 @@ async def dashboard():
                             welcomeDot.style.boxShadow = "0 0 8px #ef4444";
                         }
                     }
-                } catch(e) {}
+                } catch(e) {
+                    console.error("Error updating agent status:", e);
+                }
             }
 
             async function addNewStory() {
@@ -4098,12 +4119,10 @@ Nhấn đăng ký kênh để đón nhận thêm nhiều thông điệp ý nghĩ
                 if (dialog) {
                     let titleInput = document.getElementById("dao-ly-title");
                     let textInput = document.getElementById("dao-ly-story-text");
-                    let select = document.getElementById("dao-ly-sample-select");
                     let submitBtn = document.getElementById("dao-ly-submit-btn");
 
                     if (storyId) {
-                        if (submitBtn) submitBtn.innerText = "🚀 Khởi Chạy Lại Pipeline Đạo Lý";
-                        if (select) select.value = "custom";
+                        if (submitBtn) submitBtn.innerText = "🚀 Khởi Chạy Lại Pipeline Video Social";
                         if (titleInput) titleInput.value = storyId;
                         if (textInput) textInput.value = "Đang tải kịch bản...";
                         
@@ -4124,12 +4143,8 @@ Nhấn đăng ký kênh để đón nhận thêm nhiều thông điệp ý nghĩ
                             if (textInput) textInput.value = "";
                         }
                     } else {
-                        if (submitBtn) submitBtn.innerText = "🚀 Khởi Tạo & Render Video Đạo Lý";
-                        if (select) select.value = "custom";
-                        if (titleInput) {
-                            let timestamp = new Date().toISOString().replace(/[-:T.]/g, "").slice(2, 10);
-                            titleInput.value = "Kịch Bản Đạo Lý " + timestamp;
-                        }
+                        if (submitBtn) submitBtn.innerText = "🚀 Khởi Tạo & Render Video Social";
+                        if (titleInput) titleInput.value = "";
                         if (textInput) textInput.value = "";
                     }
                     await loadVoicesDropdown();

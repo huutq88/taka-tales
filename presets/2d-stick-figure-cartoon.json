@@ -1,0 +1,73 @@
+{
+  "id": "2d-stick-figure-cartoon",
+  "name": "2D Stick Figure Cartoon",
+  "description": "Style hoạt hình người que 2D (minimalist 2D flat vector explainer), màu nền Cream #ECE7D8, áo cam #F4A621, cà vạt đen #181818, nét vẽ 8px viền đen bo tròn, chữ tiêu đề tím neon và phụ đề trắng viền đen.",
+  "renderer_hint": "ass",
+  "segmentation": {
+    "min_words": 2,
+    "max_words": 6,
+    "min_duration_ms": 500,
+    "max_duration_ms": 2500,
+    "max_chars_per_line": 22,
+    "max_lines": 2,
+    "pause_threshold_ms": 350
+  },
+  "layout": {
+    "type": "bottom-center",
+    "safe_bottom": 420,
+    "max_width_ratio": 0.85,
+    "line_spacing": 12
+  },
+  "color_palette": {
+    "background": "#ECE7D8",
+    "lines_black": "#181818",
+    "fill_white": "#FFFFFF",
+    "main_accent_orange": "#F4A621",
+    "secondary_accent_gray": "#8A8A8A",
+    "warning_red": "#D64545"
+  },
+  "font": {
+    "family": "Montserrat ExtraBold",
+    "size": 56,
+    "weight": 800
+  },
+  "text": {
+    "color": "#FFFFFF",
+    "active_color": "#FFD400"
+  },
+  "header_text": {
+    "color": "#D000FF",
+    "font_size": 64,
+    "position": "top-center"
+  },
+  "outline": {
+    "enabled": true,
+    "color": "#000000",
+    "width": 6
+  },
+  "shadow": {
+    "enabled": true,
+    "x": 0,
+    "y": 4,
+    "blur": 4,
+    "color": "#000000CC"
+  },
+  "image_prompt": {
+    "prefix": "minimalist 2D flat vector explainer illustration, educational infographic animation style, cream background #ECE7D8, stickman character with white circular head, thick 8px black outline, orange shirt #F4A621, black necktie, simple black limbs",
+    "suffix": "clean geometric shapes, flat color fills, no gradients, no photorealism, no texture, high contrast vector art, Adobe Illustrator style presentation",
+    "negative": "photorealistic, 3d render, complex gradient, dark shadows, noise, grainy texture, busy detailed background, glossy"
+  },
+  "design_system_board": {
+    "character": {
+      "head": "White circular head (#FFFFFF) with thick black outline (#181818)",
+      "shirt": "Orange (#F4A621)",
+      "tie": "Black necktie (#181818)",
+      "limbs": "Simple black stick limbs with rounded caps",
+      "expressions": ["Happy", "Sad", "Angry", "Thinking", "Crying", "Surprised"],
+      "poses": ["Walking", "Running", "Pointing", "Sitting", "Climbing", "Carrying"]
+    },
+    "icon_system": ["Heart", "Brain", "Money", "Clock", "Target", "Rocket", "Fire", "Mountain", "Book", "Light bulb", "Shield", "Warning"],
+    "prop_library": ["Stone labeled 'ÁC Ý'", "Success flag", "Stairs", "Arrow", "Speech bubble", "Cloud", "Broken heart", "Mountain", "Door", "Key", "Chain", "Bridge"],
+    "compositions": ["Before vs After", "Three-step explanation", "Cause → Effect"]
+  }
+}
