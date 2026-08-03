@@ -114,34 +114,64 @@ EFFECT_TYPE: str = config["STABLE_DIFFUSION"].get("EFFECT_TYPE", fallback="none"
 
 def configure_project_resolution(project_dir: pathlib.Path = None, aspect_ratio: str = None) -> None:
     global IMAGE_WIDTH, IMAGE_HEIGHT
-    is_horizontal = False
+    is_horizontal = None
     if aspect_ratio:
         is_horizontal = (aspect_ratio in ("16:9", "horizontal", "landscape"))
     elif project_dir:
-        ar_file = project_dir / "aspect_ratio.txt"
-        if ar_file.exists():
-            try:
-                ar_val = ar_file.read_text(encoding="utf-8").strip()
-                if ar_val in ("16:9", "horizontal", "landscape"):
-                    is_horizontal = True
-                elif ar_val in ("9:16", "vertical", "portrait"):
-                    is_horizontal = False
-            except Exception:
-                pass
-        elif (project_dir / "project_config.json").exists():
-            try:
-                with open(project_dir / "project_config.json", "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-                aspect_val = cfg.get("aspect_ratio") or cfg.get("aspect")
-                if aspect_val in ("16:9", "horizontal", "landscape"):
-                    is_horizontal = True
-                elif aspect_val in ("9:16", "vertical", "portrait"):
-                    is_horizontal = False
-            except Exception:
-                pass
-        elif "longform" in str(project_dir).lower():
-            is_horizontal = True
-                
+        dirs_to_check = [project_dir, project_dir.parent]
+        if project_dir.parent:
+            dirs_to_check.append(project_dir.parent.parent)
+        for check_d in dirs_to_check:
+            if not check_d or not check_d.exists():
+                continue
+            ar_file = check_d / "aspect_ratio.txt"
+            if ar_file.exists():
+                try:
+                    ar_val = ar_file.read_text(encoding="utf-8").strip()
+                    if ar_val in ("16:9", "horizontal", "landscape"):
+                        is_horizontal = True
+                        break
+                    elif ar_val in ("9:16", "vertical", "portrait"):
+                        is_horizontal = False
+                        break
+                except Exception:
+                    pass
+            if (check_d / "project_config.json").exists():
+                try:
+                    with open(check_d / "project_config.json", "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                    aspect_val = cfg.get("aspect_ratio") or cfg.get("aspect")
+                    if aspect_val in ("16:9", "horizontal", "landscape"):
+                        is_horizontal = True
+                        break
+                    elif aspect_val in ("9:16", "vertical", "portrait"):
+                        is_horizontal = False
+                        break
+                except Exception:
+                    pass
+            if (check_d / "content.json").exists():
+                try:
+                    with open(check_d / "content.json", "r", encoding="utf-8") as f:
+                        cdata = json.load(f)
+                    if isinstance(cdata, dict):
+                        aspect_val = cdata.get("aspect_ratio")
+                        if aspect_val in ("16:9", "horizontal", "landscape"):
+                            is_horizontal = True
+                            break
+                        elif aspect_val in ("9:16", "vertical", "portrait"):
+                            is_horizontal = False
+                            break
+                except Exception:
+                    pass
+
+        if is_horizontal is None:
+            p_str = str(project_dir).lower()
+            if any(k in p_str for k in ("longform", "tri-thuc", "knowledge", "sketch", "story")):
+                is_horizontal = True
+
+    if is_horizontal is None:
+        is_horizontal = True
+
     if is_horizontal:
         IMAGE_WIDTH = 1920
         IMAGE_HEIGHT = 1080
@@ -499,6 +529,7 @@ def generate_sd_payload(prompt: str, negative_prompt: str) -> Dict[str, Any]:
 
 
 def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, force: bool = False) -> None:
+    configure_project_resolution(project_dir)
     prompt_path = project_dir / f"text/image_prompts/image_prompt{idx}.txt"
     image_path = project_dir / f"images/image{idx}.jpg"
     if image_path.exists() and not force:
