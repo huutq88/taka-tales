@@ -1988,13 +1988,24 @@ async def get_project_fragments(story_id: str, chapter_id: str):
                                     target_ratio = 4.0 / 5.0
                                 elif configured_aspect_ratio == "21:9":
                                     target_ratio = 21.0 / 9.0
-
-                                if target_ratio > 1.05 and actual_ratio < 0.95:
-                                    aspect_mismatch = True
-                                elif target_ratio < 0.95 and actual_ratio > 1.05:
-                                    aspect_mismatch = True
-                                elif 0.95 <= target_ratio <= 1.05 and (actual_ratio < 0.85 or actual_ratio > 1.15):
-                                    aspect_mismatch = True
+                                if configured_aspect_ratio == "16:9":
+                                    if actual_ratio < 1.25:
+                                        aspect_mismatch = True
+                                elif configured_aspect_ratio == "9:16":
+                                    if actual_ratio > 0.80:
+                                        aspect_mismatch = True
+                                elif configured_aspect_ratio == "1:1":
+                                    if actual_ratio < 0.85 or actual_ratio > 1.15:
+                                        aspect_mismatch = True
+                                elif configured_aspect_ratio in ("4:3", "21:9"):
+                                    if actual_ratio < 1.15:
+                                        aspect_mismatch = True
+                                elif configured_aspect_ratio in ("3:4", "4:5"):
+                                    if actual_ratio > 0.90:
+                                        aspect_mismatch = True
+                                else:
+                                    if abs(actual_ratio - target_ratio) / target_ratio > 0.15:
+                                        aspect_mismatch = True
                         except Exception:
                             pass
                         break
