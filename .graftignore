@@ -1,0 +1,11 @@
+env/
+venv/
+.venv/
+tools/
+projects/
+data/
+bg_music/
+docs/
+node_modules/
+*.pyc
+__pycache__/

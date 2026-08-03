@@ -29,13 +29,13 @@ def migrate_projects_structure(projects_dir: pathlib.Path):
     if not projects_dir or not projects_dir.exists():
         return
     dao_ly_dir = projects_dir / "dao-ly"
-    dao_ly_dir.mkdir(parents=True, exist_ok=True)
     
     for item in list(projects_dir.iterdir()):
         if not item.is_dir() or item.name.startswith(".") or item.name in ("music", "dao-ly", "affiliate", "test_project_1"):
             continue
             
         if item.name.startswith("dao_ly_") or item.name.startswith("dao-ly-"):
+            dao_ly_dir.mkdir(parents=True, exist_ok=True)
             sub_story = item / "story"
             target_dir = dao_ly_dir / item.name
             if sub_story.exists() and sub_story.is_dir():
@@ -51,6 +51,13 @@ def migrate_projects_structure(projects_dir: pathlib.Path):
                     shutil.move(str(item), str(target_dir))
                     print(f"[Agent Migration] Moved legacy project {item} -> {target_dir}")
 
+    # Remove empty dao-ly directory if created previously with no items
+    if dao_ly_dir.exists() and not any(p for p in dao_ly_dir.iterdir() if not p.name.startswith(".")):
+        try:
+            shutil.rmtree(dao_ly_dir, ignore_errors=True)
+        except Exception:
+            pass
+
 migrate_projects_structure(AGENT_PROJECTS_DIR)
 
 agent_active_tasks: Dict[str, asyncio.Task] = {}
@@ -61,6 +68,12 @@ async def safe_send_ws(ws, payload: dict):
     if not ws:
         return
     try:
+        if isinstance(payload, dict) and payload.get("type") == "pipeline_progress" and payload.get("project_name"):
+            pname = payload["project_name"]
+            if "story_id" not in payload and "_" in pname:
+                sp, cp = pname.rsplit("_", 1)
+                payload["story_id"] = sp
+                payload["chapter_id"] = cp
         await ws.send(json.dumps(payload))
     except Exception as e:
         print(f"[Agent] Warning: WS send progress skipped ({e})")
@@ -122,16 +135,20 @@ async def enqueue_or_run_job(
     story_text: str = None,
     force_rerun: bool = False,
     effect_type: str = "leaves",
+    image_generator: str = "ima2",
     pipeline_type: str = "story",
     music_b64: str = None,
     music_filename: str = None,
-    music_local_path: str = None
+    music_local_path: str = None,
+    rerun_mode: str = "all",
+    aspect_ratio: str = None
 ):
     payload = {
         "project_name": project_name,
         "project_path": project_path_str,
         "voice_config": voice_config,
         "art_style": art_style,
+        "image_generator": image_generator,
         "use_watermark": use_watermark,
         "use_waveform": use_waveform,
         "use_subtitles": use_subtitles,
@@ -143,7 +160,9 @@ async def enqueue_or_run_job(
         "pipeline_type": pipeline_type,
         "music_b64": music_b64,
         "music_filename": music_filename,
-        "music_local_path": music_local_path
+        "music_local_path": music_local_path,
+        "rerun_mode": rerun_mode,
+        "aspect_ratio": aspect_ratio
     }
     
     if agent_active_tasks or not pipeline_queue.empty():
@@ -184,7 +203,8 @@ async def enqueue_or_run_job(
                 project_name, project_path_str, websocket, voice_config, art_style,
                 use_watermark=use_watermark, use_waveform=use_waveform,
                 use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
-                story_text=story_text, force_rerun=force_rerun, effect_type=effect_type
+                story_text=story_text, force_rerun=force_rerun, effect_type=effect_type,
+                image_generator=image_generator, rerun_mode=rerun_mode, aspect_ratio=aspect_ratio
             ))
             agent_active_tasks[project_name] = t
         return {"status": "running"}
@@ -226,6 +246,9 @@ async def process_next_queued_job():
             else:
                 story_text = payload.get("story_text")
                 effect_type = payload.get("effect_type", "leaves")
+                image_generator = payload.get("image_generator", "ima2")
+                rerun_mode = payload.get("rerun_mode", "all")
+                aspect_ratio = payload.get("aspect_ratio")
                 t = asyncio.create_task(run_pipeline_task(
                     project_name, payload.get("project_path"), websocket,
                     payload.get("voice_config"), payload.get("art_style"),
@@ -235,7 +258,10 @@ async def process_next_queued_job():
                     subtitle_preset=payload.get("subtitle_preset", "viral-bold-yellow"),
                     story_text=story_text,
                     force_rerun=payload.get("force_rerun", False),
-                    effect_type=effect_type
+                    effect_type=effect_type,
+                    image_generator=image_generator,
+                    rerun_mode=rerun_mode,
+                    aspect_ratio=aspect_ratio
                 ))
                 agent_active_tasks[project_name] = t
             break
@@ -270,7 +296,7 @@ if server_env:
 else:
     SERVER_URL = config.get("TAKA_AGENT", "SERVER_URL", fallback="https://tales.taka.zone")
 config_ws = config.get("TAKA_AGENT", "WORKSPACE_ID", fallback="").strip()
-if config_ws and config_ws != "default_workspace" and not config_ws.startswith("device_"):
+if config_ws and config_ws.lower() not in ("auto", "default", "default_workspace") and not config_ws.startswith("device_"):
     WORKSPACE_ID = config_ws
 else:
     WORKSPACE_ID = get_default_workspace_id()
@@ -299,6 +325,18 @@ else:
 ws_url = f"{ws_base}/v1/system/agent/ws?workspace_id={WORKSPACE_ID}"
 
 active_websocket = None
+
+async def send_ws_message(msg: dict) -> bool:
+    """Send WS message safely using active_websocket connection."""
+    global active_websocket
+    ws = active_websocket
+    if ws:
+        try:
+            await ws.send(json.dumps(msg))
+            return True
+        except Exception as err:
+            print(f"[Agent WS Warning] Failed to send message over active WS: {err}")
+    return False
 
 _env_cache = None
 
@@ -404,6 +442,11 @@ async def setup_omnivoice():
     OMNIVOICE_MODEL_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[Agent] OmniVoice environment configured at {OMNIVOICE_PATH}.")
 
+def normalize_units_for_tts(text: str, language: str = "vi") -> str:
+    from core.text_formatter import normalize_units_for_tts as _core_normalize
+    return _core_normalize(text, language=language)
+
+
 def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
     """Generate audio using OmniVoice cloned repo."""
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -430,10 +473,19 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
     if not language:
         language = "vi"
         
+    import re
+    clean_text = text.replace("\\n", " ").replace("\n", " ")
+    clean_text = re.sub(r'\[.*?\]', '', clean_text)
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+    if not clean_text:
+        clean_text = text
+
+    clean_text = normalize_units_for_tts(clean_text, language)
+
     cmd = [
         sys.executable, str(script_path),
         "--model", "k2-fsa/OmniVoice",
-        "--text", text,
+        "--text", clean_text,
         "--language", language,
         "--output", str(out)
     ]
@@ -454,8 +506,8 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         mode = voice_config.get("omnivoice_mode")
         if mode == "clone" and voice_config.get("ref_audio_path"):
             cmd += ["--ref_audio", voice_config["ref_audio_path"]]
-            if voice_config.get("ref_text"):
-                cmd += ["--ref_text", voice_config["ref_text"]]
+            # Omit --ref_text so OmniVoice auto-transcribes reference audio with Whisper ASR,
+            # which avoids prepending reference text to generated voiceover.
         elif mode == "design" and voice_config.get("voice_instruct"):
             raw_inst = voice_config["voice_instruct"].strip()
             valid_tags = {
@@ -470,6 +522,13 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
             if not matched:
                 matched = ["male", "low pitch"] if "nam" in raw_inst.lower() else ["female", "low pitch"]
             cmd += ["--instruct", ", ".join(matched)]
+
+        if voice_config.get("speed") is not None:
+            try:
+                sp_val = float(voice_config["speed"])
+                cmd += ["--speed", str(sp_val)]
+            except (ValueError, TypeError):
+                pass
 
     print(f"[Agent] Executing OmniVoice CLI command: {' '.join(cmd)}")
     try:
@@ -488,8 +547,6 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
 
 async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
     """Routing helper that generates voiceover according to provider settings."""
-    from core.text_formatter import format_for_voice
-    text = format_for_voice(text)
     default_config = {
         "provider": config.get("AUDIO", "TTS_PROVIDER", fallback="edge"),
         "omnivoice_mode": config.get("AUDIO", "OMNIVOICE_MODE", fallback="auto"),
@@ -497,7 +554,8 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         "ref_text": config.get("AUDIO", "OMNIVOICE_REF_TEXT", fallback=None),
         "voice_instruct": config.get("AUDIO", "OMNIVOICE_INSTRUCT", fallback=None),
         "voice_id": config.get("AUDIO", "VOICE", fallback=None),
-        "language": config.get("OMNIVOICE", "LANGUAGE", fallback="vi")
+        "language": config.get("OMNIVOICE", "LANGUAGE", fallback="vi"),
+        "speed": float(config.get("AUDIO", "OMNIVOICE_SPEED", fallback="0.85"))
     }
     
     # Merge custom voice_config over defaults
@@ -553,16 +611,20 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
             if not voice_instruct_file.exists():
                 voice_instruct_file = voice_dir / "instruct.txt"
             
+            profile_ref_audio = None
             if local_path_file.exists():
                 try:
                     with open(local_path_file, "r", encoding="utf-8") as f:
-                        merged_config["ref_audio_path"] = f.read().strip()
+                        path_str = f.read().strip()
+                        if path_str and pathlib.Path(path_str).exists():
+                            profile_ref_audio = path_str
                 except Exception as ex:
                     print(f"[Agent] Failed to read local_path.txt: {ex}")
-            elif ref_audio_file.exists():
-                merged_config["ref_audio_path"] = str(ref_audio_file)
-            else:
-                merged_config["ref_audio_path"] = None
+            if not profile_ref_audio and ref_audio_file and ref_audio_file.exists():
+                profile_ref_audio = str(ref_audio_file)
+            
+            if profile_ref_audio:
+                merged_config["ref_audio_path"] = profile_ref_audio
             
             if ref_text_file.exists():
                 try:
@@ -570,8 +632,6 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
                         merged_config["ref_text"] = f.read().strip()
                 except Exception as ex:
                     print(f"[Agent] Failed to read ref_text.txt: {ex}")
-            else:
-                merged_config["ref_text"] = None
 
             if voice_instruct_file.exists():
                 try:
@@ -582,20 +642,24 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
                 except Exception as ex:
                     print(f"[Agent] Failed to read voice_instruct.txt: {ex}")
 
+    lang = merged_config.get("language", "vi")
+    from core.text_formatter import format_for_voice
+    formatted_text = format_for_voice(text, language=lang)
+
     provider = merged_config.get("provider", "edge").lower()
-    print(f"[Agent] Routing TTS generation. provider={provider}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in merged_config.items() if k != 'ref_audio_b64'} }")
+    print(f"[Agent] Routing TTS generation. provider={provider}, language={lang}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in merged_config.items() if k != 'ref_audio_b64'} }")
     if voice_id:
         print(f"[Agent] Resolved local voice profile for voice_id='{voice_id}': ref_audio_path='{merged_config.get('ref_audio_path')}', ref_text='{merged_config.get('ref_text')}'")
     
     if provider == "omnivoice":
-        await asyncio.to_thread(tts_omnivoice, text, out, merged_config)
+        await asyncio.to_thread(tts_omnivoice, formatted_text, out, merged_config)
     elif provider == "kokoro":
         custom_voice = merged_config.get("voice_id")
         orig_voice = video_engine.KOKORO_VOICE_ID
         if custom_voice:
             video_engine.KOKORO_VOICE_ID = custom_voice
         try:
-            await asyncio.to_thread(video_engine.tts_kokoro, text, out)
+            await asyncio.to_thread(video_engine.tts_kokoro, formatted_text, out)
         finally:
             video_engine.KOKORO_VOICE_ID = orig_voice
     elif provider == "elevenlabs":
@@ -604,7 +668,7 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         if custom_voice:
             video_engine.ELEVENLABS_VOICE_ID = custom_voice
         try:
-            await asyncio.to_thread(video_engine.tts_elevenlabs, text, out)
+            await asyncio.to_thread(video_engine.tts_elevenlabs, formatted_text, out)
         finally:
             video_engine.ELEVENLABS_VOICE_ID = orig_voice
     else:  # edge-tts
@@ -613,11 +677,116 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         if custom_voice:
             video_engine.VOICE = custom_voice
         try:
-            await video_engine.tts_edge(text, out)
+            await video_engine.tts_edge(formatted_text, out)
         finally:
             video_engine.VOICE = orig_voice
 
-async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_waveform: bool = True, use_subtitles: bool = True, subtitle_preset: str = "viral-bold-yellow", story_text: str = None, force_rerun: bool = False, effect_type: str = "leaves"):
+def update_reels_content_json(category_dir: pathlib.Path) -> None:
+    """Scan created chapter subdirectories in category_dir and update category-level content.json (appending new items to the end)."""
+    if not category_dir or not category_dir.exists():
+        return
+    import glob
+    kien_thuc_map = {}
+    for fpath in glob.glob("data/kien-thuc/*.json") + glob.glob("data/kien-thuc-longform/*.json") + glob.glob("data/monochromatic_pencil_sketch/*.json"):
+        try:
+            data = json.load(open(fpath, encoding="utf-8"))
+            if isinstance(data, dict) and "slug" in data:
+                kien_thuc_map[data["slug"]] = data
+        except Exception:
+            pass
+
+    # 1. Gather all currently existing valid chapter subdirectories
+    existing_subdirs = {
+        p.name: p for p in category_dir.iterdir()
+        if p.is_dir() and (p / "project_config.json").exists()
+    }
+
+    rel_workspace = pathlib.Path("projects") / category_dir.name
+    if rel_workspace.exists():
+        for p in rel_workspace.iterdir():
+            if p.is_dir() and (p / "project_config.json").exists():
+                existing_subdirs[p.name] = p
+
+    # 2. Read existing items from content.json (if present) to keep order
+    content_file = category_dir / "content.json"
+    if not content_file.exists() and (rel_workspace / "content.json").exists():
+        content_file = rel_workspace / "content.json"
+
+    base_dict = {}
+    old_items = []
+    if content_file.exists():
+        try:
+            with open(content_file, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+            if isinstance(raw_data, dict):
+                base_dict = raw_data
+                old_items = raw_data.get("items", [])
+            elif isinstance(raw_data, list):
+                old_items = raw_data
+        except Exception:
+            old_items = []
+
+    # 3. Filter old items to keep only those that still exist on disk
+    final_items = []
+    seen_slugs = set()
+    for item in old_items:
+        if isinstance(item, dict) and "slug" in item:
+            slug = item["slug"]
+            if slug in existing_subdirs and slug not in seen_slugs:
+                final_items.append(item)
+                seen_slugs.add(slug)
+
+    # 4. Append newly created chapters to the END of the list
+    for slug in sorted(existing_subdirs.keys()):
+        if slug not in seen_slugs:
+            info = kien_thuc_map.get(slug, {})
+            title = info.get("title", slug.replace("-", " ").title())
+            short_title = info.get("short_title", title)
+            item_data = {
+                "slug": slug,
+                "title": title,
+                "short_title": short_title
+            }
+            final_items.append(item_data)
+            seen_slugs.add(slug)
+
+    # 5. Write content.json inside each chapter folder
+    for slug, p in existing_subdirs.items():
+        info = kien_thuc_map.get(slug, {})
+        title = info.get("title", slug.replace("-", " ").title())
+        short_title = info.get("short_title", title)
+        item_data = {
+            "slug": slug,
+            "title": title,
+            "short_title": short_title
+        }
+        try:
+            with open(p / "content.json", "w", encoding="utf-8") as f:
+                json.dump(item_data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    # 6. Write final category-level content.json (preserving dict structure with project_type)
+    if base_dict:
+        out_content = dict(base_dict)
+        out_content["items"] = final_items
+    else:
+        out_content = {
+            "project_name": category_dir.name,
+            "project_type": ("long" if "videos" in category_dir.name or "longform" in category_dir.name or "sketch" in category_dir.name else ("reels" if "reels" in category_dir.name else "story")),
+            "items": final_items
+        }
+
+    for dest in (category_dir, rel_workspace):
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            cpath = dest / "content.json"
+            with open(cpath, "w", encoding="utf-8") as f:
+                json.dump(out_content, f, ensure_ascii=False, indent=2)
+        except Exception as ex:
+            print(f"[Agent] Failed to write content.json to {dest}: {ex}")
+
+async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_waveform: bool = True, use_subtitles: bool = True, subtitle_preset: str = "viral-bold-yellow", story_text: str = None, force_rerun: bool = False, effect_type: str = "leaves", image_generator: str = "ima2", rerun_mode: str = "all", aspect_ratio: str = None):
     """Executes the full Taka-Tales pipeline and reports progress in real time."""
     try:
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
@@ -625,6 +794,37 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
         story_id = path_obj.parent.name
         chapter_id = path_obj.name
         project_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
+
+        req_aspect = aspect_ratio
+        if not req_aspect and voice_config:
+            req_aspect = voice_config.get("aspect_ratio")
+        if not req_aspect and (project_dir / "item.json").exists():
+            try:
+                with open(project_dir / "item.json", "r", encoding="utf-8") as f:
+                    ij = json.load(f)
+                req_aspect = ij.get("aspect_ratio")
+            except Exception:
+                pass
+        if not req_aspect and (project_dir / "aspect_ratio.txt").exists():
+            try:
+                req_aspect = (project_dir / "aspect_ratio.txt").read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+        if not req_aspect and (project_dir / "project_config.json").exists():
+            try:
+                with open(project_dir / "project_config.json", "r", encoding="utf-8") as f:
+                    pc = json.load(f)
+                req_aspect = pc.get("aspect_ratio")
+            except Exception:
+                pass
+
+        is_long = ("long" in story_id.lower() or "videos" in story_id.lower() or "sketch" in story_id.lower())
+        final_aspect = req_aspect or ("16:9" if is_long else "9:16")
+        project_dir.mkdir(parents=True, exist_ok=True)
+        with open(project_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
+            f.write(final_aspect)
+
+        video_engine.configure_project_resolution(project_dir, final_aspect)
         
         existing_story = None
         if (project_dir / "story.txt").exists():
@@ -642,32 +842,98 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
         project_dir.mkdir(parents=True, exist_ok=True)
         
         # Save story.txt if sent by server or if it already existed
+        script_lang = None
         story_to_save = story_text or existing_story
         if story_to_save:
+            story_str = story_to_save.strip()
+            if story_str.startswith("{") and story_str.endswith("}"):
+                try:
+                    js = json.loads(story_str)
+                    if isinstance(js, dict):
+                        if "language" in js:
+                            script_lang = js["language"]
+                        if "content" in js:
+                            story_to_save = js["content"]
+                except Exception:
+                    pass
+
+        if not script_lang and project_dir:
+            import glob
+            for fpath in glob.glob("data/kien-thuc/*.json") + glob.glob("data/kien-thuc-longform/*.json") + glob.glob("data/monochromatic_pencil_sketch/*.json"):
+                try:
+                    data = json.load(open(fpath, encoding="utf-8"))
+                    if isinstance(data, dict) and data.get("slug") == project_dir.name:
+                        script_lang = data.get("language")
+                        break
+                except Exception:
+                    pass
+
+        if script_lang:
+            if not voice_config:
+                voice_config = {}
+            voice_config["language"] = script_lang
+
+        if story_to_save:
+            story_to_save = story_to_save.replace("\\n", "\n")
             with open(project_dir / "story.txt", "w", encoding="utf-8") as f:
                 f.write(story_to_save)
                 
         # Save project_config.json
         config_data = {
+            "art_style": art_style or "comic",
             "use_watermark": use_watermark,
             "use_waveform": use_waveform,
             "use_subtitles": use_subtitles,
             "subtitle_preset": subtitle_preset,
+            "aspect_ratio": final_aspect,
             "use_whisper": False,
-            "effect_type": effect_type
+            "effect_type": effect_type,
+            "voice_config": voice_config or {}
         }
         with open(project_dir / "project_config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, ensure_ascii=False, indent=2)
+            
+        # Update category-level content.json (only created chapters)
+        try:
+            update_reels_content_json(project_dir.parent)
+        except Exception as ex:
+            print(f"[Agent] Failed to update category content.json: {ex}")
         
-        # 1. Setup folders and clean old folders completely to ensure no leftover files
+        # 1. Setup folders and clean based on rerun_mode
         for sub in ("text", "audio", "images", "videos"):
             (project_dir / sub).mkdir(parents=True, exist_ok=True)
             
-        for folder in ("text/story_sentences", "text/story_fragments", "text/image_prompts", "videos"):
-            fpath = project_dir / folder
-            if fpath.exists():
-                shutil.rmtree(fpath)
-            fpath.mkdir(parents=True, exist_ok=True)
+        if rerun_mode == "audio_only":
+            print(f"[Agent] rerun_mode='audio_only': Clearing audio/ and videos/")
+            for folder in ("audio", "videos"):
+                fpath = project_dir / folder
+                if fpath.exists():
+                    shutil.rmtree(fpath, ignore_errors=True)
+                fpath.mkdir(parents=True, exist_ok=True)
+        elif rerun_mode == "images_only":
+            print(f"[Agent] rerun_mode='images_only': Clearing text/image_prompts, images/ and videos/")
+            for folder in ("text/image_prompts", "images", "videos"):
+                fpath = project_dir / folder
+                if fpath.exists():
+                    shutil.rmtree(fpath, ignore_errors=True)
+                fpath.mkdir(parents=True, exist_ok=True)
+        elif rerun_mode == "subtitles_only":
+            print(f"[Agent] rerun_mode='subtitles_only': Clearing videos/")
+            for folder in ("videos",):
+                fpath = project_dir / folder
+                if fpath.exists():
+                    shutil.rmtree(fpath, ignore_errors=True)
+                fpath.mkdir(parents=True, exist_ok=True)
+        else: # "all"
+            # Keep text/story_sentences and text/story_fragments if they exist unless force_rerun
+            folders_to_clear = ["text/image_prompts", "videos"]
+            if force_rerun:
+                folders_to_clear.extend(["text/story_sentences", "text/story_fragments"])
+            for folder in folders_to_clear:
+                fpath = project_dir / folder
+                if fpath.exists():
+                    shutil.rmtree(fpath, ignore_errors=True)
+                fpath.mkdir(parents=True, exist_ok=True)
 
         final_video = project_dir / f"{project_name}.mp4"
         server_final = project_dir / "final.mp4"
@@ -684,114 +950,183 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             "total_fragments": 0
         }))
 
-        # 2. Text preprocessing and splitting (Always regenerate to select slice correctly)
+        # 2. Text preprocessing and splitting (Preserve prepared fragments if present)
         story_file = project_dir / "story.txt"
-        num_sentences = video_engine.load_and_split_to_sentences(story_file)
-        num_frags = video_engine.sentences_to_fragments(num_sentences, project_dir)
+        frag_dir = project_dir / "text/story_fragments"
+        existing_frags = list(frag_dir.glob("story_fragment*.txt")) if frag_dir.exists() else []
 
-        # 2.5 Slice fragments to match requested Start Index and Limit
+        if not existing_frags or force_rerun:
+            num_sentences = video_engine.load_and_split_to_sentences(story_file)
+            num_frags = video_engine.sentences_to_fragments(num_sentences, project_dir)
+        else:
+            num_frags = len(existing_frags)
+            print(f"[Agent] Preserving {num_frags} existing story fragments in {frag_dir}")
+
+        # 2.5 Slice fragments range without destroying text/story_fragments
+        frag_dir = project_dir / "text/story_fragments"
+        existing_frag_files = sorted(list(frag_dir.glob("story_fragment*.txt")), key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999) if frag_dir.exists() else []
+        total_frags = len(existing_frag_files) if existing_frag_files else num_frags
+
         start_frag = 0
         limit_frag = 0
         if voice_config:
             start_frag = int(voice_config.get("start_fragment", 0))
             limit_frag = int(voice_config.get("limit_fragments", 0))
 
+        start_idx = 0
+        end_idx = total_frags
         if start_frag > 0 or limit_frag > 0:
-            frag_dir = project_dir / "text/story_fragments"
-            all_frags = []
-            for i in range(num_frags):
-                frag_file = frag_dir / f"story_fragment{i}.txt"
-                if frag_file.exists():
-                    all_frags.append(video_engine._read_text(frag_file))
-            
-            start_idx = max(0, min(start_frag, len(all_frags) - 1)) if all_frags else 0
-            end_idx = len(all_frags)
+            s_idx = max(0, start_frag - 1) if start_frag > 0 else 0
+            start_idx = min(s_idx, max(0, total_frags - 1)) if total_frags > 0 else 0
             if limit_frag > 0:
-                end_idx = min(start_idx + limit_frag, len(all_frags))
-            
-            selected_frags = all_frags[start_idx:end_idx]
-            
-            # Clear and rewrite fragments numbered 0 to N-1
-            shutil.rmtree(frag_dir)
-            frag_dir.mkdir(parents=True, exist_ok=True)
-            for idx, frag in enumerate(selected_frags):
-                video_engine._write_text(frag_dir / f"story_fragment{idx}.txt", frag)
-            
-            num_frags = len(selected_frags)
+                end_idx = min(start_idx + limit_frag, total_frags)
+
+        target_indices = list(range(start_idx, end_idx))
+        sub_count = len(target_indices)
 
         await websocket.send(json.dumps({
             "type": "pipeline_progress",
             "project_name": project_name,
             "status": "generating_prompts",
             "current_fragment": 0,
-            "total_fragments": num_frags
+            "total_fragments": sub_count
         }))
 
         # 3. Generate prompts (Ollama)
-        await asyncio.to_thread(video_engine._unload_sd)
-        await asyncio.to_thread(video_engine._reload_ollama)
-        prompt_dir = project_dir / "text/image_prompts"
-        frag_dir = project_dir / "text/story_fragments"
-        for idx in range(num_frags):
-            prompt_file = prompt_dir / f"image_prompt{idx}.txt"
-            if not prompt_file.exists():
-                prompt = await asyncio.to_thread(
-                    video_engine.build_image_prompt,
-                    video_engine._read_text(frag_dir / f"story_fragment{idx}.txt"),
-                    art_style
-                )
-                video_engine._write_text(prompt_file, prompt)
-                
-            await websocket.send(json.dumps({
-                "type": "pipeline_progress",
-                "project_name": project_name,
-                "status": "generating_prompts",
-                "current_fragment": idx + 1,
-                "total_fragments": num_frags
-            }))
+        if rerun_mode in ("audio_only", "subtitles_only", "video_only", "render_only"):
+            print(f"[Agent] rerun_mode='{rerun_mode}': Preserving existing image prompts.")
+        else:
+            await asyncio.to_thread(video_engine._unload_sd)
+            await asyncio.to_thread(video_engine._reload_ollama)
+            prompt_dir = project_dir / "text/image_prompts"
+            prompt_dir.mkdir(parents=True, exist_ok=True)
+            for idx in target_indices:
+                prompt_file = prompt_dir / f"image_prompt{idx}.txt"
+                frag_file = frag_dir / f"story_fragment{idx}.txt"
+                if frag_file.exists() and not prompt_file.exists():
+                    prompt = await asyncio.to_thread(
+                        video_engine.build_image_prompt,
+                        video_engine._read_text(frag_file),
+                        art_style
+                    )
+                    video_engine._write_text(prompt_file, prompt)
+                    
+                await websocket.send(json.dumps({
+                    "type": "pipeline_progress",
+                    "project_name": project_name,
+                    "status": "generating_prompts",
+                    "current_fragment": idx + 1,
+                    "total_fragments": total_frags
+                }))
 
         # 4. Generate audio (OmniVoice)
-        for idx in range(num_frags):
+        audio_dir = project_dir / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        
+        if rerun_mode in ("images_only", "subtitles_only", "video_only", "render_only"):
+            print(f"[Agent] rerun_mode='{rerun_mode}': Preserving existing audio files. Skipping TTS generation.")
+        else:
+            saved_vc = config_data.get("voice_config", {})
+            req_speed = voice_config.get("speed") if isinstance(voice_config, dict) else None
+            saved_speed = saved_vc.get("speed") if isinstance(saved_vc, dict) else None
+            req_voice = voice_config.get("voice_id") if isinstance(voice_config, dict) else None
+            saved_voice = saved_vc.get("voice_id") if isinstance(saved_vc, dict) else None
+            req_lang = voice_config.get("language") if isinstance(voice_config, dict) else None
+            saved_lang = saved_vc.get("language") if isinstance(saved_vc, dict) else None
+
+            if force_rerun or rerun_mode == "audio_only" or (req_speed is not None and saved_speed is not None and float(req_speed) != float(saved_speed)) or (req_voice and saved_voice and req_voice != saved_voice) or (req_lang and saved_lang and req_lang != saved_lang):
+                print(f"[Agent] Invalidation triggered (rerun_mode={rerun_mode}). Clearing old audio cache...")
+                for f in audio_dir.glob("voiceover*"):
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+
+            for idx in target_indices:
+                await websocket.send(json.dumps({
+                    "type": "pipeline_progress",
+                    "project_name": project_name,
+                    "status": "generating_audio",
+                    "current_fragment": idx,
+                    "total_fragments": total_frags,
+                    "fragment_status": {"idx": idx, "step": "tts"}
+                }))
+                
+                wav = project_dir / f"audio/voiceover{idx}.wav"
+                mp3 = project_dir / f"audio/voiceover{idx}.mp3"
+                if not (wav.exists() or mp3.exists()):
+                    frag_file = frag_dir / f"story_fragment{idx}.txt"
+                    if frag_file.exists():
+                        frag = video_engine._read_text(frag_file)
+                        await generate_voiceover(frag, wav, voice_config)
+
+        # IF AUDIO ONLY: STOP HERE IMMEDIATELY!
+        if rerun_mode == "audio_only":
+            print(f"[Agent] rerun_mode='audio_only': Completed audio generation. Skipping image & video rendering.")
             await websocket.send(json.dumps({
                 "type": "pipeline_progress",
                 "project_name": project_name,
-                "status": "generating_audio",
-                "current_fragment": idx,
-                "total_fragments": num_frags,
-                "fragment_status": {"idx": idx, "step": "tts"}
+                "status": "completed",
+                "current_fragment": total_frags,
+                "total_fragments": total_frags,
+                "message": "🎙️ Audio generation completed!"
             }))
-            
-            wav = project_dir / f"audio/voiceover{idx}.wav"
-            mp3 = project_dir / f"audio/voiceover{idx}.mp3"
-            if not (wav.exists() or mp3.exists()):
-                frag = video_engine._read_text(frag_dir / f"story_fragment{idx}.txt")
-                await generate_voiceover(frag, wav, voice_config)
+            return
 
         # 5. Generate images
-        await asyncio.to_thread(video_engine._unload_ollama)
-        await asyncio.to_thread(video_engine._reload_sd)
-        for idx in range(num_frags):
+        if rerun_mode in ("subtitles_only", "video_only", "render_only"):
+            print(f"[Agent] rerun_mode='{rerun_mode}': Preserving existing image files. Skipping image generation.")
+        else:
+            await asyncio.to_thread(video_engine._unload_ollama)
+            await asyncio.to_thread(video_engine._reload_sd)
+            
+            img_gen = image_generator or config_data.get("image_generator", "ima2")
+            orig_sd_api = video_engine.USE_SD_API
+            video_engine.USE_SD_API = img_gen
+
+            try:
+                sem = asyncio.Semaphore(3)
+
+                async def gen_single(idx):
+                    async with sem:
+                        img = project_dir / f"images/image{idx}.jpg"
+                        if not img.exists():
+                            await websocket.send(json.dumps({
+                                "type": "pipeline_progress",
+                                "project_name": project_name,
+                                "status": "generating_images",
+                                "current_fragment": idx,
+                                "total_fragments": total_frags,
+                                "fragment_status": {"idx": idx, "step": "image"}
+                            }))
+                            await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style)
+
+                tasks = [gen_single(idx) for idx in target_indices]
+                await asyncio.gather(*tasks)
+            finally:
+                video_engine.USE_SD_API = orig_sd_api
+
+        # IF IMAGES ONLY: STOP HERE IMMEDIATELY!
+        if rerun_mode == "images_only":
+            print(f"[Agent] rerun_mode='images_only': Completed image generation. Skipping video rendering.")
             await websocket.send(json.dumps({
                 "type": "pipeline_progress",
                 "project_name": project_name,
-                "status": "generating_images",
-                "current_fragment": idx,
-                "total_fragments": num_frags,
-                "fragment_status": {"idx": idx, "step": "image"}
+                "status": "completed",
+                "current_fragment": total_frags,
+                "total_fragments": total_frags,
+                "message": "🎨 Image generation completed!"
             }))
-            
-            img = project_dir / f"images/image{idx}.jpg"
-            if not img.exists():
-                await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style)
+            return
 
         # 6. Render clips (MoviePy)
-        for idx in range(num_frags):
+        for idx in target_indices:
             await websocket.send(json.dumps({
                 "type": "pipeline_progress",
                 "project_name": project_name,
                 "status": "compiling_clips",
                 "current_fragment": idx,
-                "total_fragments": num_frags,
+                "total_fragments": total_frags,
                 "fragment_status": {"idx": idx, "step": "clip"}
             }))
             
@@ -804,14 +1139,14 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             "type": "pipeline_progress",
             "project_name": project_name,
             "status": "assembling_final_video",
-            "current_fragment": num_frags,
-            "total_fragments": num_frags
+            "current_fragment": total_frags,
+            "total_fragments": total_frags
         }))
         
         final_video = project_dir / f"{project_name}.mp4"
         server_final = project_dir / "final.mp4"
         
-        await asyncio.to_thread(video_engine.make_final_video, project_name, project_dir)
+        await asyncio.to_thread(video_engine.make_final_video, project_name, project_dir, start_idx=start_idx, end_idx=end_idx)
         if final_video.exists():
             shutil.copy(str(final_video), str(server_final))
 
@@ -1093,80 +1428,82 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
         # 4. Generate images
         await asyncio.to_thread(video_engine._unload_ollama)
         await asyncio.to_thread(video_engine._reload_sd)
-        for idx in range(num_frags):
-            await websocket.send(json.dumps({
-                "type": "pipeline_progress",
-                "project_name": project_name,
-                "status": "generating_images",
-                "current_fragment": idx,
-                "total_fragments": num_frags,
-                "fragment_status": {"idx": idx, "step": "image"}
-            }))
-            
-            img = project_dir / f"images/image{idx}.jpg"
-            if not img.exists():
-                await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style)
+        
+        img_gen = image_generator or config_data.get("image_generator", "ima2")
+        orig_sd_api = video_engine.USE_SD_API
+        video_engine.USE_SD_API = img_gen
+
+        try:
+            for idx in range(num_frags):
+                await websocket.send(json.dumps({
+                    "type": "pipeline_progress",
+                    "project_name": project_name,
+                    "status": "generating_images",
+                    "current_fragment": idx,
+                    "total_fragments": num_frags,
+                    "fragment_status": {"idx": idx, "step": "image"}
+                }))
+                
+                img = project_dir / f"images/image{idx}.jpg"
+                if not img.exists():
+                    await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style)
+        finally:
+            video_engine.USE_SD_API = orig_sd_api
 
         # 5. Render clips (MoviePy)
         for idx in range(num_frags):
-            await websocket.send(json.dumps({
+            await send_ws_message({
                 "type": "pipeline_progress",
                 "project_name": project_name,
                 "status": "compiling_clips",
                 "current_fragment": idx,
                 "total_fragments": num_frags,
                 "fragment_status": {"idx": idx, "step": "clip"}
-            }))
+            })
             
             out_clip = project_dir / f"videos/video{idx}.mp4"
             if not out_clip.exists():
                 await asyncio.to_thread(video_engine.create_video_clip, idx, project_dir)
 
         # 6. Final Concatenation and music assembly
-        await websocket.send(json.dumps({
+        await send_ws_message({
             "type": "pipeline_progress",
             "project_name": project_name,
             "status": "assembling_final_video",
             "current_fragment": num_frags,
             "total_fragments": num_frags
-        }))
+        })
         
         await asyncio.to_thread(video_engine.make_final_music_video, project_name, project_dir, music_file_path, segments)
         if final_video.exists():
             shutil.copy(str(final_video), str(server_final))
 
-        await websocket.send(json.dumps({
+        await send_ws_message({
             "type": "pipeline_progress",
             "project_name": project_name,
             "status": "completed",
             "current_fragment": num_frags,
             "total_fragments": num_frags
-        }))
+        })
     except asyncio.CancelledError:
         print(f"[Agent] Music pipeline task for '{project_name}' was cancelled.")
-        try:
-            await websocket.send(json.dumps({
-                "type": "pipeline_progress",
-                "project_name": project_name,
-                "status": "stopped",
-                "current_fragment": 0,
-                "total_fragments": 0
-            }))
-        except Exception:
-            pass
+        await send_ws_message({
+            "type": "pipeline_progress",
+            "project_name": project_name,
+            "status": "stopped",
+            "current_fragment": 0,
+            "total_fragments": 0
+        })
     except Exception as e:
         print(f"[Agent] Music pipeline task failed: {e}")
-        try:
-            await websocket.send(json.dumps({
-                "type": "pipeline_progress",
-                "project_name": project_name,
-                "status": "failed",
-                "error": str(e),
-                "current_fragment": 0,
-                "total_fragments": 0
-            }))
-        except Exception as send_err:
-            print(f"[Agent] Failed to send error status: {send_err}")
+        await send_ws_message({
+            "type": "pipeline_progress",
+            "project_name": project_name,
+            "status": "failed",
+            "error": str(e),
+            "current_fragment": 0,
+            "total_fragments": 0
+        })
     finally:
         agent_active_tasks.pop(project_name, None)
         asyncio.create_task(process_next_queued_job())
@@ -1299,11 +1636,16 @@ def start_local_media_server():
 async def main():
     global active_websocket
     start_local_media_server()
-    print(f"[Agent] Starting Taka-Agent. Connecting to server {ws_url}...")
+    
+    ws_base = SERVER_URL.replace("http://", "ws://").replace("https://", "wss://")
+    if "localhost" in SERVER_URL or "127.0.0.1" in SERVER_URL:
+        ws_base = SERVER_URL.replace("http://", "ws://").replace("https://", "ws://")
+    current_ws_url = f"{ws_base}/v1/system/agent/ws?workspace_id={WORKSPACE_ID}"
+    print(f"[Agent] Starting Taka-Agent ({WORKSPACE_ID}). Connecting to server {current_ws_url}...")
     
     while True:
         try:
-            async with websockets.connect(ws_url, ping_interval=15, ping_timeout=15, max_size=100 * 1024 * 1024) as websocket:
+            async with websockets.connect(current_ws_url, ping_interval=15, ping_timeout=15, max_size=100 * 1024 * 1024) as websocket:
                 print("[Agent] Connected to Taka Server successfully.")
                 active_websocket = websocket
                 
@@ -1361,6 +1703,10 @@ async def main():
                             use_whisper = payload.get("use_whisper", False)
                             force_rerun = payload.get("force_rerun", False)
                             
+                            image_generator = payload.get("image_generator", "ima2")
+                            rerun_mode = payload.get("rerun_mode", "all")
+                            aspect_ratio = payload.get("aspect_ratio")
+                            
                             story_text = payload.get("story_text")
                             effect_type = payload.get("effect_type", "leaves")
                             music_b64 = payload.get("music_b64")
@@ -1373,7 +1719,8 @@ async def main():
                                 use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
                                 use_whisper=use_whisper, story_text=story_text, force_rerun=force_rerun,
                                 effect_type=effect_type, pipeline_type=pipeline_type,
-                                music_b64=music_b64, music_filename=music_filename, music_local_path=music_local_path
+                                music_b64=music_b64, music_filename=music_filename, music_local_path=music_local_path,
+                                image_generator=image_generator, rerun_mode=rerun_mode, aspect_ratio=aspect_ratio
                             )
                         elif msg_type == "delete_project_request":
                             request_id = message.get("request_id")
@@ -1404,9 +1751,11 @@ async def main():
 
                             for d in dirs_to_check:
                                 if d.exists():
+                                    parent_dir = d.parent
                                     try:
                                         shutil.rmtree(d, ignore_errors=True)
                                         print(f"[Agent] Successfully deleted agent folder: {d}")
+                                        update_reels_content_json(parent_dir)
                                     except Exception as ex:
                                         print(f"[Agent] Failed to delete agent folder {d}: {ex}")
 
@@ -1420,21 +1769,47 @@ async def main():
                                 "request_id": request_id,
                                 "payload": {"ok": True, "story_id": story_id, "chapter_id": chapter_id}
                             }))
-                        elif msg_type == "cancel_all_jobs_request":
+                        elif msg_type in ("cancel_chapter_job_request", "cancel_all_jobs_request"):
                             request_id = message.get("request_id")
+                            c_story = payload.get("story_id") if payload else None
+                            c_chap = payload.get("chapter_id") if payload else None
+                            target_key = f"{c_story}/{c_chap}" if (c_story and c_chap) else None
+
                             for k, t in list(agent_active_tasks.items()):
-                                if t and not t.done():
-                                    print(f"[Agent] Cancelling active task: {k}")
-                                    t.cancel()
-                            agent_active_tasks.clear()
-                            agent_queued_jobs.clear()
-                            while not pipeline_queue.empty():
-                                try:
-                                    pipeline_queue.get_nowait()
-                                except Exception:
-                                    break
+                                is_match = (not c_story or c_story in k) and (not c_chap or c_chap in k)
+                                if is_match or target_key is None:
+                                    if t and not t.done():
+                                        print(f"[Agent] Cancelling active task: {k}")
+                                        t.cancel()
+                                    agent_active_tasks.pop(k, None)
+
+                            if target_key:
+                                agent_queued_jobs.pop(target_key, None)
+                            else:
+                                agent_active_tasks.clear()
+                                agent_queued_jobs.clear()
+                                while not pipeline_queue.empty():
+                                    try:
+                                        pipeline_queue.get_nowait()
+                                    except Exception:
+                                        break
+
+                            # Cancel ALL active ima2-gen jobs and kill child CLI processes
+                            try:
+                                subprocess.run(["pkill", "-f", "ima2 gen"], capture_output=True)
+                                res = subprocess.run(["ima2", "ps", "--json"], capture_output=True, text=True, timeout=5)
+                                if res.returncode == 0 and res.stdout.strip():
+                                    data = json.loads(res.stdout)
+                                    for job in data.get("jobs", []):
+                                        req_id = job.get("requestId")
+                                        if req_id:
+                                            subprocess.run(["ima2", "cancel", req_id], capture_output=True, timeout=5)
+                                            print(f"[Agent] Cancelled ima2-gen job: {req_id}")
+                            except Exception as e:
+                                print(f"[Agent] Warning: Failed to query/cancel ima2 jobs: {e}")
+
                             await websocket.send(json.dumps({
-                                "type": "cancel_all_jobs_response",
+                                "type": "cancel_chapter_job_response" if msg_type == "cancel_chapter_job_request" else "cancel_all_jobs_response",
                                 "request_id": request_id,
                                 "payload": {"ok": True}
                             }))
@@ -1495,13 +1870,21 @@ async def main():
                             request_id = message.get("request_id")
                             story_folders = set()
                             local_files = {}
+                            projects_metadata = {}
                             
-                            search_dirs = [AGENT_PROJECTS_DIR, AGENT_DIR / "projects", pathlib.Path.cwd() / "projects"]
+                            search_dirs = [AGENT_PROJECTS_DIR]
                             for projects_dir in search_dirs:
                                 if projects_dir and projects_dir.exists():
                                     for item in projects_dir.iterdir():
                                         if item.is_dir() and not item.name.startswith(".") and item.name not in ("test_project_1", "affiliate"):
                                             story_folders.add(item.name)
+                                            content_file = item / "content.json"
+                                            if content_file.exists():
+                                                try:
+                                                    with open(content_file, "r", encoding="utf-8") as f:
+                                                        projects_metadata[item.name] = json.load(f)
+                                                except Exception:
+                                                    pass
                                             for ch_dir in item.iterdir():
                                                 if ch_dir.is_dir() and not ch_dir.name.startswith("."):
                                                     ch_id = ch_dir.name
@@ -1516,8 +1899,31 @@ async def main():
                                 "request_id": request_id,
                                 "payload": {
                                     "story_folders": list(story_folders),
-                                    "local_files": local_files
+                                    "local_files": local_files,
+                                    "projects_metadata": projects_metadata
                                 }
+                            }))
+
+                        elif msg_type == "delete_project_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            story_id = payload.get("story_id", "")
+                            raw_id = payload.get("raw_id", "")
+                            chapter_id = payload.get("chapter_id")
+                            for sid in (story_id, raw_id):
+                                if sid:
+                                    remove_from_queue_and_active(sid, chapter_id)
+                                    if chapter_id and chapter_id != "story":
+                                        target_dir = AGENT_PROJECTS_DIR / sid / chapter_id
+                                    else:
+                                        target_dir = AGENT_PROJECTS_DIR / sid
+                                    if target_dir.exists():
+                                        shutil.rmtree(target_dir, ignore_errors=True)
+                                        print(f"[Agent] Deleted project folder: {target_dir}")
+                            await websocket.send(json.dumps({
+                                "type": "delete_project_response",
+                                "request_id": request_id,
+                                "payload": {"ok": True}
                             }))
 
                         elif msg_type == "get_chapter_status_request":
@@ -1529,6 +1935,11 @@ async def main():
                             projects_dir = AGENT_PROJECTS_DIR
                             ch_dir = projects_dir / story_id / chapter_id
                             has_video = (ch_dir / "final.mp4").exists() or (ch_dir / f"{story_id}_{chapter_id}.mp4").exists()
+                            
+                            img_dir = ch_dir / "images"
+                            aud_dir = ch_dir / "audio"
+                            has_images = img_dir.exists() and img_dir.is_dir() and len([f for f in img_dir.iterdir() if not f.name.startswith(".") and f.is_file()]) > 0
+                            has_audio = aud_dir.exists() and aud_dir.is_dir() and len([f for f in aud_dir.iterdir() if not f.name.startswith(".") and f.is_file()]) > 0
                             
                             max_frags = 0
                             for sub_path in ["images", "audio", "videos", "text/story_fragments", "text/image_prompts"]:
@@ -1543,12 +1954,15 @@ async def main():
                             
                             queued_info = agent_queued_jobs.get(proj_key_1) or agent_queued_jobs.get(proj_key_2) or agent_queued_jobs.get(chapter_id)
                             job_info = agent_running_jobs.get(proj_key_1) or agent_running_jobs.get(proj_key_2) or agent_running_jobs.get(story_id)
+                            is_active = (proj_key_1 in agent_active_tasks or proj_key_2 in agent_active_tasks or chapter_id in agent_active_tasks or story_id in agent_active_tasks)
                             
                             current_status = "completed" if has_video else "idle"
                             queue_pos = 0
                             if queued_info:
                                 current_status = "queued"
                                 queue_pos = queued_info.get("position", 1)
+                            elif is_active:
+                                current_status = "processing"
                             elif job_info and job_info.get("status") not in ("completed", "failed", "idle", None):
                                 current_status = job_info.get("status")
 
@@ -1558,7 +1972,9 @@ async def main():
                                 "total_queued": len(agent_queued_jobs),
                                 "total_fragments": job_info.get("total_fragments", max_frags) if job_info else max_frags,
                                 "current_fragment": job_info.get("current_fragment", max_frags if has_video else 0) if job_info else (max_frags if has_video else 0),
-                                "has_video": has_video
+                                "has_video": has_video,
+                                "has_images": has_images,
+                                "has_audio": has_audio
                             }
                             
                             await websocket.send(json.dumps({
@@ -1624,17 +2040,28 @@ async def main():
                                     else:
                                         content_type = "application/octet-stream"
 
-                                try:
-                                    with open(found_file, "rb") as f:
-                                        data_b64 = base64.b64encode(f.read()).decode("utf-8")
+                                file_size = found_file.stat().st_size
+                                if payload.get("head_only"):
                                     res_payload = {
                                         "exists": True,
-                                        "content_b64": data_b64,
+                                        "size": file_size,
                                         "content_type": content_type,
                                         "filename": found_file.name
                                     }
-                                except Exception as read_err:
-                                    res_payload = {"exists": False, "error": str(read_err)}
+                                else:
+                                    import base64
+                                    try:
+                                        with open(found_file, "rb") as f:
+                                            data_b64 = base64.b64encode(f.read()).decode("utf-8")
+                                        res_payload = {
+                                            "exists": True,
+                                            "content_b64": data_b64,
+                                            "content_type": content_type,
+                                            "size": file_size,
+                                            "filename": found_file.name
+                                        }
+                                    except Exception as read_err:
+                                        res_payload = {"exists": False, "error": str(read_err)}
                             else:
                                 res_payload = {"exists": False}
 
@@ -1689,7 +2116,7 @@ async def main():
                             elif local_path.strip():
                                 src_path = pathlib.Path(local_path.strip())
                                 if src_path.exists():
-                                    import shutil, base64
+                                    import base64
                                     ext = src_path.suffix.lower() or ".wav"
                                     dest_file = voice_dir / f"ref{ext}"
                                     shutil.copy2(str(src_path), str(dest_file))
@@ -1729,9 +2156,17 @@ async def main():
                         elif msg_type == "create_project_request":
                             request_id = message.get("request_id")
                             story_id = payload.get("story_id")
+                            chapters = payload.get("chapters", [])
+                            if not chapters:
+                                chapters = [f"{story_id}-chuong-1"]
+
                             projects_base = AGENT_PROJECTS_DIR
                             story_dir = projects_base / story_id
                             story_dir.mkdir(parents=True, exist_ok=True)
+                            for ch in chapters:
+                                ch_id = ch if isinstance(ch, str) else ch.get("id")
+                                (story_dir / ch_id).mkdir(parents=True, exist_ok=True)
+
                             await websocket.send(json.dumps({
                                 "type": "create_project_response",
                                 "request_id": request_id,

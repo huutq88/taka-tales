@@ -1,7 +1,19 @@
 import asyncio
+import datetime
 import json
 import os
 import re
+import unicodedata
+
+def slugify(text: str) -> str:
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    text = text.replace("đ", "d").replace("Đ", "d")
+    text = text.lower().strip()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    return text.strip("-")
 os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 import pathlib
 from typing import Dict, List, Set, Optional
@@ -24,6 +36,7 @@ AGENT_VERSION = "0.4.3"
 
 LORE_KEEPER_URL = os.environ.get("LORE_KEEPER_URL") or os.environ.get("LORE_KEEPER_API") or "http://lore-keeper:8080"
 LORE_KEEPER_URL = LORE_KEEPER_URL.rstrip("/")
+ENABLE_LORE_KEEPER = os.environ.get("ENABLE_LORE_KEEPER", "1").lower() not in ("0", "false", "no", "off") and os.environ.get("DISABLE_LORE_KEEPER", "0").lower() not in ("1", "true", "yes", "on")
 
 BASE_DIR = pathlib.Path(__file__).parent
 DATA_DIR_ENV = os.environ.get("TAKA_DATA_DIR")
@@ -95,6 +108,9 @@ def get_workspace_id_from_request(request: Request) -> str:
             if matched_ws and matched_ws in agents_by_workspace:
                 ws_id = matched_ws
 
+        if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) == 1:
+            ws_id = list(agents_by_workspace.keys())[0]
+
     return ws_id
 
 async def tunnel_request_to_agent(message_type: str, payload: dict, workspace_id: str = "", timeout: float = 10.0) -> Optional[dict]:
@@ -134,6 +150,9 @@ if _CONFIG_PATH.exists():
 
 def fetch_chapter_content(chapter_id: str) -> str:
     """Fetches chapter content directly from the Lore-Keeper HTTP API with fallback to public domain."""
+    if not ENABLE_LORE_KEEPER:
+        raise RuntimeError("Lore-Keeper integration is disabled via ENABLE_LORE_KEEPER=0")
+
     urls_to_try = [LORE_KEEPER_URL]
     if "taka.zone" not in LORE_KEEPER_URL:
         urls_to_try.append("https://lore-keeper.taka.zone")
@@ -155,6 +174,11 @@ def fetch_chapter_content(chapter_id: str) -> str:
 
 def fetch_story_chapters(story_id: str) -> list:
     """Fetches story chapters directly from the Lore-Keeper HTTP API with fallback to public domain."""
+    if not ENABLE_LORE_KEEPER:
+        return [
+            {"id": f"chap_{story_id}_1", "title": "Chương 1 (Tắt Lore-Keeper)"}
+        ]
+
     urls_to_try = [LORE_KEEPER_URL]
     if "taka.zone" not in LORE_KEEPER_URL:
         urls_to_try.append("https://lore-keeper.taka.zone")
@@ -178,7 +202,81 @@ def fetch_story_chapters(story_id: str) -> list:
         {"id": f"chap_{story_id}_2", "title": f"Chương 2 (Mẫu)"}
     ]
 
+def prepare_chapter_structure(story_id: str, chapter_id: str, content: str = "") -> pathlib.Path:
+    """Creates chapter subfolders (text/story_fragments, text/story_sentences, text/image_prompts)
+    and populates story.txt, story_fragments, story_sentences immediately when project item is created.
+    Excludes audio, images, videos directories until pipeline execution."""
+    chapter_dir = PROJECTS_DIR / story_id / chapter_id
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+
+    text_dir = chapter_dir / "text"
+    frag_dir = text_dir / "story_fragments"
+    sent_dir = text_dir / "story_sentences"
+    prompts_dir = text_dir / "image_prompts"
+
+    frag_dir.mkdir(parents=True, exist_ok=True)
+    sent_dir.mkdir(parents=True, exist_ok=True)
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+
+    story_file = chapter_dir / "story.txt"
+    
+    # Fetch content if not provided and story.txt doesn't exist
+    if not content:
+        if story_file.exists():
+            try:
+                content = story_file.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        if not content:
+            try:
+                content = fetch_chapter_content(chapter_id)
+            except Exception as e:
+                print(f"[Server] Warning: Could not fetch content for {chapter_id}: {e}")
+
+    if content and content.strip():
+        story_file.write_text(content, encoding="utf-8")
+        
+        frag_dir = text_dir / "story_fragments"
+        existing_frags = list(frag_dir.glob("story_fragment*.txt")) if frag_dir.exists() else []
+        if not existing_frags:
+            try:
+                from core import video_engine
+                num_sentences = video_engine.load_and_split_to_sentences(story_file)
+                video_engine.sentences_to_fragments(num_sentences, chapter_dir)
+            except Exception as err:
+                print(f"[Server] Failed to tokenize via video_engine: {err}")
+
+    return chapter_dir
+
+def fetch_lore_keeper_stories() -> list:
+    """Fetches list of available stories from Lore-Keeper HTTP API with fallback to local defaults."""
+    if not ENABLE_LORE_KEEPER:
+        return [
+            {"id": "bang", "title": "Băng (Chuyển Sinh Thượng Cổ)"},
+            {"id": "het-buon-het-dien-het-say", "title": "Hết Buồn Hết Điên Hết Sảy"}
+        ]
+    urls_to_try = [LORE_KEEPER_URL]
+    if "taka.zone" not in LORE_KEEPER_URL:
+        urls_to_try.append("https://lore-keeper.taka.zone")
+    for base_url in urls_to_try:
+        try:
+            url = f"{base_url.rstrip('/')}/api/stories"
+            resp = requests.get(url, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("ok") and "stories" in data:
+                return data["stories"]
+            elif isinstance(data, list):
+                return data
+        except Exception:
+            continue
+    return [
+        {"id": "bang", "title": "Băng (Chuyển Sinh Thượng Cổ)"},
+        {"id": "het-buon-het-dien-het-say", "title": "Hết Buồn Hết Điên Hết Sảy"}
+    ]
+
 # Serve output videos and media
+@app.api_route("/v1/media/{story_id}/{chapter_id}/{file_path:path}", methods=["GET", "HEAD"])
 @app.api_route("/media/{story_id}/{chapter_id}/{file_path:path}", methods=["GET", "HEAD"])
 async def get_project_media(request: Request, story_id: str, chapter_id: str, file_path: str):
     base_dir = (PROJECTS_DIR / story_id / chapter_id).resolve()
@@ -222,20 +320,28 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
     ws_id = get_workspace_id_from_request(request)
 
     if not found_local:
-        res = await tunnel_request_to_agent("get_media_file_request", {"story_id": story_id, "chapter_id": chapter_id, "file_path": file_path}, workspace_id=ws_id, timeout=15.0)
-        if res and isinstance(res, dict) and res.get("exists") and res.get("content_b64"):
-            import base64
-            content_bytes = base64.b64decode(res["content_b64"])
+        is_head = (request.method == "HEAD")
+        res = await tunnel_request_to_agent("get_media_file_request", {
+            "story_id": story_id,
+            "chapter_id": chapter_id,
+            "file_path": file_path,
+            "head_only": is_head
+        }, workspace_id=ws_id, timeout=10.0 if is_head else 30.0)
+
+        if res and isinstance(res, dict) and res.get("exists"):
             content_type = res.get("content_type", "application/octet-stream")
-            
-            # Pure in-memory streaming - DO NOT WRITE OR SAVE ANY FILE TO RAILWAY DISK!
-            file_size = len(content_bytes)
-            if request.method == "HEAD":
+            file_size = res.get("size", 0)
+            if is_head:
                 return Response(status_code=200, headers={
                     "Content-Type": content_type,
                     "Content-Length": str(file_size),
                     "Accept-Ranges": "bytes"
                 })
+
+            if res.get("content_b64"):
+                import base64
+                content_bytes = base64.b64decode(res["content_b64"])
+                file_size = len(content_bytes)
 
             range_header = request.headers.get("range")
             if range_header and range_header.startswith("bytes="):
@@ -337,9 +443,18 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default_w
                 agent_status[workspace_id] = payload
             elif msg_type == "pipeline_progress":
                 project_name = data.get("project_name")
-                if project_name:
-                    # Translate story_id_chapter_id back to story_id/chapter_id
-                    job_key = project_name.replace("_", "/", 1)
+                story_id = data.get("story_id")
+                chapter_id = data.get("chapter_id")
+                
+                if story_id and chapter_id:
+                    job_key = f"{story_id}/{chapter_id}"
+                elif project_name and "_" in project_name:
+                    story_p, chap_p = project_name.rsplit("_", 1)
+                    job_key = f"{story_p}/{chap_p}"
+                else:
+                    job_key = project_name or ""
+
+                if job_key:
                     project_jobs[job_key] = {
                         "status": data.get("status"),
                         "queue_position": data.get("queue_position", 0),
@@ -394,7 +509,7 @@ async def get_agent_status(request: Request):
     active_ws_list = list(agents_by_workspace.keys())
     request_ws = get_workspace_id_from_request(request)
     
-    if (not request_ws or request_ws not in agents_by_workspace) and len(active_ws_list) == 1:
+    if (not request_ws or request_ws not in agents_by_workspace) and active_ws_list:
         request_ws = active_ws_list[0]
 
     connected = bool(request_ws and request_ws in agents_by_workspace)
@@ -832,16 +947,92 @@ async def select_local_file(request: Request, prompt: str = "Select a file"):
 
 
 @app.post("/v1/projects")
-async def create_project(story_id: str):
+async def create_project(request: Request, story_id: str):
     if not story_id.strip():
         raise HTTPException(status_code=400, detail="story_id cannot be empty")
     # Sanitize story_id to prevent path traversal
     clean_id = "".join(c for c in story_id if c.isalnum() or c in ("-", "_")).strip()
     if not clean_id:
         raise HTTPException(status_code=400, detail="Invalid story_id format")
+
+    ws_id = get_workspace_id_from_request(request)
+    agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
+
+    # Fetch chapters from Lore Keeper if available
+    fetched_chaps = []
+    try:
+        from fastapi.concurrency import run_in_threadpool
+        fetched_chaps = await run_in_threadpool(fetch_story_chapters, clean_id)
+    except Exception as e:
+        print(f"[Server] Warning: Could not fetch chapters for {clean_id}: {e}")
+
+    ch_ids = [ch["id"] for ch in fetched_chaps] if fetched_chaps else [f"{clean_id}-chuong-1"]
+
+    if agent_ws:
+        try:
+            await tunnel_request_to_agent("create_project_request", {
+                "story_id": clean_id,
+                "chapters": ch_ids
+            }, workspace_id=ws_id, timeout=10.0)
+        except Exception as e:
+            print(f"[Server] Warning: create_project_request to Agent failed: {e}")
+
     story_dir = PROJECTS_DIR / clean_id
     story_dir.mkdir(parents=True, exist_ok=True)
-    return {"ok": True, "story_id": clean_id}
+    for ch in ch_ids:
+        prepare_chapter_structure(clean_id, ch)
+
+    return {"ok": True, "story_id": clean_id, "chapters": ch_ids}
+
+@app.post("/v1/projects/{story_id}/open-folder")
+@app.post("/v1/projects/{story_id}/{chapter_id}/open-folder")
+async def open_project_folder(request: Request, story_id: str, chapter_id: Optional[str] = None):
+    clean_story = story_id.strip()
+    if not clean_story or ".." in clean_story:
+        raise HTTPException(status_code=400, detail="Invalid story_id format")
+
+    base_dir = PROJECTS_DIR
+    target_dir = None
+    if chapter_id and chapter_id != "story":
+        candidates = [
+            base_dir / clean_story / chapter_id,
+            base_dir / "reels" / chapter_id,
+            base_dir / "dao-ly" / chapter_id,
+            base_dir / clean_story
+        ]
+    else:
+        candidates = [
+            base_dir / clean_story,
+            base_dir / "reels" / clean_story,
+            base_dir / "dao-ly" / clean_story
+        ]
+
+    for cand in candidates:
+        if cand.exists():
+            target_dir = cand
+            break
+
+    if not target_dir:
+        # Fallback glob matching
+        query_name = chapter_id if (chapter_id and chapter_id != "story") else clean_story
+        matches = list(base_dir.glob(f"**/{query_name}"))
+        if matches:
+            target_dir = matches[0]
+        else:
+            target_dir = base_dir / clean_story
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+    import subprocess, platform
+    try:
+        if platform.system() == "Darwin":
+            subprocess.Popen(["open", str(target_dir)])
+        elif platform.system() == "Windows":
+            subprocess.Popen(["explorer", str(target_dir)])
+        else:
+            subprocess.Popen(["xdg-open", str(target_dir)])
+        return {"status": "ok", "message": f"Opened folder: {target_dir}", "path": str(target_dir)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open folder: {e}")
 
 @app.delete("/v1/projects/{story_id}")
 @app.delete("/v1/projects/{story_id}/{chapter_id}")
@@ -852,44 +1043,51 @@ async def delete_project(request: Request, story_id: str, chapter_id: Optional[s
     if not clean_story or "/" in clean_story or ".." in clean_story:
         raise HTTPException(status_code=400, detail="Invalid story_id format")
 
-    ws_id = get_workspace_id_from_request(request)
-    agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
-    if agent_ws:
+    clean_slug = slugify(clean_story) or clean_story
+    for target_ws in list(agents_by_workspace.keys()):
         try:
             await tunnel_request_to_agent("delete_project_request", {
-                "story_id": clean_story,
+                "story_id": clean_slug,
+                "raw_id": clean_story,
                 "chapter_id": chapter_id
-            }, workspace_id=ws_id, timeout=5.0)
+            }, workspace_id=target_ws, timeout=5.0)
         except Exception as e:
-            print(f"[Server] Warning: delete_project_request to Agent failed: {e}")
+            print(f"[Server] Warning: delete_project_request to Agent '{target_ws}' failed: {e}")
 
     try:
         import taka_agent
         taka_agent.remove_from_queue_and_active(clean_story, chapter_id)
+        taka_agent.remove_from_queue_and_active(clean_slug, chapter_id)
     except Exception as ex:
         print(f"[Server] Warning: local remove_from_queue_and_active failed: {ex}")
 
     # Remove matching job state
-    target_pattern = f"{clean_story}/{chapter_id}" if (chapter_id and chapter_id != "story") else clean_story
-    keys_to_del = [k for k in project_jobs.keys() if k == target_pattern or k.startswith(f"{target_pattern}/")]
-    for k in keys_to_del:
-        project_jobs.pop(k, None)
+    for sid in (clean_slug, clean_story):
+        target_pattern = f"{sid}/{chapter_id}" if (chapter_id and chapter_id != "story") else sid
+        keys_to_del = [k for k in project_jobs.keys() if k == target_pattern or k.startswith(f"{target_pattern}/")]
+        for k in keys_to_del:
+            project_jobs.pop(k, None)
 
     # Delete local folders on server
     dirs_to_check = []
     if chapter_id and chapter_id != "story":
+        dirs_to_check.append(PROJECTS_DIR / clean_slug / chapter_id)
         dirs_to_check.append(PROJECTS_DIR / clean_story / chapter_id)
-        dirs_to_check.append(PROJECTS_DIR / "dao-ly" / chapter_id)
-        dirs_to_check.append(PROJECTS_DIR / "dao_ly" / chapter_id)
-        dirs_to_check.append(PROJECTS_DIR / chapter_id)
     else:
+        dirs_to_check.append(PROJECTS_DIR / clean_slug)
         dirs_to_check.append(PROJECTS_DIR / clean_story)
 
     for d in dirs_to_check:
         if d.exists():
+            parent_dir = d.parent
             try:
                 shutil.rmtree(d, ignore_errors=True)
                 print(f"[Server] Successfully deleted folder: {d}")
+                try:
+                    import taka_agent
+                    taka_agent.update_reels_content_json(parent_dir)
+                except Exception:
+                    pass
             except Exception as ex:
                 print(f"[Server] Warning deleting {d}: {ex}")
 
@@ -979,84 +1177,162 @@ async def create_music_project(project_name: str, local_path: str = "", file: Op
 
 
 @app.get("/v1/projects")
-async def list_projects(request: Request):
+async def list_projects(request: Request, story_id: Optional[str] = None):
     ws_id = get_workspace_id_from_request(request)
     stories = []
-    story_ids = []
+    story_ids = set()
     agent_files = {}
+    projects_metadata = {}
     
     agent_ws = agents_by_workspace.get(ws_id) if ws_id else None
     if agent_ws:
         res = await tunnel_request_to_agent("list_projects_request", {}, workspace_id=ws_id, timeout=15.0)
         if res:
-            story_ids = res.get("story_folders", [])
+            story_ids = set(res.get("story_folders", []))
             agent_files = res.get("local_files", {})
+            projects_metadata = res.get("projects_metadata", {})
             print(f"[Server] Fetched project folders from Agent ({ws_id}): {story_ids}")
             
-    if not agent_ws and not ws_id:
-        # Fallback to local server Projects directory only if no workspace_id header provided
-        if PROJECTS_DIR.exists():
-            story_ids = [item.name for item in PROJECTS_DIR.iterdir() if item.is_dir() and not item.name.startswith(".") and item.name != "test_project_1"]
-            for s_id in story_ids:
-                s_dir = PROJECTS_DIR / s_id
-                for ch_dir in s_dir.iterdir():
+    if PROJECTS_DIR.exists():
+        for item in PROJECTS_DIR.iterdir():
+            if item.is_dir() and not item.name.startswith(".") and item.name not in ("test_project_1", "affiliate"):
+                story_ids.add(item.name)
+                if item.name not in projects_metadata:
+                    content_file = item / "content.json"
+                    if content_file.exists():
+                        try:
+                            with open(content_file, "r", encoding="utf-8") as f:
+                                projects_metadata[item.name] = json.load(f)
+                        except Exception:
+                            pass
+                for ch_dir in item.iterdir():
                     if ch_dir.is_dir() and not ch_dir.name.startswith("."):
                         ch_id = ch_dir.name
-                        key = f"{s_id}/{ch_id}"
-                        agent_files[key] = {
-                            "has_story": (ch_dir / "story.txt").exists(),
-                            "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{s_id}_{ch_id}.mp4").exists()
-                        }
+                        key = f"{item.name}/{ch_id}"
+                        if key not in agent_files:
+                            agent_files[key] = {
+                                "has_story": (ch_dir / "story.txt").exists(),
+                                "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
+                            }
 
-    stories_map = {}
+    stories_map = {s_id: [] for s_id in story_ids}
     for key, info in agent_files.items():
         if "/" not in key:
             continue
         s_id, ch_id = key.split("/", 1)
-        if s_id in ("affiliate", "test_project_1"):
-            continue
-            
         if s_id not in stories_map:
             stories_map[s_id] = []
-            
+
         job_key = f"{s_id}/{ch_id}"
         job_state = project_jobs.get(job_key, {"status": "idle"}).copy()
         if info.get("has_video") and job_state.get("status") == "idle":
             job_state["status"] = "completed"
             
-        clean_title = ch_id.replace("-", " ").replace("_", " ").title()
         item_data = {
             "id": ch_id,
-            "title": clean_title,
+            "title": ch_id.replace("-", " ").replace("_", " ").title(),
             "has_story": info.get("has_story", False),
             "has_video": info.get("has_video", False),
             "status": job_state.get("status", "idle"),
             "progress": job_state
         }
-        if s_id in ("music", "dao-ly", "dao_ly") or s_id.startswith("dao_ly_"):
-            item_data["story_id"] = "dao-ly" if s_id != "music" else "music"
         stories_map[s_id].append(item_data)
-        
+
+    def natural_ep_key(x):
+        ch_id = x.get("id", "")
+        t = x.get("title", "")
+        m = re.search(r"^(\d+)", ch_id) or re.search(r"^#?(\d+)", t) or re.search(r"(\d+)", ch_id)
+        if m:
+            return (0, int(m.group(1)), ch_id)
+        return (1, 0, ch_id)
+
     for s_id in sorted(list(stories_map.keys())):
-        chaps = sorted(stories_map[s_id], key=lambda x: x["id"])
-        if s_id == "music":
-            title = "🎵 Music Projects"
-        elif s_id in ("dao-ly", "dao_ly") or s_id.startswith("dao_ly_"):
-            title = "☯️ Video Đạo Lý"
-            for idx, item in enumerate(chaps, 1):
+        chaps = sorted(stories_map[s_id], key=natural_ep_key)
+        meta = projects_metadata.get(s_id, {})
+        if not isinstance(meta, dict):
+            meta = {}
+        p_type = meta.get("project_type")
+        p_title = meta.get("title") or meta.get("project_name")
+
+        if not chaps and meta.get("items"):
+            for it in meta["items"]:
+                chaps.append({
+                    "id": it.get("id", s_id),
+                    "title": it.get("title", s_id),
+                    "has_story": False,
+                    "has_video": False,
+                    "status": it.get("status", "idle"),
+                    "progress": {"status": it.get("status", "idle")}
+                })
+
+        for idx, item in enumerate(chaps, 1):
+            ch_id = item["id"]
+            item_json = PROJECTS_DIR / s_id / ch_id / "item.json"
+            meta_item = {}
+            if item_json.exists():
+                try:
+                    with open(item_json, "r", encoding="utf-8") as f:
+                        meta_item = json.load(f)
+                except Exception:
+                    pass
+
+            ep_n = meta_item.get("episode")
+            if ep_n is None:
+                m = re.search(r"^(\d+)", ch_id) or re.search(r"^#?(\d+)", item["title"])
+                ep_n = int(m.group(1)) if m else idx
+            item["episode_num"] = ep_n
+
+            ep_label = meta_item.get("episode_label") or f"Tập {ep_n:02d}"
+            short_t = meta_item.get("short_title") or meta_item.get("title")
+            if short_t:
+                item["title"] = f"{ep_label} - {short_t}"
+            else:
                 clean_t = re.sub(r"^#\d+\s*", "", item["title"])
-                item["title"] = f"#{idx:02d} {clean_t}"
-        else:
-            title = f"📖 Story: {s_id}"
-            
+                item["title"] = f"{ep_label} - {clean_t}"
+
+        if not p_type:
+            cfg_file = PROJECTS_DIR / s_id / "project_config.json"
+            if cfg_file.exists():
+                try:
+                    with open(cfg_file, "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                        if isinstance(d, dict): p_type = d.get("project_type")
+                except Exception: pass
+
+        if not p_type:
+            if "reels" in s_id.lower():
+                p_type = "reels"
+            elif "videos" in s_id.lower() or "long" in s_id.lower() or "longform" in s_id.lower():
+                p_type = "long"
+            elif "sketch" in s_id.lower():
+                p_type = "sketch"
+            elif "music" in s_id.lower():
+                p_type = "music"
+            else:
+                p_type = "story"
+
+        type_prefixes = {
+            "long": "📺 Long",
+            "reels": "📱 Reels",
+            "sketch": "✏️ Sketch",
+            "music": "🎵 Music",
+            "story": "📖 Story"
+        }
+        prefix = type_prefixes.get(p_type, "📖 Story")
+        clean_name = meta.get("title") or s_id.replace("-", " ").replace("_", " ").title()
+        p_title = f"{prefix}: {clean_name}"
+
         stories.append({
             "story_id": s_id,
-            "title": title,
+            "title": p_title,
+            "project_type": p_type,
             "chapters": chaps
         })
         
-    return stories
-        
+    if story_id:
+        target_sid = story_id.strip()
+        stories = [s for s in stories if s["story_id"] == target_sid or (target_sid in ("reels", "dao-ly", "dao_ly") and s["story_id"] in ("reels", "dao-ly", "dao_ly"))]
+
     return stories
 
 @app.get("/v1/projects/{story_id}/{chapter_id}/status")
@@ -1065,6 +1341,27 @@ async def get_project_status(request: Request, story_id: str, chapter_id: str):
     job_key = f"{story_id}/{chapter_id}"
     job_state = project_jobs.get(job_key, {"status": "idle"}).copy()
     
+    chapter_dir = PROJECTS_DIR / story_id / chapter_id
+    img_dir = chapter_dir / "images"
+    aud_dir = chapter_dir / "audio"
+    
+    has_images = img_dir.exists() and img_dir.is_dir() and len([f for f in img_dir.iterdir() if not f.name.startswith(".") and f.is_file()]) > 0
+    has_audio = aud_dir.exists() and aud_dir.is_dir() and len([f for f in aud_dir.iterdir() if not f.name.startswith(".") and f.is_file()]) > 0
+    
+    cfg_file = chapter_dir / "project_config.json"
+    if cfg_file.exists():
+        try:
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                if cfg.get("art_style"): job_state["art_style"] = cfg.get("art_style")
+                if cfg.get("subtitle_preset"): job_state["subtitle_preset"] = cfg.get("subtitle_preset")
+                if cfg.get("aspect_ratio"): job_state["aspect_ratio"] = cfg.get("aspect_ratio")
+        except Exception:
+            pass
+
+    job_state["has_images"] = has_images
+    job_state["has_audio"] = has_audio
+
     # If active agent connected via WebSocket, query real-time chapter status & files from agent
     res = await tunnel_request_to_agent("get_chapter_status_request", {"story_id": story_id, "chapter_id": chapter_id}, workspace_id=ws_id, timeout=3.0)
     if res and isinstance(res, dict):
@@ -1073,6 +1370,10 @@ async def get_project_status(request: Request, story_id: str, chapter_id: str):
                 if k == "status" and v == "idle" and job_state.get("status") not in ("idle", "completed", "failed", "queued", None):
                     continue
                 job_state[k] = v
+        if "has_images" not in res:
+            job_state["has_images"] = has_images
+        if "has_audio" not in res:
+            job_state["has_audio"] = has_audio
         return job_state
 
     chapter_dir = PROJECTS_DIR / story_id / chapter_id
@@ -1108,20 +1409,216 @@ class VoiceConfig(BaseModel):
     ref_audio_local_path: Optional[str] = None
     ref_text: Optional[str] = None
     voice_instruct: Optional[str] = None
-    start_fragment: Optional[int] = 0
+    start_fragment: Optional[int] = 1
+    end_fragment: Optional[int] = 5
     limit_fragments: Optional[int] = 0
+    speed: Optional[float] = 0.85
+    language: Optional[str] = "vi"
 
 class RunPipelineRequest(BaseModel):
     voice_config: Optional[VoiceConfig] = None
     art_style: Optional[str] = None
+    aspect_ratio: Optional[str] = "9:16"
+    image_generator: Optional[str] = "ima2"
     effect_type: Optional[str] = "leaves"
     story_text: Optional[str] = None
+    short_title: Optional[str] = None
+    slug: Optional[str] = None
     use_watermark: Optional[bool] = True
     use_waveform: Optional[bool] = True
     use_subtitles: Optional[bool] = True
     subtitle_preset: Optional[str] = "viral-bold-yellow"
     use_whisper: Optional[bool] = False
     force_rerun: Optional[bool] = False
+    rerun_mode: Optional[str] = "all"
+    start_fragment: Optional[int] = 1
+    end_fragment: Optional[int] = 5
+
+class CreateProjectRequest(BaseModel):
+    project_type: str  # 'story', 'reels', 'long', 'sketch', 'music'
+    project_name: Optional[str] = None
+    story_id: Optional[str] = None
+    title: Optional[str] = None
+    short_title: Optional[str] = None
+    language: Optional[str] = "vi"
+    aspect_ratio: Optional[str] = None
+    voice_config: Optional[dict] = None
+    template_slug: Optional[str] = None
+
+@app.get("/v1/lore-keeper/stories")
+async def get_lore_keeper_stories():
+    return fetch_lore_keeper_stories()
+
+@app.post("/v1/projects/create")
+async def create_project(request: Request, body: CreateProjectRequest):
+    ws_id = get_workspace_id_from_request(request)
+    p_type = body.project_type.lower().strip()
+    if p_type not in ("story", "reels", "long", "sketch", "music"):
+        p_type = "reels"
+
+    raw_name = body.project_name or body.story_id or body.template_slug or f"project_{int(time.time())}"
+    p_name = slugify(raw_name)
+
+    proj_dir = PROJECTS_DIR / p_name
+    proj_dir.mkdir(parents=True, exist_ok=True)
+
+    aspect_ratio = body.aspect_ratio or ("16:9" if p_type in ("long", "sketch") else "9:16")
+    title = body.title or body.project_name or body.story_id or p_name.replace("-", " ").title()
+
+    items = []
+    if p_type == "story":
+        sid = body.story_id or p_name
+        chaps = fetch_story_chapters(sid)
+        items = [{"id": ch["id"], "title": ch["title"], "status": "idle"} for ch in chaps]
+        for ch in chaps:
+            ch_dir = proj_dir / ch["id"]
+            ch_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        if body.template_slug:
+            try:
+                tpl = await get_script_template(body.template_slug)
+                if tpl:
+                    title = tpl.get("title", title)
+                    short_t = tpl.get("short_title", title)
+                    (proj_dir / "story.txt").write_text(tpl.get("content", ""), encoding="utf-8")
+                    items.append({
+                        "id": p_name,
+                        "title": title,
+                        "short_title": short_t,
+                        "status": "idle",
+                        "slug": body.template_slug
+                    })
+            except Exception as e:
+                print(f"[Server] Template load error: {e}")
+
+    content_data = {
+        "project_name": p_name,
+        "project_type": p_type,
+        "title": title,
+        "short_title": body.short_title or title,
+        "aspect_ratio": aspect_ratio,
+        "language": body.language or "vi",
+        "voice_config": body.voice_config or {},
+        "created_at": datetime.datetime.now().isoformat(),
+        "items": items
+    }
+    with open(proj_dir / "content.json", "w", encoding="utf-8") as f:
+        json.dump(content_data, f, ensure_ascii=False, indent=2)
+
+    return {"status": "ok", "project_name": p_name, "project_type": p_type, "content": content_data}
+
+class AddItemRequest(BaseModel):
+    title: str
+    short_title: Optional[str] = None
+    item_id: Optional[str] = None
+    slug: Optional[str] = None
+    episode: Optional[int] = None
+    episode_label: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    language: Optional[str] = "vi"
+    channel: Optional[str] = "@playnet.zone-vi"
+    content: Optional[str] = None
+
+@app.post("/v1/projects/{story_id}/items/add")
+async def add_project_item(story_id: str, body: AddItemRequest):
+    proj_dir = PROJECTS_DIR / story_id
+    if not proj_dir.exists():
+        proj_dir.mkdir(parents=True, exist_ok=True)
+
+    parent_cfg = {}
+    content_file = proj_dir / "content.json"
+    if content_file.exists():
+        try:
+            with open(content_file, "r", encoding="utf-8") as f:
+                parent_cfg = json.load(f)
+        except Exception:
+            pass
+
+    parent_ar = parent_cfg.get("aspect_ratio") if isinstance(parent_cfg, dict) else None
+    parent_type = parent_cfg.get("project_type", "") if isinstance(parent_cfg, dict) else ""
+    default_ar = parent_ar or ("16:9" if parent_type in ("long", "sketch") or "videos" in story_id or "longform" in story_id else "9:16")
+    final_ar = body.aspect_ratio or default_ar
+
+    raw_item = body.slug or body.item_id or body.short_title or body.title
+    item_slug = slugify(raw_item) or f"item_{int(time.time())}"
+
+    item_dir = prepare_chapter_structure(story_id, item_slug)
+
+    # Save script content into story.txt
+    if body.content and body.content.strip():
+        story_file = item_dir / "story.txt"
+        with open(story_file, "w", encoding="utf-8") as f:
+            f.write(body.content.strip())
+
+    # Save item.json metadata matching longform / reels format
+    display_title = body.short_title or body.title
+    ep_num = body.episode if body.episode is not None else 1
+    ep_label = body.episode_label or (f"Tập {ep_num:02d}" if (body.language or "vi") == "vi" else f"Episode {ep_num:02d}")
+    meta = {
+        "episode": ep_num,
+        "episode_label": ep_label,
+        "title": body.title,
+        "short_title": display_title,
+        "slug": item_slug,
+        "aspect_ratio": final_ar,
+        "language": body.language or "vi",
+        "channel": body.channel or "@playnet.zone-vi",
+        "content": body.content or ""
+    }
+    with open(item_dir / "item.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    # Save project_config.json for aspect ratio and language
+    cfg = {}
+    cfg_file = item_dir / "project_config.json"
+    if cfg_file.exists():
+        try:
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            pass
+    cfg["aspect_ratio"] = final_ar
+    cfg["language"] = body.language or cfg.get("language", "vi")
+    with open(cfg_file, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+    # Also sync aspect ratio to aspect_ratio.txt
+    with open(item_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
+        f.write(final_ar)
+
+    content_file = proj_dir / "content.json"
+    content_data = {}
+    if content_file.exists():
+        try:
+            with open(content_file, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    content_data = loaded
+                elif isinstance(loaded, list):
+                    content_data = {"items": loaded}
+        except Exception:
+            pass
+            
+    if not isinstance(content_data, dict):
+        content_data = {"items": []}
+    if "items" not in content_data or not isinstance(content_data["items"], list):
+        content_data["items"] = []
+        
+    existing = next((it for it in content_data["items"] if it.get("id") == item_slug), None)
+    if not existing:
+        new_item = {
+            "id": item_slug,
+            "title": display_title,
+            "status": "idle"
+        }
+        content_data["items"].append(new_item)
+    else:
+        existing["title"] = display_title
+
+    with open(content_file, "w", encoding="utf-8") as f:
+        json.dump(content_data, f, ensure_ascii=False, indent=2)
+            
+    return {"ok": True, "item_id": item_slug, "title": display_title}
 
 @app.get("/v1/voice/defaults")
 async def get_voice_defaults():
@@ -1175,13 +1672,15 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
 @app.get("/v1/voices")
 async def list_voices(request: Request):
     ws_id = get_workspace_id_from_request(request)
-    voices_list = []
     agent_ws = agents_by_workspace.get(ws_id)
     if agent_ws:
         res = await tunnel_request_to_agent("list_voices_request", {}, workspace_id=ws_id, timeout=5.0)
         if res and isinstance(res, dict) and isinstance(res.get("voices"), list):
             v_items = res.get("voices")
-            print(f"[Server] Fetched voices list from Agent ({ws_id}): {[v.get('id') for v in v_items if isinstance(v, dict)]}")
+            for v in v_items:
+                if isinstance(v, dict):
+                    v_id = v.get("id", "")
+                    v["is_protected"] = v_id in ("nam-dao-ly", "nu-doc-truyen")
             return sorted(v_items, key=lambda x: x.get("id", "") if isinstance(x, dict) else "")
             
     # Fallback to local server folder
@@ -1192,14 +1691,29 @@ async def list_voices(request: Request):
                 sync_and_migrate_voice_dir(item)
                 voice_id = item.name
                 has_audio = (item / "ref.wav").exists() or (item / "local_path.txt").exists()
-                has_text = (item / "ref_text.txt").exists() or (item / "ref.txt").exists()
+                ref_txt_p = item / "ref_text.txt" if (item / "ref_text.txt").exists() else (item / "ref.txt" if (item / "ref.txt").exists() else None)
+                ref_text = ref_txt_p.read_text(encoding="utf-8").strip() if ref_txt_p else ""
                 voices_list.append({
                     "id": voice_id,
                     "name": voice_id,
                     "has_audio": has_audio,
-                    "has_text": has_text
+                    "has_text": bool(ref_text),
+                    "ref_text": ref_text,
+                    "is_protected": voice_id in ("nam-dao-ly", "nu-doc-truyen")
                 })
     return sorted(voices_list, key=lambda x: x.get("id", "") if isinstance(x, dict) else "")
+
+@app.get("/v1/voices/{voice_id}/ref.wav")
+async def get_voice_audio(voice_id: str):
+    v_dir = VOICES_DIR / voice_id
+    wav_file = v_dir / "ref.wav"
+    if not wav_file.exists():
+        user_voice = pathlib.Path.home() / ".taka-agent" / "voices" / voice_id / "ref.wav"
+        if user_voice.exists():
+            wav_file = user_voice
+    if wav_file.exists():
+        return FileResponse(str(wav_file), media_type="audio/wav")
+    raise HTTPException(status_code=404, detail="Reference audio file not found")
 
 @app.post("/v1/voices")
 async def create_voice(
@@ -1294,103 +1808,156 @@ async def delete_voice(request: Request, voice_id: str):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete voice profile: {str(e)}")
         return {"ok": True}
-    raise HTTPException(status_code=404, detail="Voice profile not found")
+@app.get("/v1/scripts/template/{slug}")
+async def get_script_template(slug: str):
+    import glob
+    for fpath in glob.glob("data/kien-thuc/*.json") + glob.glob("data/kien-thuc-longform/*.json") + glob.glob("data/monochromatic_pencil_sketch/*.json"):
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data.get("slug") == slug:
+                    return data
+        except Exception:
+            pass
+    raise HTTPException(status_code=404, detail="Script template not found")
 
 @app.get("/v1/projects/{story_id}/{chapter_id}/fragments")
 async def get_project_fragments(story_id: str, chapter_id: str):
-    content = ""
-    project_dir = PROJECTS_DIR / story_id / chapter_id
-    story_file = project_dir / "story.txt"
-    if story_file.exists():
-        try:
-            content = story_file.read_text(encoding="utf-8")
-        except Exception:
-            pass
-
-    if story_id == "music":
-        if not content and (PROJECTS_DIR.parent / "downloaded_albums/music").exists():
-            music_story_dir = PROJECTS_DIR.parent / "downloaded_albums/music"
-            for p in music_story_dir.glob("*.txt"):
-                if chapter_id.replace("_", " ").replace("-", " ").lower() in p.name.lower():
-                    content = p.read_text(encoding="utf-8")
-                    break
-    elif not content:
-        try:
-            from fastapi.concurrency import run_in_threadpool
-            content = await run_in_threadpool(fetch_chapter_content, chapter_id)
-        except Exception as e:
-            print(f"[Server] Warning: Failed to fetch fragments from Lore-Keeper: {e}")
-
-    if not content or not content.strip():
-        return []
-
-    if story_id == "music":
-        project_dir = PROJECTS_DIR / "music" / chapter_id
-        segments_file = project_dir / "segments.json"
-        if segments_file.exists():
+    try:
+        content = ""
+        project_dir = PROJECTS_DIR / story_id / chapter_id
+        story_file = project_dir / "story.txt"
+        if story_file.exists():
             try:
-                import json
-                with open(segments_file, "r", encoding="utf-8") as f:
-                    segments = json.load(f)
-                    return [{"index": i, "text": seg.get("text", "") or f"Slide {i+1}"} for i, seg in enumerate(segments)]
+                content = story_file.read_text(encoding="utf-8")
             except Exception:
                 pass
-        
-        # Split by lines as fallback
-        lines = [l.strip() for l in content.split("\n") if l.strip()]
-        return [{"index": i, "text": l} for i, l in enumerate(lines)]
 
-    # For story projects: tokenize and group
-    try:
-        import nltk
-        try:
-            nltk.data.find('tokenizers/punkt')
-        except LookupError:
-            nltk.download('punkt', quiet=True)
-        from nltk.tokenize import sent_tokenize
-    except Exception:
-        # Fallback sent_tokenize if nltk is not available
+        if story_id == "music":
+            if not content and (PROJECTS_DIR.parent / "downloaded_albums/music").exists():
+                music_story_dir = PROJECTS_DIR.parent / "downloaded_albums/music"
+                for p in music_story_dir.glob("*.txt"):
+                    if chapter_id.replace("_", " ").replace("-", " ").lower() in p.name.lower():
+                        content = p.read_text(encoding="utf-8")
+                        break
+        elif not content:
+            try:
+                from fastapi.concurrency import run_in_threadpool
+                content = await run_in_threadpool(fetch_chapter_content, chapter_id)
+            except Exception as e:
+                print(f"[Server] Warning: Failed to fetch fragments from Lore-Keeper: {e}")
+
+        if not content or not content.strip():
+            return []
+
+        if story_id == "music":
+            project_dir = PROJECTS_DIR / "music" / chapter_id
+            segments_file = project_dir / "segments.json"
+            if segments_file.exists():
+                try:
+                    import json
+                    with open(segments_file, "r", encoding="utf-8") as f:
+                        segments = json.load(f)
+                        return [{"index": i, "text": seg.get("text", "") or f"Slide {i+1}"} for i, seg in enumerate(segments)]
+                except Exception:
+                    pass
+            lines = [l.strip() for l in content.split("\n") if l.strip()]
+            return [{"index": i, "text": l} for i, l in enumerate(lines)]
+
+        chapter_dir = PROJECTS_DIR / story_id / chapter_id
+        frag_dir = chapter_dir / "text" / "story_fragments"
+        
+        fragments_list = []
         import re
-        def sent_tokenize(text):
-            return [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+        if frag_dir.exists() and frag_dir.is_dir():
+            frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999)
+            if frag_files:
+                for f in frag_files:
+                    try:
+                        t = f.read_text(encoding="utf-8").strip()
+                        if t:
+                            fragments_list.append(t)
+                    except Exception:
+                        pass
 
-    import re
-    text = re.sub(r'\s+', ' ', content).strip()
-    sentences = sent_tokenize(text)
-    
-    punctuation_list = [',', ';', ':']
-    new_sentences = []
-    frag_len = 20
-    try:
-        frag_len = config.getint("TEXT_FRAGMENT", "FRAGMENT_LENGTH", fallback=20)
-    except Exception:
-        pass
-        
-    for sent in sentences:
-        words = sent.split()
-        if len(words) <= frag_len:
-            new_sentences.append(sent)
-        else:
-            part = []
-            for word in words:
-                part.append(word)
-                if word[-1] in punctuation_list and len(part) > 3 * frag_len:
-                    new_sentences.append(' '.join(part))
-                    part = []
-            if part:
-                new_sentences.append(" ".join(part))
-                
-    fragments = []
-    current_words = []
-    for sent in new_sentences:
-        current_words.extend(sent.split())
-        if len(current_words) > frag_len:
-            fragments.append(" ".join(current_words))
-            current_words = []
-    if current_words:
-        fragments.append(" ".join(current_words))
-        
-    return [{"index": i, "text": f} for i, f in enumerate(fragments)]
+        if not fragments_list:
+            prepare_chapter_structure(story_id, chapter_id, content)
+            if frag_dir.exists() and frag_dir.is_dir():
+                frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999)
+                for f in frag_files:
+                    try:
+                        t = f.read_text(encoding="utf-8").strip()
+                        if t:
+                            fragments_list.append(t)
+                    except Exception:
+                        pass
+
+        if not fragments_list:
+            lines = [l.strip() for l in content.split("\n") if l.strip()]
+            for line in lines:
+                sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip()]
+                for s in sents:
+                    if s:
+                        fragments_list.append(s)
+            if not fragments_list:
+                fragments_list = lines
+
+        result = []
+        img_dir = chapter_dir / "images"
+        aud_dir = chapter_dir / "audio"
+        vid_dir = chapter_dir / "videos"
+
+        for i, frag in enumerate(fragments_list):
+            item = {"index": i, "text": frag}
+            
+            img_url = None
+            if img_dir.exists() and img_dir.is_dir():
+                img_stems = {f"image{i}", f"image_{i}", f"frame{i}", f"frame_{i}", str(i)}
+                for f in img_dir.iterdir():
+                    if f.is_file() and not f.name.startswith(".") and f.stem.lower() in img_stems:
+                        img_url = f"/v1/media/{story_id}/{chapter_id}/images/{f.name}"
+                        break
+                        
+            aud_url = None
+            if aud_dir.exists() and aud_dir.is_dir():
+                aud_stems = {f"voiceover{i}", f"voiceover_{i}", f"voice{i}", f"voice_{i}", f"audio{i}", f"audio_{i}", str(i)}
+                for f in aud_dir.iterdir():
+                    if f.is_file() and not f.name.startswith(".") and f.stem.lower() in aud_stems:
+                        aud_url = f"/v1/media/{story_id}/{chapter_id}/audio/{f.name}"
+                        break
+
+            vid_url = None
+            if vid_dir.exists() and vid_dir.is_dir():
+                vid_stems = {f"clip{i}", f"clip_{i}", f"video{i}", f"video_{i}", str(i)}
+                for f in vid_dir.iterdir():
+                    if f.is_file() and not f.name.startswith(".") and f.stem.lower() in vid_stems:
+                        vid_url = f"/v1/media/{story_id}/{chapter_id}/videos/{f.name}"
+                        break
+
+            item["image_url"] = img_url
+            item["audio_url"] = aud_url
+            item["video_url"] = vid_url
+            result.append(item)
+
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[Server] Error in get_project_fragments: {e}")
+        return []
+
+@app.get("/v1/media/{story_id}/{chapter_id}/{sub_dir}/{filename}")
+async def get_project_media(story_id: str, chapter_id: str, sub_dir: str, filename: str):
+    file_path = PROJECTS_DIR / story_id / chapter_id / sub_dir / filename
+    if not file_path.exists():
+        for ext in [".png", ".jpg", ".jpeg", ".wav", ".mp3", ".mp4"]:
+            alt = PROJECTS_DIR / story_id / chapter_id / sub_dir / f"{filename}{ext}"
+            if alt.exists():
+                file_path = alt
+                break
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Media file not found")
+    return FileResponse(file_path)
 
 @app.post("/v1/projects/{story_id}/{chapter_id}/run")
 async def run_project_pipeline(request: Request, story_id: str, chapter_id: str, request_data: Optional[RunPipelineRequest] = None):
@@ -1404,12 +1971,20 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
     content = ""
     # Fetch content from Lore-Keeper or use provided story_text
     if story_id != "music":
-        if request_data and request_data.story_text and request_data.story_text.strip():
+        if story_file.exists() and story_file.stat().st_size > 0:
+            try:
+                with open(story_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                print(f"[Server] Preserving existing story.txt at {story_file}")
+            except Exception:
+                pass
+        elif request_data and request_data.story_text and request_data.story_text.strip():
             content = request_data.story_text.strip()
             with open(story_file, "w", encoding="utf-8") as f:
                 f.write(content)
             print(f"[Server] Successfully wrote custom story_text to {story_file}")
-        else:
+        
+        if not content:
             try:
                 print(f"[Server] Fetching story content for chapter_id={chapter_id} from Lore-Keeper...")
                 from fastapi.concurrency import run_in_threadpool
@@ -1429,13 +2004,15 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
         vc = request_data.voice_config
         selected_voice_id = vc.voice_id
         
-        # Hardcode provider and mode for OmniVoice cloning
-        voice_payload["provider"] = "omnivoice"
-        voice_payload["omnivoice_mode"] = "clone"
-        voice_payload["voice_id"] = selected_voice_id
-        voice_payload["start_fragment"] = vc.start_fragment or 0
-        voice_payload["limit_fragments"] = vc.limit_fragments or 0
-        voice_payload["language"] = "vi"
+        voice_payload["provider"] = vc.provider or "omnivoice"
+        voice_payload["omnivoice_mode"] = getattr(vc, "omnivoice_mode", None) or "clone"
+        s_frag = request_data.start_fragment if (request_data and request_data.start_fragment is not None) else (vc.start_fragment or 1)
+        e_frag = request_data.end_fragment if (request_data and request_data.end_fragment is not None) else (getattr(vc, "end_fragment", None) or 5)
+        voice_payload["start_fragment"] = s_frag
+        voice_payload["end_fragment"] = e_frag
+        voice_payload["limit_fragments"] = max(0, e_frag - s_frag + 1)
+        voice_payload["language"] = vc.language if (vc and getattr(vc, "language", None)) else "vi"
+        voice_payload["speed"] = vc.speed if (vc and vc.speed is not None) else 0.85
         
         # Resolve voice profile from voices folder
         if selected_voice_id:
@@ -1481,7 +2058,8 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
     # Initialize job state
     job_key = f"{story_id}/{chapter_id}"
     project_jobs[job_key] = {
-        "status": "starting",
+        "status": "processing",
+        "current_step": "Starting pipeline...",
         "current_fragment": 0,
         "total_fragments": 0,
         "fragment_status": {},
@@ -1490,8 +2068,8 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
 
     art_style = request_data.art_style if request_data else None
     effect_type = request_data.effect_type if (request_data and hasattr(request_data, 'effect_type')) else "leaves"
-    use_watermark = request_data.use_watermark if (request_data and request_data.use_watermark is not None) else True
-    use_waveform = request_data.use_waveform if (request_data and hasattr(request_data, 'use_waveform') and request_data.use_waveform is not None) else True
+    use_watermark = request_data.use_watermark if (request_data and request_data.use_watermark is not None) else False
+    use_waveform = request_data.use_waveform if (request_data and hasattr(request_data, 'use_waveform') and request_data.use_waveform is not None) else False
     use_subtitles = request_data.use_subtitles if (request_data and request_data.use_subtitles is not None) else True
     subtitle_preset = request_data.subtitle_preset if (request_data and hasattr(request_data, 'subtitle_preset') and request_data.subtitle_preset) else "viral-bold-yellow"
     use_whisper = request_data.use_whisper if (request_data and hasattr(request_data, 'use_whisper')) else False
@@ -1522,16 +2100,76 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
                 except Exception as e:
                     print(f"[Server] Failed to read/encode music file: {e}")
 
-    # Save project configuration for video engine
-    config_data = {
+    short_title = request_data.short_title.strip() if (request_data and hasattr(request_data, 'short_title') and request_data.short_title) else None
+    slug = request_data.slug.strip() if (request_data and hasattr(request_data, 'slug') and request_data.slug) else None
+    image_generator = request_data.image_generator if (request_data and hasattr(request_data, 'image_generator') and request_data.image_generator) else "ima2"
+    rerun_mode = request_data.rerun_mode if (request_data and hasattr(request_data, 'rerun_mode') and request_data.rerun_mode) else "all"
+
+    # Determine aspect ratio
+    req_aspect = request_data.aspect_ratio if (request_data and hasattr(request_data, 'aspect_ratio') and request_data.aspect_ratio) else None
+    if not req_aspect and (project_dir / "item.json").exists():
+        try:
+            with open(project_dir / "item.json", "r", encoding="utf-8") as f:
+                ij = json.load(f)
+            req_aspect = ij.get("aspect_ratio")
+        except Exception:
+            pass
+    if not req_aspect and (project_dir / "aspect_ratio.txt").exists():
+        try:
+            req_aspect = (project_dir / "aspect_ratio.txt").read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    if not req_aspect:
+        parent_content_file = project_dir.parent / "content.json"
+        if parent_content_file.exists():
+            try:
+                with open(parent_content_file, "r", encoding="utf-8") as f:
+                    p_content = json.load(f)
+                if isinstance(p_content, dict):
+                    req_aspect = p_content.get("aspect_ratio")
+                    p_type = p_content.get("project_type", "")
+                    if not req_aspect and p_type in ("long", "sketch"):
+                        req_aspect = "16:9"
+            except Exception:
+                pass
+
+    is_long_dir = ("long" in story_id.lower() or "videos" in story_id.lower() or "sketch" in story_id.lower())
+    aspect_ratio = req_aspect or ("16:9" if is_long_dir else "9:16")
+
+    # Save project configuration for video engine (preserving existing fields)
+    config_data = {}
+    cfg_path = project_dir / "project_config.json"
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+        except Exception:
+            pass
+
+    config_data.update({
         "use_watermark": use_watermark,
         "use_waveform": use_waveform,
         "use_subtitles": use_subtitles,
-        "effect_type": effect_type
-    }
+        "image_generator": image_generator,
+        "effect_type": effect_type,
+        "aspect_ratio": aspect_ratio
+    })
+    if short_title:
+        config_data["short_title"] = short_title
+    if slug:
+        config_data["slug"] = slug
+
     try:
-        with open(project_dir / "project_config.json", "w", encoding="utf-8") as f:
+        with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump(config_data, f, ensure_ascii=False, indent=2)
+        with open(project_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
+            f.write(aspect_ratio)
+        if short_title:
+            with open(project_dir / "short_title.txt", "w", encoding="utf-8") as f:
+                f.write(short_title)
+        if slug:
+            with open(project_dir / "slug.txt", "w", encoding="utf-8") as f:
+                f.write(slug)
     except Exception as err:
         print(f"[Server] Failed to write project_config.json: {err}")
 
@@ -1567,7 +2205,8 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
                 use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
                 use_whisper=use_whisper, story_text=content, force_rerun=force_rerun,
                 effect_type=effect_type, pipeline_type="music" if story_id == "music" else "story",
-                music_b64=music_b64, music_filename=music_filename, music_local_path=music_local_path
+                music_b64=music_b64, music_filename=music_filename, music_local_path=music_local_path,
+                image_generator=image_generator, rerun_mode=rerun_mode, aspect_ratio=aspect_ratio
             )
             return {
                 "message": f"Pipeline run {'queued' if res_queue.get('status') == 'queued' else 'triggered'} locally on Taka-Server",
@@ -1589,6 +2228,7 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             "voice_config": voice_payload if voice_payload else None,
             "pipeline_type": "music" if story_id == "music" else ("dao_ly" if (story_id in ("dao-ly", "dao_ly") or story_id.startswith("dao_ly_") or story_id.startswith("dao-ly-")) else "story"),
             "art_style": art_style,
+            "image_generator": image_generator,
             "effect_type": effect_type,
             "use_watermark": use_watermark,
             "use_waveform": use_waveform,
@@ -1596,15 +2236,28 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             "subtitle_preset": subtitle_preset,
             "use_whisper": use_whisper,
             "force_rerun": force_rerun,
+            "rerun_mode": rerun_mode,
+            "aspect_ratio": aspect_ratio,
             "story_text": content if story_id != "music" else None,
             "music_b64": music_b64,
             "music_filename": music_filename,
             "music_local_path": music_local_path
         }
     }
-    print(f"[Server] Triggering pipeline with message type: {trigger_message['type']} - payload keys: {list(trigger_message['payload'].keys())}")
     await agent_ws.send_text(json.dumps(trigger_message))
     return {"message": "Pipeline run triggered on Taka-Agent", "story_id": story_id, "chapter_id": chapter_id}
+
+@app.post("/v1/projects/{story_id}/{chapter_id}/cancel")
+async def cancel_project_pipeline(request: Request, story_id: str, chapter_id: str):
+    ws_id = get_workspace_id_from_request(request)
+    job_key = f"{story_id}/{chapter_id}"
+    
+    if job_key in project_jobs:
+        project_jobs[job_key]["status"] = "idle"
+        project_jobs[job_key]["current_step"] = "Canceled by user"
+        
+    res = await tunnel_request_to_agent("cancel_chapter_job_request", {"story_id": story_id, "chapter_id": chapter_id}, workspace_id=ws_id, timeout=5.0)
+    return {"status": "ok", "message": f"Canceled pipeline for {job_key}", "agent_response": res}
 
 @app.get("/welcome", response_class=HTMLResponse)
 async def welcome_page():
@@ -1950,2501 +2603,1695 @@ async def welcome_page():
 # HTML Dashboard using rich dark glassmorphism styling
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    html_content = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-        <meta http-equiv="Pragma" content="no-cache">
-        <meta http-equiv="Expires" content="0">
-        <title>Taka-Agent Story Studio</title>
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
-        <style>
-            :root {
-                --bg: #09090e;
-                --primary: #8b5cf6;
-                --primary-glow: rgba(139, 92, 246, 0.4);
-                --success: #10b981;
-                --success-glow: rgba(16, 185, 129, 0.3);
-                --warning: #f59e0b;
-                --card-bg: rgba(255, 255, 255, 0.03);
-                --border: rgba(255, 255, 255, 0.08);
-                --text: #f3f4f6;
-                --text-muted: #9ca3af;
-            }
-
-            * {
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-            }
-
-            body {
-                font-family: 'Outfit', sans-serif;
-                background-color: var(--bg);
-                color: var(--text);
-                min-height: 100vh;
-                overflow-x: hidden;
-                background-image: radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 40%),
-                                  radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.08) 0%, transparent 40%);
-                padding: 2rem;
-            }
-
-            header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 3rem;
-                border-bottom: 1px solid var(--border);
-                padding-bottom: 1.5rem;
-            }
-
-            .logo-container {
-                display: flex;
-                align-items: center;
-                gap: 1rem;
-            }
-
-            .logo-icon {
-                font-size: 2.5rem;
-                background: linear-gradient(135deg, var(--primary), #ec4899);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                font-weight: 800;
-            }
-
-            h1 {
-                font-size: 2rem;
-                font-weight: 800;
-                letter-spacing: -0.05em;
-            }
-
-            .agent-badge {
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-                padding: 0.5rem 1.2rem;
-                border-radius: 50px;
-                background: var(--card-bg);
-                border: 1px solid var(--border);
-                font-size: 0.9rem;
-                font-weight: 600;
-                transition: all 0.3s ease;
-            }
-
-            .badge-dot {
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-                background-color: var(--text-muted);
-            }
-
-            .agent-badge.connected .badge-dot {
-                background-color: var(--success);
-                box-shadow: 0 0 10px var(--success-glow);
-            }
-
-            .grid {
-                display: grid;
-                grid-template-columns: 1fr 2fr;
-                gap: 2rem;
-            }
-
-            @media (max-width: 900px) {
-                .grid {
-                    grid-template-columns: 1fr;
-                }
-            }
-
-            .glass-card {
-                background: var(--card-bg);
-                backdrop-filter: blur(16px);
-                -webkit-backdrop-filter: blur(16px);
-                border: 1px solid var(--border);
-                border-radius: 20px;
-                padding: 2rem;
-                box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-                transition: transform 0.3s ease, border-color 0.3s ease;
-            }
-
-            .glass-card:hover {
-                border-color: rgba(139, 92, 246, 0.2);
-            }
-
-            .card-title {
-                font-size: 1.3rem;
-                font-weight: 600;
-                margin-bottom: 1.5rem;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-            }
-
-            .project-list {
-                display: flex;
-                flex-direction: column;
-                gap: 1rem;
-            }
-
-            .new-story-btn {
-                background: rgba(139, 92, 246, 0.15);
-                border: 1px dashed var(--primary);
-                color: #fff;
-                width: 32px;
-                height: 32px;
-                border-radius: 8px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-                font-weight: 800;
-                font-size: 1.2rem;
-                transition: all 0.2s ease;
-            }
-
-            .new-story-btn:hover {
-                background: var(--primary);
-                box-shadow: 0 0 10px var(--primary-glow);
-                transform: scale(1.05);
-            }
-
-            .story-section {
-                margin-bottom: 1.5rem;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-                padding-bottom: 1rem;
-            }
-
-            .story-section:last-child {
-                border-bottom: none;
-                padding-bottom: 0;
-            }
-
-            .story-header-title {
-                font-size: 0.95rem;
-                font-weight: 800;
-                color: var(--primary);
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                margin-bottom: 0.8rem;
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-            }
-
-            .chapter-list {
-                display: flex;
-                flex-direction: column;
-                gap: 0.6rem;
-                padding-left: 0.5rem;
-            }
-
-            .chapter-item {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 0.9rem 1.1rem;
-                border-radius: 10px;
-                background: rgba(255, 255, 255, 0.01);
-                border: 1px solid var(--border);
-                cursor: pointer;
-                transition: all 0.2s ease;
-            }
-
-            .chapter-item:hover, .chapter-item.active {
-                background: rgba(139, 92, 246, 0.04);
-                border-color: var(--primary);
-                transform: translateX(4px);
-            }
-
-            .chapter-info h4 {
-                font-size: 0.95rem;
-                font-weight: 600;
-                margin-bottom: 0.1rem;
-            }
-
-            .chapter-info p {
-                font-size: 0.75rem;
-                color: var(--text-muted);
-            }
-
-            .run-btn {
-                background: linear-gradient(135deg, var(--primary), #a78bfa);
-                border: none;
-                color: #fff;
-                padding: 0.5rem 1rem;
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 0.85rem;
-                cursor: pointer;
-                box-shadow: 0 4px 15px var(--primary-glow);
-                transition: all 0.2s ease;
-            }
-
-            .run-btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 6px 20px var(--primary-glow);
-            }
-
-            .run-btn:disabled {
-                background: var(--text-muted);
-                cursor: not-allowed;
-                box-shadow: none;
-                transform: none;
-            }
-
-            /* Detail Section */
-            .details-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                border-bottom: 1px solid var(--border);
-                padding-bottom: 1rem;
-                margin-bottom: 1.5rem;
-            }
-
-            .status-banner {
-                font-size: 0.9rem;
-                padding: 0.4rem 1rem;
-                border-radius: 8px;
-                font-weight: 600;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid var(--border);
-                display: inline-block;
-            }
-
-            .status-banner.processing {
-                background: rgba(245, 158, 11, 0.1);
-                color: var(--warning);
-                border-color: rgba(245, 158, 11, 0.2);
-            }
-
-            .status-banner.completed {
-                background: rgba(16, 185, 129, 0.1);
-                color: var(--success);
-                border-color: rgba(16, 185, 129, 0.2);
-            }
-
-            .progress-container {
-                margin: 2rem 0;
-            }
-
-            .progress-bar-wrapper {
-                height: 12px;
-                border-radius: 6px;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid var(--border);
-                overflow: hidden;
-                position: relative;
-                margin-bottom: 0.8rem;
-            }
-
-            .progress-bar-fill {
-                height: 100%;
-                width: 0%;
-                background: linear-gradient(90deg, var(--primary), #ec4899);
-                border-radius: 6px;
-                transition: width 0.4s ease;
-                box-shadow: 0 0 10px var(--primary-glow);
-            }
-
-            .progress-text {
-                display: flex;
-                justify-content: space-between;
-                font-size: 0.9rem;
-                color: var(--text-muted);
-            }
-
-            .fragments-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-                gap: 1rem;
-                margin-top: 1.5rem;
-            }
-
-            .fragment-card {
-                background: rgba(255, 255, 255, 0.02);
-                border: 1px solid var(--border);
-                border-radius: 12px;
-                padding: 1rem;
-                text-align: center;
-                transition: all 0.2s ease;
-            }
-
-            .fragment-card.active {
-                border-color: var(--primary);
-                background: rgba(139, 92, 246, 0.03);
-            }
-
-            .fragment-card h4 {
-                font-size: 0.85rem;
-                color: var(--text-muted);
-                margin-bottom: 0.5rem;
-            }
-
-            .step-indicator {
-                display: flex;
-                justify-content: center;
-                gap: 0.4rem;
-                margin-top: 0.6rem;
-            }
-
-            .step-dot {
-                width: 10px;
-                height: 10px;
-                border-radius: 50%;
-                background: rgba(255, 255, 255, 0.1);
-                border: 1px solid var(--border);
-            }
-
-            .step-dot.active {
-                background: var(--primary);
-                box-shadow: 0 0 5px var(--primary-glow);
-            }
-
-            .step-dot.done {
-                background: var(--success);
-            }
-
-            .video-preview {
-                margin-top: 2rem;
-                text-align: center;
-            }
-
-            video {
-                width: 100%;
-                max-width: 640px;
-                border-radius: 12px;
-                border: 1px solid var(--border);
-                outline: none;
-                box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
-            }
-
-            /* Modal / Dialog styling */
-            dialog {
-                background: rgba(15, 15, 25, 0.95);
-                border: 1px solid var(--border);
-                border-radius: 16px;
-                padding: 2rem;
-                color: var(--text-color);
-                width: 90%;
-                max-width: 500px;
-                box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
-                backdrop-filter: blur(20px);
-                -webkit-backdrop-filter: blur(20px);
-            }
-            dialog::backdrop {
-                background: rgba(0, 0, 0, 0.7);
-                backdrop-filter: blur(4px);
-                -webkit-backdrop-filter: blur(4px);
-            }
-            dialog h3 {
-                margin-top: 0;
-                margin-bottom: 1.5rem;
-                font-weight: 600;
-                color: var(--text-color);
-                font-size: 1.25rem;
-            }
-            .form-group {
-                margin-bottom: 1.25rem;
-            }
-            .form-group label {
-                display: block;
-                font-size: 0.85rem;
-                color: var(--text-muted);
-                margin-bottom: 0.5rem;
-                font-weight: 500;
-            }
-            .form-group select, .form-group input, .form-group textarea {
-                width: 100%;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid var(--border);
-                border-radius: 8px;
-                padding: 0.6rem 0.8rem;
-                color: var(--text-color);
-                font-family: inherit;
-                font-size: 0.9rem;
-                transition: all 0.2s ease;
-                box-sizing: border-box;
-            }
-            .form-group select:focus, .form-group input:focus, .form-group textarea:focus {
-                border-color: var(--primary);
-                box-shadow: 0 0 0 2px var(--primary-glow);
-                outline: none;
-            }
-            .dialog-actions {
-                display: flex;
-                justify-content: flex-end;
-                gap: 1rem;
-                margin-top: 2rem;
-            }
-            .dialog-actions button {
-                padding: 0.6rem 1.2rem;
-                font-size: 0.9rem;
-                border-radius: 8px;
-                cursor: pointer;
-                font-weight: 600;
-                transition: all 0.2s ease;
-            }
-            .btn-cancel {
-                background: transparent;
-                border: 1px solid var(--border);
-                color: var(--text-color);
-            }
-            .btn-cancel:hover {
-                background: rgba(255, 255, 255, 0.05);
-            }
-            .btn-submit {
-                background: var(--primary);
-                border: 1px solid var(--primary);
-                color: #fff;
-            }
-            .btn-submit:hover {
-                background: #7c3aed;
-                box-shadow: 0 0 15px var(--primary-glow);
-            }
-            .header-menu {
-                display: flex;
-                gap: 1.5rem;
-                align-items: center;
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid var(--border);
-                border-radius: 30px;
-                padding: 0.4rem 1.5rem;
-            }
-            .header-menu a {
-                color: var(--text-muted);
-                text-decoration: none;
-                font-weight: 600;
-                font-size: 0.95rem;
-                transition: color 0.2s ease, text-shadow 0.2s ease;
-                cursor: pointer;
-            }
-            .header-menu a:hover, .header-menu a.active {
-                color: var(--text);
-                text-shadow: 0 0 10px rgba(255,255,255,0.4);
-            }
-            #nav-dao-ly:hover, #nav-dao-ly.active {
-                color: #f59e0b !important;
-                text-shadow: 0 0 10px rgba(245, 158, 11, 0.5) !important;
-            }
-
-            .step-btn {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                width: 28px;
-                height: 28px;
-                border-radius: 50%;
-                background: rgba(255, 255, 255, 0.03);
-                border: 1px solid var(--border);
-                font-size: 0.85rem;
-                cursor: not-allowed;
-                opacity: 0.3;
-                transition: all 0.2s ease;
-                user-select: none;
-            }
-
-            .step-btn.active {
-                opacity: 1;
-                cursor: pointer;
-                background: linear-gradient(135deg, rgba(139, 92, 246, 0.45), rgba(59, 130, 246, 0.45));
-                border: 1px solid rgba(167, 139, 250, 0.9);
-                box-shadow: 0 0 10px rgba(139, 92, 246, 0.6), 0 0 4px rgba(255, 255, 255, 0.4);
-                filter: brightness(1.25);
-            }
-
-            .step-btn.active:hover {
-                background: linear-gradient(135deg, #8b5cf6, #6366f1);
-                border-color: #a78bfa;
-                transform: scale(1.25);
-                box-shadow: 0 0 15px rgba(139, 92, 246, 0.9), 0 0 8px rgba(255, 255, 255, 0.8);
-                filter: brightness(1.4);
-            }
-
-            .step-btn.running {
-                opacity: 1;
-                cursor: wait;
-                border-color: var(--warning);
-                background: rgba(245, 158, 11, 0.1);
-                animation: pulse-border 1.5s infinite ease-in-out;
-            }
-
-            @keyframes pulse-border {
-                0% { border-color: rgba(245, 158, 11, 0.3); box-shadow: 0 0 2px rgba(245, 158, 11, 0.2); }
-                50% { border-color: rgba(245, 158, 11, 1); box-shadow: 0 0 8px rgba(245, 158, 11, 0.5); }
-                100% { border-color: rgba(245, 158, 11, 0.3); box-shadow: 0 0 2px rgba(245, 158, 11, 0.2); }
-            }
-
-            /* Preview Modal Glassmorphism */
-            .preview-modal {
-                display: none;
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.6);
-                backdrop-filter: blur(12px);
-                -webkit-backdrop-filter: blur(12px);
-                z-index: 10000;
-                align-items: center;
-                justify-content: center;
-            }
-
-            .preview-modal-content {
-                background: rgba(30, 30, 40, 0.85);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 16px;
-                padding: 2rem;
-                max-width: 800px;
-                width: 90%;
-                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-                position: relative;
-                text-align: center;
-            }
-
-            .preview-modal-close {
-                position: absolute;
-                top: 1rem;
-                right: 1.2rem;
-                font-size: 1.5rem;
-                cursor: pointer;
-                color: var(--text-muted);
-                transition: color 0.2s ease;
-            }
-
-            .preview-modal-close:hover {
-                color: var(--danger);
-            }
-
-            .preview-media-container {
-                margin-top: 1.5rem;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-            }
-
-            .preview-media-container video {
-                max-width: 100%;
-                max-height: 60vh;
-                border-radius: 8px;
-                border: 1px solid var(--border);
-                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            }
-
-            .preview-media-container img {
-                max-width: 100%;
-                max-height: 60vh;
-                border-radius: 8px;
-                border: 1px solid var(--border);
-                object-fit: contain;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            }
-
-            .preview-media-container audio {
-                width: 100%;
-                max-width: 500px;
-                margin-top: 1rem;
-            }
-        </style>
-    </head>
-    <body>
-        <header>
-            <div class="logo-container">
-                <span class="logo-icon">🔊</span>
-                <h1>Taka Tales</h1>
-            </div>
-            <nav class="header-menu">
-                <a id="nav-home" onclick="showPage('home')" class="active">Home</a>
-                <a id="nav-dao-ly" onclick="showPage('dao-ly')" style="display: flex; align-items: center; gap: 0.3rem;" title="Tạo video Social 1-Click">📱 Video Social</a>
-                <a id="nav-voices" onclick="showPage('voices')">Voices</a>
-                <a id="nav-music" onclick="showPage('music')">Music</a>
-            </nav>
-            <div style="display: flex; align-items: center; gap: 0.8rem;">
-                <div id="agent-badge" class="agent-badge">
-                    <span class="badge-dot"></span>
-                    <span id="agent-text">Agent Offline</span>
-                </div>
-                <div onclick="changeWorkspacePrompt()" style="cursor: pointer; background: var(--bg-tertiary); border: 1px solid var(--border); padding: 0.35rem 0.7rem; border-radius: 8px; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.4rem; transition: border-color 0.2s ease;" title="Bấm để nhập hoặc đổi không gian làm việc (Workspace ID)">
-                    <span>💻 Workspace:</span>
-                    <strong id="workspace-id-text" style="color: var(--accent-primary);">--</strong>
-                </div>
-            </div>
-        </header>
-
-        <div class="grid" id="main-grid">
-            <!-- Sidebar: Project Lists -->
-            <div class="glass-card">
-                <div class="card-title">
-                    <span>Stories & Chapters</span>
-                    <div style="display: flex; gap: 0.5rem;">
-                        <button class="new-story-btn" onclick="addNewStory()" title="Add New Story">+</button>
-                        <button class="new-story-btn" onclick="openMusicDialog()" title="Convert Music to Video" style="background: rgba(16, 185, 129, 0.15); border-color: var(--success); color: var(--success);">🎵</button>
-                    </div>
-                </div>
-                <div id="project-list" class="project-list">
-                    <p style="color: var(--text-muted);">Loading stories...</p>
-                </div>
-            </div>
-
-            <!-- Main Panel: Project details and real-time generation tracking -->
-            <div class="glass-card" id="details-panel" style="display: flex; flex-direction: column; min-height: 500px; padding: 2rem;">
-                <!-- Placeholder screen by default -->
-                <div id="details-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; padding: 2rem;">
-                    <span style="font-size: 3.5rem; margin-bottom: 1.5rem; filter: drop-shadow(0 0 10px rgba(168,85,247,0.4));">🎬</span>
-                    <h2 style="color: var(--primary-light); margin-bottom: 0.5rem;">Ready to produce stories</h2>
-                    <p style="color: var(--text-muted); font-size: 0.95rem; max-width: 400px; line-height: 1.5; margin: 0 auto;">
-                        Select a chapter from the stories on the left to configure art style, voice settings, and start generating video.
-                    </p>
-                    <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 1.5rem;">
-                        First time running? Get help setting up in the <a href="/welcome" style="color: var(--primary-light); text-decoration: underline;">Taka Agent Setup Guide</a>.
-                    </p>
-                </div>
-
-                <!-- Actual details content (hidden by default) -->
-                <div id="details-content" style="display: none; width: 100%;">
-                    <div class="details-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 1.5rem;">
-                        <div>
-                            <h2 id="current-project-title">Project Name</h2>
-                            <p id="current-project-desc" style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.2rem;">Pipeline Status</p>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 0.8rem;">
-                            <span id="status-banner" class="status-banner">Idle</span>
-                            <button id="details-run-btn" class="run-btn" style="padding: 0.4rem 1rem; font-size: 0.85rem;">Run</button>
-                        </div>
-                    </div>
-
-                    <div class="progress-container" style="margin-bottom: 1.5rem;">
-                        <div class="progress-bar-wrapper">
-                            <div id="progress-bar" class="progress-bar-fill"></div>
-                        </div>
-                        <div class="progress-text" style="display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
-                            <span id="progress-percentage">0%</span>
-                            <span id="progress-fraction">0 / 0 Fragments</span>
-                        </div>
-                    </div>
-
-                    <div id="video-preview-container" class="video-preview" style="display: none; margin-bottom: 2rem; background: var(--surface-hover); padding: 1.25rem; border-radius: 12px; border: 1px solid var(--border);">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                            <h3 style="margin: 0; font-size: 1.1rem; color: var(--primary-light);">🎬 Final Output Video</h3>
-                            <a id="download-video-btn" href="" download class="btn-submit" style="font-size: 0.8rem; padding: 0.4rem 0.9rem; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem; border-radius: 6px; font-weight: 600;">
-                                📥 Tải Video
-                            </a>
-                        </div>
-                        <div style="display: flex; justify-content: center;">
-                            <video id="final-video" controls style="width: 100%; max-width: 280px; aspect-ratio: 9 / 16; border-radius: 10px; border: 1px solid var(--border); background: #000; box-shadow: 0 8px 24px rgba(0,0,0,0.5); object-fit: contain;">
-                                Your browser does not support the video tag.
-                            </video>
-                        </div>
-                    </div>
-
-                    <h3 style="margin-top: 2rem; margin-bottom: 1rem;">Fragments Processing State</h3>
-                    <div id="fragments-grid" class="fragments-grid">
-                        <!-- Dynamic fragments status -->
-                    </div>
-                </div>
+    html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Taka-Agent Story Studio — Google Flow</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #09090e;
+            --primary: #8b5cf6;
+            --primary-glow: rgba(139, 92, 246, 0.4);
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.3);
+            --warning: #f59e0b;
+            --card-bg: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+
+        html {
+            font-size: 13.5px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+            background-color: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+            background-image: radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 40%),
+                              radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.08) 0%, transparent 40%);
+            padding: 1.2rem 1.8rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .logo-container { display: flex; align-items: center; gap: 0.8rem; }
+
+        .logo-icon {
+            font-size: 2rem;
+            background: linear-gradient(135deg, var(--primary), #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800;
+        }
+
+        h1 { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.05em; }
+
+        .header-menu {
+            display: flex; gap: 0.5rem; background: rgba(255, 255, 255, 0.03);
+            padding: 0.3rem; border-radius: 12px; border: 1px solid var(--border);
+        }
+
+        .header-menu a {
+            color: var(--text-muted); padding: 0.6rem 1.4rem; border-radius: 8px;
+            font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .header-menu a:hover { color: #fff; background: rgba(255,255,255,0.05); }
+
+        .header-menu a.active {
+            background: linear-gradient(135deg, var(--primary), #7c3aed);
+            color: #fff; box-shadow: 0 4px 15px var(--primary-glow);
+        }
+
+        .agent-badge {
+            display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1.2rem;
+            border-radius: 50px; background: var(--card-bg); border: 1px solid var(--border);
+            font-size: 0.85rem; font-weight: 600; cursor: pointer; user-select: none;
+            transition: all 0.2s ease;
+        }
+
+        .agent-badge:hover { background: rgba(255,255,255,0.07); border-color: var(--primary); }
+
+        .badge-dot { width: 8px; height: 8px; border-radius: 50%; background-color: var(--text-muted); }
+
+        .agent-badge.connected .badge-dot {
+            background-color: var(--success); box-shadow: 0 0 10px var(--success-glow);
+        }
+
+        /* Agent Dropdown Menu */
+        .agent-dropdown-container { position: relative; }
+
+        .agent-dropdown-menu {
+            position: absolute;
+            top: 125%;
+            right: 0;
+            background: rgba(18, 18, 28, 0.95);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 1.1rem;
+            width: 280px;
+            box-shadow: 0 16px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(139, 92, 246, 0.2);
+            z-index: 1000;
+        }
+
+        .dropdown-header {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.6rem;
+            margin-bottom: 0.8rem;
+            font-size: 0.9rem;
+            font-weight: 800;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .dropdown-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.8rem;
+            margin-bottom: 0.52rem;
+        }
+        .dropdown-item:last-child { margin-bottom: 0; }
+
+        .dropdown-label { color: var(--text-muted); font-weight: 600; }
+        .dropdown-val { font-weight: 700; color: #fff; background: rgba(255,255,255,0.05); padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border); }
+
+        .cat-pill {
+            background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+            color: var(--text-muted); padding: 0.45rem 1.2rem; border-radius: 50px;
+            font-size: 0.85rem; font-weight: 700; cursor: pointer; transition: all 0.2s ease;
+        }
+
+        .cat-pill:hover, .cat-pill.active {
+            background: rgba(139, 92, 246, 0.2); border-color: var(--primary); color: #fff;
+            box-shadow: 0 0 12px var(--primary-glow);
+        }
+
+        /* Projects Grid (Google Flow) */
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .project-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 200px;
+            position: relative;
+        }
+
+        .project-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--primary);
+            background: rgba(139, 92, 246, 0.07);
+            box-shadow: 0 12px 35px rgba(139, 92, 246, 0.2);
+        }
+
+        .proj-category-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.25rem 0.75rem;
+            border-radius: 50px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .proj-category-badge.story { background: rgba(139, 92, 246, 0.2); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.4); }
+        .proj-category-badge.reels { background: rgba(236, 72, 153, 0.2); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.4); }
+        .proj-category-badge.long { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+        .proj-category-badge.sketch { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+        .proj-category-badge.music { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+
+        .create-project-card {
+            border: 2px dashed rgba(139, 92, 246, 0.4);
+            background: rgba(139, 92, 246, 0.02);
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .create-project-card:hover {
+            border-color: var(--primary);
+            background: rgba(139, 92, 246, 0.08);
+        }
+
+        .glass-card {
+            background: var(--card-bg); backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px); border: 1px solid var(--border);
+            border-radius: 16px; padding: 1.2rem;
+        }
+
+        .chapter-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.75rem 0.9rem; border-radius: 8px; background: rgba(255, 255, 255, 0.01);
+            border: 1px solid var(--border); cursor: pointer; transition: all 0.2s ease;
+            margin-bottom: 0.4rem;
+        }
+
+        .chapter-item:hover {
+            background: rgba(139, 92, 246, 0.08); border-color: rgba(139, 92, 246, 0.5);
+            transform: translateX(4px);
+        }
+
+        .chapter-item.active {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(124, 58, 237, 0.15)) !important;
+            border: 1px solid var(--primary) !important;
+            box-shadow: 0 0 12px rgba(139, 92, 246, 0.35) !important;
+            transform: translateX(4px);
+        }
+
+        .run-btn {
+            background: linear-gradient(135deg, var(--primary), #a78bfa);
+            border: none; color: #fff; padding: 0.6rem 1.2rem; border-radius: 8px;
+            font-weight: 700; font-size: 0.85rem; cursor: pointer;
+            box-shadow: 0 4px 15px var(--primary-glow); transition: all 0.2s ease;
+        }
+
+        .run-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px var(--primary-glow); }
+
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+            display: flex; justify-content: center; align-items: center; z-index: 1000;
+        }
+
+        .cat-choice {
+            background: rgba(255,255,255,0.02); border: 1px solid var(--border);
+            border-radius: 10px; padding: 0.8rem; text-align: center; cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .cat-choice:hover, .cat-choice.active {
+            background: rgba(139, 92, 246, 0.15); border-color: var(--primary);
+        }
+    </style>
+</head>
+<body>
+    <header id="main-app-header">
+        <div class="logo-container">
+            <div class="logo-icon">🌌</div>
+            <div>
+                <h1>Taka Tales Studio</h1>
+                <p style="color: var(--text-muted); font-size: 0.85rem;">Google Flow AI Studio • Multi-Agent Pipeline</p>
             </div>
         </div>
-        <!-- Voice Configuration Dialog -->
-        <dialog id="voice-config-dialog">
-            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0;">
-                <span>🔊 Voice Configuration</span>
-                <span style="font-size:0.8rem; opacity:0.6;" id="dialog-chapter-id"></span>
-            </h3>
-            <form id="voice-config-form" onsubmit="submitVoiceConfig(event)">
-                <div class="form-group">
-                    <label for="art-style-story">Visual Art Style (Phong Cách Vẽ)</label>
-                    <select id="art-style-story" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;">
-                        <option value="watercolor">Tranh minh họa màu nước cổ điển (Watercolor)</option>
-                        <option value="dong_ho">Tranh dân gian Đông Hồ (Dong Ho folk art)</option>
-                        <option value="son_mai">Tranh Sơn mài Việt Nam (Lacquer art)</option>
-                        <option value="woodblock">Tranh khắc gỗ mộc mạc (Woodblock print)</option>
-                        <option value="thuy_mac">Tranh thủy mặc / mực nho hoài cổ (Ink wash)</option>
-                    </select>
+
+        <nav class="header-menu" id="header-menu-nav">
+            <a id="nav-home" onclick="showPage('home')" class="active">🏠 Home</a>
+            <a id="nav-voices" onclick="showPage('voices')">🎙️ Voices</a>
+        </nav>
+
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <!-- Agent Online Dropdown Wrapper -->
+            <div class="agent-dropdown-container">
+                <div class="agent-badge" id="agent-badge" onclick="toggleAgentDropdown(event)" title="Click to view Agent details">
+                    <div class="badge-dot" id="badge-dot"></div>
+                    <span id="agent-status">Connecting...</span>
+                    <span style="font-size: 0.7rem; color: var(--text-muted); margin-left: 0.2rem;">▼</span>
                 </div>
-                <div class="form-group">
-                    <label for="vc-voice-id" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span>Voice ID (Giọng đọc)</span>
-                        <a href="javascript:void(0)" onclick="openVoiceManagement()" style="font-size: 0.85rem; color: var(--primary-light); text-decoration: none; font-weight: 600;">➕ Quản lý giọng đọc</a>
-                    </label>
-                    <select id="vc-voice-id" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;" required>
-                        <option value="">-- Select Voice Profile --</option>
-                    </select>
-                </div>
-                
-                <!-- Fragment Subset Selection -->
-                <div style="border-top: 1px solid rgba(255,255,255,0.15); margin-top: 1.5rem; padding-top: 1rem;">
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                        <div class="form-group">
-                            <label for="vc-start-fragment">Start Fragment Index</label>
-                            <input type="number" id="vc-start-fragment" min="0" value="0">
-                        </div>
-                        <div class="form-group">
-                            <label for="vc-limit-fragments">Limit Fragments (0 = All)</label>
-                            <input type="number" id="vc-limit-fragments" min="0" value="0" placeholder="e.g. 10 to 15">
-                        </div>
+
+                <!-- Agent Details Dropdown Card -->
+                <div id="agent-dropdown" class="agent-dropdown-menu" style="display: none;" onclick="event.stopPropagation()">
+                    <div class="dropdown-header">
+                        <span id="dropdown-status-title">🔴 Agent Offline</span>
+                        <span style="font-size: 0.75rem; color: var(--primary); background: rgba(139,92,246,0.15); padding: 0.1rem 0.4rem; border-radius: 4px;">AGY v0.4.3</span>
                     </div>
-                    <div style="font-size: 0.85rem; opacity: 0.75; margin-top: 0.2rem; margin-bottom: 0.8rem; color: #7ad1ff;">
-                        💡 Tip: Set Limit to 10-15 to render a short 1-2 minute preview video of this chapter.
+                    <div class="dropdown-item">
+                        <span class="dropdown-label">Workspace:</span>
+                        <span id="dropdown-workspace-name" class="dropdown-val">huutq_d23b05</span>
+                    </div>
+                    <div class="dropdown-item">
+                        <span class="dropdown-label">Agent Version:</span>
+                        <span id="dropdown-agent-version" class="dropdown-val">v0.4.3</span>
+                    </div>
+                    <div class="dropdown-item">
+                        <span class="dropdown-label">Hardware Acceleration:</span>
+                        <span id="dropdown-hardware-info" class="dropdown-val">MPS (Apple Silicon)</span>
+                    </div>
+                    <div class="dropdown-item">
+                        <span class="dropdown-label">OmniVoice Engine:</span>
+                        <span id="dropdown-omnivoice-status" class="dropdown-val">Active (v0.1.0)</span>
                     </div>
                 </div>
-
-                <!-- Fragment Selection UI -->
-                <div style="margin-top: 1rem; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 1rem;">
-                    <label style="font-weight: 600; margin-bottom: 0.5rem; display: block; color: var(--text); font-size: 0.9rem;">🔎 Search & Click to Set Start Index</label>
-                    <input type="text" id="story-frag-search" placeholder="Type keyword to filter fragments..." oninput="filterStoryFragments()" style="width: 100%; padding: 0.6rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); border-radius: 6px; margin-bottom: 0.5rem; outline: none; font-size: 0.85rem;">
-                    <div id="story-frag-list" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem;">
-                        <p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem;">Loading fragments...</p>
-                    </div>
-                </div>
-
-                <!-- Watermark and Subtitle Toggles -->
-                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1.2rem; margin-bottom: 0.8rem; flex-wrap: wrap;">
-                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
-                        <input type="checkbox" id="story-use-watermark" checked style="width: auto; margin-bottom: 0;"> Gắn Watermark
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
-                        <input type="checkbox" id="story-use-subtitles" checked onchange="toggleSubtitlePresetDisplay('story')" style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--danger); font-weight: bold;">
-                        <input type="checkbox" id="story-force-rerun" style="width: auto; margin-bottom: 0;"> Chạy lại từ đầu (Xóa Cache)
-                    </label>
-                </div>
-
-                <div id="story-preset-container" style="display: flex; gap: 1rem; margin-bottom: 1.5rem; align-items: center; padding: 0.6rem 0.8rem; background: rgba(99, 102, 241, 0.05); border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);">
-                    <label style="font-size: 0.85rem; font-weight: bold; color: var(--primary-light); white-space: nowrap;">✨ Kiểu Phụ Đề Subtitle Engine:</label>
-                    <select id="story-subtitle-preset" style="flex: 1; padding: 0.4rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
-                        <option value="viral-bold-yellow" selected>⚡ Viral Bold Yellow (Vàng Nổi Bật)</option>
-                        <option value="storytelling-serif">📜 Storytelling Serif (Đạo Lý Hoài Cổ)</option>
-                        <option value="karaoke-green">🎤 Karaoke Green (Xanh Ngọc Mượt)</option>
-                        <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương Hiện Đại)</option>
-                        <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
-                    </select>
-                </div>
-
-                <div class="dialog-actions">
-                    <button type="button" class="btn-cancel" onclick="closeVoiceConfig()">Cancel</button>
-                    <button type="submit" class="btn-submit">Start Pipeline</button>
-                </div>
-            </form>
-        </dialog>
-
-        <!-- Music to Video Dialog -->
-        <dialog id="music-dialog">
-            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0;">
-                <span>🎵 Convert Music to Video</span>
-                <span style="font-size:0.8rem; opacity:0.6;">Music Pipeline</span>
-            </h3>
-            <form id="music-form" onsubmit="submitMusicProject(event)">
-                <div class="form-group">
-                    <label for="music-project-name">Project Name (no spaces)</label>
-                    <input type="text" id="music-project-name" required placeholder="e.g. my-favorite-song">
-                </div>
-                <div class="form-group">
-                    <label>Music/Audio File (.mp3 / .wav / .m4a)</label>
-                    <div style="display: flex; gap: 0.5rem; align-items: center;">
-                        <input type="text" id="music-path" readonly placeholder="No file selected..." style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-size: 0.85rem;">
-                        <button type="button" onclick="browseLocalFileForMusic()" style="background: var(--primary); border: 1px solid var(--primary); color: white; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem;">Browse...</button>
-                    </div>
-                    <input type="file" id="music-file" accept="audio/*" style="display: none;">
-                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
-                        Or <a href="javascript:void(0)" onclick="document.getElementById('music-file').click();" style="color: var(--primary-light); text-decoration: underline;">upload file manually</a> if needed.
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="art-style-music">Visual Art Style (Phong Cảnh Vẽ)</label>
-                    <select id="art-style-music" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; margin-bottom: 0.5rem;">
-                        <option value="watercolor">Tranh minh họa màu nước cổ điển (Watercolor)</option>
-                        <option value="dong_ho">Tranh dân gian Đông Hồ (Dong Ho folk art)</option>
-                        <option value="son_mai">Tranh Sơn mài Việt Nam (Lacquer art)</option>
-                        <option value="woodblock">Tranh khắc gỗ mộc mạc (Woodblock print)</option>
-                        <option value="thuy_mac">Tranh thủy mặc / mực nho hoài cổ (Ink wash)</option>
-                    </select>
-                </div>
-
-                <!-- Watermark, Subtitle, and Whisper Toggles -->
-                <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1rem; margin-bottom: 0.8rem; flex-wrap: wrap;">
-                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
-                        <input type="checkbox" id="music-use-watermark" style="width: auto; margin-bottom: 0;"> Gắn Watermark
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
-                        <input type="checkbox" id="music-use-subtitles" onchange="toggleSubtitlePresetDisplay('music')" style="width: auto; margin-bottom: 0;"> Hiển thị Phụ đề
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text);">
-                        <input type="checkbox" id="music-use-whisper" style="width: auto; margin-bottom: 0;"> Nhận diện Whisper
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--danger); font-weight: bold;">
-                        <input type="checkbox" id="music-force-rerun" style="width: auto; margin-bottom: 0;"> Chạy lại từ đầu (Xóa Cache)
-                    </label>
-                </div>
-
-                <div id="music-preset-container" style="display: none; gap: 1rem; margin-bottom: 1.5rem; align-items: center; padding: 0.6rem 0.8rem; background: rgba(16, 185, 129, 0.05); border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.2);">
-                    <label style="font-size: 0.85rem; font-weight: bold; color: #10b981; white-space: nowrap;">✨ Kiểu Phụ Đề Subtitle Engine:</label>
-                    <select id="music-subtitle-preset" style="flex: 1; padding: 0.4rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
-                        <option value="karaoke-green" selected>🎤 Karaoke Green (Xanh Ngọc Mượt)</option>
-                        <option value="viral-bold-yellow">⚡ Viral Bold Yellow (Vàng Nổi Bật)</option>
-                        <option value="storytelling-serif">📜 Storytelling Serif (Đạo Lý Hoài Cổ)</option>
-                        <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương Hiện Đại)</option>
-                        <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
-                    </select>
-                </div>
-
-                <div class="dialog-actions">
-                    <button type="button" class="btn-cancel" onclick="closeMusicDialog()">Cancel</button>
-                    <button type="submit" class="btn-submit">Upload & Start</button>
-                </div>
-            </form>
-        </dialog>
-
-        <!-- Video Social Full-Screen Dialog -->
-        <dialog id="dao-ly-dialog" style="position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; margin: 0; padding: 0; border: none; background: #0b0f19; color: var(--text-primary); z-index: 9999; box-sizing: border-box;">
-            <div style="display: flex; flex-direction: column; height: 100vh; width: 100vw; box-sizing: border-box;">
-                <!-- Header Bar -->
-                <div style="background: rgba(15, 23, 42, 0.95); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
-                    <div style="display: flex; align-items: center; gap: 0.8rem;">
-                        <span style="font-size: 1.6rem;">📱</span>
-                        <div>
-                            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 700; color: #a78bfa; display: flex; align-items: center; gap: 0.5rem;">
-                                <span>Video Social — Tạo Video Ngắn 1-Click</span>
-                            </h2>
-                            <span style="font-size: 0.8rem; color: var(--text-muted);">Tự động tạo video TikTok / Reels / Shorts chuyên nghiệp</span>
-                        </div>
-                    </div>
-                    <button type="button" onclick="closeDaoLyStudioModal()" style="background: rgba(255,255,255,0.08); border: 1px solid var(--border); color: #fff; width: 38px; height: 38px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s ease;" title="Đóng modal (Esc)">✕</button>
-                </div>
-
-                <!-- Form Body Grid -->
-                <form id="dao-ly-form" onsubmit="submitDaoLyProject(event)" style="display: grid; grid-template-columns: 1fr 440px; gap: 2rem; padding: 1.8rem 2rem; height: calc(100vh - 75px); box-sizing: border-box; overflow: hidden;">
-                    <!-- Left Column: Story Workspace -->
-                    <div style="display: flex; flex-direction: column; gap: 1rem; height: 100%; min-height: 0;">
-                        <div>
-                            <label for="dao-ly-title" style="font-weight: 700; color: #a78bfa; font-size: 0.95rem; margin-bottom: 0.4rem; display: block;">1. Tiêu đề Video / Tên Kịch Bản:</label>
-                            <input type="text" id="dao-ly-title" required placeholder="Nhập tiêu đề video (VD: 5 Thói Quen Của Người Thành Công)..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: #fff; padding: 0.75rem 1rem; border-radius: 8px; font-size: 1rem; font-weight: 600; outline: none; box-sizing: border-box;">
-                        </div>
-                        
-                        <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
-                            <label for="dao-ly-story-text" style="font-weight: 700; color: #10b981; font-size: 0.95rem; margin-bottom: 0.4rem; display: flex; justify-content: space-between; align-items: center;">
-                                <span>2. Nội dung Kịch bản Đọc (Plain Text cho TTS):</span>
-                                <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;">(Tự động phân đoạn & sinh lời thoại)</span>
-                            </label>
-                            <textarea id="dao-ly-story-text" required placeholder="Nhập nội dung kịch bản đọc tại đây..." style="flex: 1; width: 100%; background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: #fff; padding: 1rem; border-radius: 8px; font-family: inherit; font-size: 1rem; line-height: 1.65; resize: none; outline: none; box-sizing: border-box;"></textarea>
-                        </div>
-                    </div>
-
-                    <!-- Right Column: Settings Panel -->
-                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; display: flex; flex-direction: column; gap: 1.2rem; height: 100%; box-sizing: border-box; overflow-y: auto;">
-                        <h4 style="margin: 0; color: #f59e0b; border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; font-size: 1rem; display: flex; align-items: center; gap: 0.4rem;">
-                            <span>⚙️ Cấu Hình Render Video</span>
-                        </h4>
-
-                        <div class="form-group">
-                            <label for="dao-ly-voice" style="font-weight: 600; font-size: 0.9rem; display: block; margin-bottom: 0.3rem;">🎙️ Giọng đọc TTS:</label>
-                            <select id="dao-ly-voice" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.65rem; border-radius: 6px; outline: none; font-size: 0.9rem;">
-                                <option value="nam-dao-ly">👨 Nam Đạo Lý (OmniVoice - nam-dao-ly)</option>
-                                <option value="nu-doc-truyen">👩 Nữ Đọc Truyện (OmniVoice - nu-doc-truyen)</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="dao-ly-art-style" style="font-weight: 600; font-size: 0.9rem; display: block; margin-bottom: 0.3rem;">🎨 Phong cách vẽ ảnh AI:</label>
-                            <select id="dao-ly-art-style" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.65rem; border-radius: 6px; outline: none; font-size: 0.9rem;">
-                                <option value="2d_stick_figure" selected>🎨 2D Stick Figure Cartoon (Người Que 2D Tối Giản)</option>
-                                <option value="thuy_mac_blackwhite">☯️ Thủy mặc Đen - Trắng (Hoài cổ)</option>
-                                <option value="thuy_mac">🖌️ Thủy mặc Đen - Xám mờ sương</option>
-                                <option value="woodblock">🪵 Mộc bản khắc gỗ trắng đen</option>
-                                <option value="watercolor">🎨 Tranh màu nước hoài niệm</option>
-                            </select>
-                        </div>
-
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                            <div class="form-group">
-                                <label for="dao-ly-aspect" style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.3rem;">📐 Khung hình:</label>
-                                <select id="dao-ly-aspect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-size: 0.85rem;">
-                                    <option value="vertical">📱 Dọc (9:16)</option>
-                                    <option value="horizontal">💻 Ngang (16:9)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="dao-ly-effect" style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.3rem;">✨ Hiệu ứng Hạt:</label>
-                                <select id="dao-ly-effect" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-size: 0.85rem;">
-                                    <option value="leaves">🍁 Lá vàng rơi</option>
-                                    <option value="snow">❄️ Tuyết rơi</option>
-                                    <option value="rain">🌧️ Mưa bay</option>
-                                    <option value="wind">🍃 Gió thổi</option>
-                                    <option value="none">🚫 Không hiệu ứng</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div id="dao-ly-preset-container" style="display: flex; flex-direction: column; gap: 0.4rem; padding: 0.8rem; background: rgba(245, 158, 11, 0.06); border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.25);">
-                            <label style="font-size: 0.85rem; font-weight: bold; color: #f59e0b;">💬 Kiểu Phụ Đề Subtitle Preset:</label>
-                            <select id="dao-ly-subtitle-preset" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem;">
-                                <option value="2d-stick-figure-cartoon" selected>🎨 2D Stick Figure Cartoon (Nền Cream #ECE7D8)</option>
-                                <option value="viral-bold-yellow">⚡ Viral Bold Yellow (Vàng Nổi Bật - Montserrat)</option>
-                                <option value="karaoke-green">🎤 Karaoke Green (Xanh Ngọc Mượt)</option>
-                                <option value="podcast-clean">🎙️ Podcast Clean (Xanh Dương - Outfit)</option>
-                                <option value="storytelling-serif">📜 Storytelling Serif (Hoài Cổ - Georgia)</option>
-                                <option value="minimal-white">⚪ Minimal White (Tối Giản Tinh Tế)</option>
-                            </select>
-                        </div>
-
-                        <div style="display: flex; gap: 1rem; padding: 0.8rem; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--border); justify-content: space-around;">
-                            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                                <input type="checkbox" id="dao-ly-watermark" style="accent-color: #8b5cf6; width: 16px; height: 16px;">
-                                <span>🏷️ Watermark</span>
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                                <input type="checkbox" id="dao-ly-waveform" style="accent-color: #8b5cf6; width: 16px; height: 16px;">
-                                <span>🌊 Waveform</span>
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                                <input type="checkbox" id="dao-ly-subtitles" checked onchange="toggleSubtitlePresetDisplay('dao-ly')" style="accent-color: #8b5cf6; width: 16px; height: 16px;">
-                                <span>💬 Phụ đề</span>
-                            </label>
-                        </div>
-
-                        <div style="margin-top: auto; padding-top: 1rem;">
-                            <button type="submit" id="dao-ly-submit-btn" class="btn-submit" style="width: 100%; padding: 0.95rem; background: linear-gradient(135deg, #6366f1, #8b5cf6); border: none; font-weight: 700; font-size: 1.05rem; color: #fff; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.35);">🚀 Khởi Tạo & Render Video Social</button>
-                        </div>
-                    </div>
-                </form>
             </div>
-        </dialog>
 
-        <!-- Voices Page Layout (Hidden by default) -->
-        <div id="voices-page" style="display: none;" class="glass-card">
-            <h2 style="color: var(--primary-light); margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem;">
-                <span>🎙️ OmniVoice Voice Management</span>
-            </h2>
+            <button class="run-btn" style="background: linear-gradient(135deg, #10b981, #059669);" onclick="openNewProjectModal()">
+                ✨ + New Project
+            </button>
+        </div>
+    </header>
+
+    <!-- 1. GOOGLE FLOW PROJECTS HOME VIEW -->
+    <div id="view-projects-home">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+            <div>
+                <h2 style="font-size: 1.5rem; font-weight: 800; color: #fff;">📂 Projects Directory</h2>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.2rem;">Select a project workspace or create a new project</p>
+            </div>
             
-            <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 2rem;">
-                <!-- Existing Voices -->
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <button class="cat-pill active" onclick="filterCategory('all', this)">🌐 All</button>
+                <button class="cat-pill" onclick="filterCategory('story', this)">📖 Story</button>
+                <button class="cat-pill" onclick="filterCategory('reels', this)">📱 Reels</button>
+                <button class="cat-pill" onclick="filterCategory('long', this)">🎬 Long</button>
+                <button class="cat-pill" onclick="filterCategory('sketch', this)">✏️ Sketch</button>
+                <button class="cat-pill" onclick="filterCategory('music', this)">🎵 Music</button>
+            </div>
+        </div>
+
+        <!-- Project Cards Grid -->
+        <div class="projects-grid" id="projects-cards-container"></div>
+    </div>
+
+    <!-- 2. PROJECT WORKSPACE VIEW (Shown when opening a project) -->
+    <div id="view-project-workspace" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <button onclick="backToProjectsHome()" style="background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: #fff; padding: 0.5rem 1rem; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 0.85rem;">← Back to Projects</button>
                 <div>
-                    <h3 style="margin-top: 0; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; font-size: 1.1rem;">Cloned Voices List</h3>
-                    <div id="voices-page-list" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.8rem; max-height: 450px; overflow-y: auto; padding-right: 0.5rem;">
-                        <p style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding: 2rem;">Loading voices...</p>
+                    <h2 id="active-project-title" style="font-size: 1.4rem; font-weight: 800; color: #fff;">Project Workspace</h2>
+                    <span id="active-project-badge" class="proj-category-badge story">📖 Story</span>
+                </div>
+            </div>
+            <button class="run-btn" style="padding: 0.45rem 1rem; font-size: 0.85rem;" onclick="openAddItemModal()">✨ + Add Item</button>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem;">
+            <!-- Left Panel: Chapters/Videos inside THIS project -->
+            <div class="glass-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.6rem;">
+                    <h3 style="font-size: 1rem; color: #fff;">📋 Project Items</h3>
+                    <div id="active-project-stats" style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;"></div>
+                </div>
+                <div id="workspace-chapters-list"></div>
+            </div>
+
+            <!-- Right Panel: Workspace details for selected chapter -->
+            <div class="glass-card">
+                <div id="details-panel" style="display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; margin-bottom: 1rem;">
+                        <div>
+                            <h2 id="current-chapter-title" style="font-size: 1.25rem; font-weight: 800; color: #fff;">Select a Chapter</h2>
+                            <div style="display: flex; align-items: center; gap: 0.8rem; margin-top: 0.2rem;">
+                                <p id="current-chapter-subtitle" style="font-size: 0.8rem; color: var(--text-muted);">Chapter Details</p>
+                                <button id="btn-preview-final" style="background: linear-gradient(135deg, #10b981, #059669); border: 1px solid #059669; color: #fff; padding: 0.3rem 0.8rem; border-radius: 6px; font-size: 0.8rem; font-weight: 700; cursor: pointer; display: none; align-items: center; gap: 0.4rem; box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);" onclick="openFinalVideoPreview()" title="Xem Video Final hoàn chỉnh">▶️ Xem Video Final</button>
+                            </div>
+                        </div>
+                        <div id="status-banner" style="font-size: 0.8rem; padding: 0.3rem 0.8rem; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px solid var(--border);">Ready</div>
+                    </div>
+
+                    <!-- Voice & Art Settings -->
+                    <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 12px; padding: 1.2rem; margin-bottom: 1.5rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--primary);">⚙️ Pipeline Settings</h4>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">Voice, Style, Aspect Ratio, Subtitles & Rerun Controls</span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.2rem;">
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🎙️ Voice Profile</label>
+                                <select id="voice-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;"></select>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">📢 TTS Provider</label>
+                                <select id="tts-provider-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                    <option value="omnivoice">OmniVoice (Local GPU Voice Clone)</option>
+                                    <option value="edge">EdgeTTS (Microsoft Cloud Voice)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🎨 Art Style</label>
+                                <select id="art-style-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                    <option value="watercolor">🎨 Watercolor Painting</option>
+                                    <option value="thuy_mac_blackwhite">⚫ Thủy Mặc Black & White</option>
+                                    <option value="2d-stick-figure-cartoon">🧸 2D Stick Figure Cartoon</option>
+                                    <option value="monochromatic_pencil_sketch">✏️ Pencil Sketch (Dark Grimdark)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">📐 Aspect Ratio</label>
+                                <select id="aspect-ratio-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                    <option value="9:16">📱 Vertical 9:16 (Reels/Shorts)</option>
+                                    <option value="16:9">🎬 Horizontal 16:9 (YouTube Long)</option>
+                                    <option value="1:1">🔲 Square 1:1 (Post)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">💬 Subtitle Preset</label>
+                                <select id="subtitle-preset-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                    <option value="viral-bold-yellow">💛 Viral Bold Yellow</option>
+                                    <option value="storytelling-serif">📜 Storytelling Serif</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">✨ Visual Effect</label>
+                                <select id="effect-type-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                    <option value="none" selected>🚫 No Effect</option>
+                                    <option value="leaves">🍃 Falling Leaves</option>
+                                    <option value="snow">❄️ Falling Snow</option>
+                                    <option value="rain">🌧️ Cinematic Rain</option>
+                                    <option value="sparkles">✨ Light Sparkles</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🔢 From Fragment</label>
+                                <input type="number" id="frag-start-input" min="1" value="1" oninput="updateFragmentHighlights()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
+                            </div>
+                            <div>
+                                <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🔢 To Fragment</label>
+                                <input type="number" id="frag-end-input" min="1" value="5" oninput="updateFragmentHighlights()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
+                            </div>
+                            <div style="grid-column: span 4; display: flex; gap: 1.8rem; align-items: center; background: rgba(255,255,255,0.03); padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border); margin-top: 0.3rem;">
+                                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 700; cursor: pointer; color: #fff;">
+                                    <input type="checkbox" id="toggle-subtitles" checked style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
+                                    💬 Burn Subtitles
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 700; cursor: pointer; color: #fff;">
+                                    <input type="checkbox" id="toggle-watermark" style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
+                                    💧 Watermark Logo
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 700; cursor: pointer; color: #fff;">
+                                    <input type="checkbox" id="toggle-waveform" style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
+                                    🎵 Audio Waveform
+                                </label>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 0.6rem; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 1rem; align-items: center;">
+                            <button id="btn-run-all" class="run-btn" onclick="startPipelineForActiveProject('all')">🚀 Run Full Pipeline</button>
+                            <button id="btn-run-subtitles" class="run-btn" style="background: linear-gradient(135deg, #f59e0b, #d97706);" onclick="startPipelineForActiveProject('subtitles_only')">📝 Subtitles Only</button>
+                            <button id="btn-run-images" class="run-btn" style="background: linear-gradient(135deg, #ec4899, #db2777);" onclick="startPipelineForActiveProject('images_only')">🎨 Images Only</button>
+                            <button id="btn-run-audio" class="run-btn" style="background: linear-gradient(135deg, #3b82f6, #2563eb);" onclick="startPipelineForActiveProject('audio_only')">🎙️ Audio Only</button>
+                            <button id="btn-run-video" class="run-btn" style="background: linear-gradient(135deg, #8b5cf6, #7c3aed);" onclick="startPipelineForActiveProject('video_only')">🎬 Video Render Only</button>
+                            <button id="btn-cancel-job" class="run-btn" style="display: none; background: linear-gradient(135deg, #ef4444, #dc2626); box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);" onclick="cancelPipelineForActiveProject()">⛔ Hủy tiến trình</button>
+                        </div>
+                    </div>
+
+                    <!-- Fragments Workspace Content -->
+                    <div id="workspace-content"></div>
+                </div>
+
+                <div id="no-chapter-selected" style="text-align: center; padding: 4rem 1rem; color: var(--text-muted);">
+                    <div style="font-size: 3rem; margin-bottom: 1rem;">🎬</div>
+                    <h3>No Chapter Selected</h3>
+                    <p style="font-size: 0.9rem; margin-top: 0.5rem;">Select a chapter from the left directory to view fragments and run video rendering.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. VOICES DASHBOARD VIEW -->
+    <div id="view-voices" style="display: none;">
+        <div class="glass-card" style="padding: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <div>
+                    <h2 style="font-size: 1.4rem; font-weight: 800; color: #fff;">🎙️ OmniVoice Voice Management</h2>
+                    <p style="color: var(--text-muted); font-size: 0.85rem;">Reference voice profiles & sample preview player</p>
+                </div>
+            </div>
+            <div id="voices-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.2rem;"></div>
+        </div>
+    </div>
+
+    <!-- NEW PROJECT MODAL (Google Flow) -->
+    <div id="new-project-modal" class="modal-overlay" style="display: none;">
+        <div class="glass-card" style="max-width: 540px; width: 90%; margin: auto; padding: 1.8rem; border-radius: 16px; position: relative;">
+            <button onclick="closeNewProjectModal()" style="position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-muted); font-size: 1.4rem; cursor: pointer;">&times;</button>
+            <h3 style="font-size: 1.3rem; font-weight: 800; margin-bottom: 0.4rem; color: #fff;">✨ Create New Project</h3>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.2rem;">Mandatory project initialization with Category routing.</p>
+            
+            <form onsubmit="handleCreateProjectSubmit(event)">
+                <label style="display: block; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.4rem;">1. Select Project Type *</label>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-bottom: 1.2rem;">
+                    <div class="cat-choice active" id="cat-choice-story" onclick="selectNewCategory('story')">
+                        <div style="font-size: 1.3rem;">📖</div>
+                        <div style="font-weight: 700; font-size: 0.85rem;">Story</div>
+                    </div>
+                    <div class="cat-choice" id="cat-choice-reels" onclick="selectNewCategory('reels')">
+                        <div style="font-size: 1.3rem;">📱</div>
+                        <div style="font-weight: 700; font-size: 0.85rem;">Reels</div>
+                    </div>
+                    <div class="cat-choice" id="cat-choice-long" onclick="selectNewCategory('long')">
+                        <div style="font-size: 1.3rem;">🎬</div>
+                        <div style="font-weight: 700; font-size: 0.85rem;">Long</div>
+                    </div>
+                    <div class="cat-choice" id="cat-choice-sketch" onclick="selectNewCategory('sketch')">
+                        <div style="font-size: 1.3rem;">✏️</div>
+                        <div style="font-weight: 700; font-size: 0.85rem;">Sketch</div>
+                    </div>
+                    <div class="cat-choice" id="cat-choice-music" onclick="selectNewCategory('music')">
+                        <div style="font-size: 1.3rem;">🎵</div>
+                        <div style="font-weight: 700; font-size: 0.85rem;">Music</div>
                     </div>
                 </div>
-                
-                <!-- Create Voice Form -->
-                <div style="border-left: 1px solid var(--border); padding-left: 2rem;">
-                    <h3 style="margin-top: 0; color: var(--success); border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; font-size: 1.1rem;">Clone New Voice Profile</h3>
-                    <form id="create-voice-form-page" onsubmit="submitCreateVoicePage(event)" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
-                        <div class="form-group">
-                            <label for="new-voice-id-page">Voice ID (No spaces, lowercase, numbers, hyphens)</label>
-                            <input type="text" id="new-voice-id-page" required placeholder="e.g. giong-nu-mientay">
-                        </div>
-                        <div class="form-group">
-                            <label>Reference Audio File (.wav / .mp3)</label>
-                            <div style="display: flex; gap: 0.5rem; align-items: center;">
-                                <input type="text" id="new-voice-path-page" readonly placeholder="No file selected..." style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); padding: 0.6rem; border-radius: 6px; outline: none; font-size: 0.85rem;">
-                                <button type="button" onclick="browseLocalFileForVoice()" style="background: var(--primary); border: 1px solid var(--primary); color: white; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem;">Browse...</button>
-                            </div>
-                            <input type="file" id="new-voice-file-page" accept="audio/wav, audio/mpeg, audio/mp3" style="display: none;">
-                            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
-                                Or <a href="javascript:void(0)" onclick="document.getElementById('new-voice-file-page').click();" style="color: var(--primary-light); text-decoration: underline;">upload file manually</a> if needed.
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label for="new-voice-text-page">Reference Transcription (Text spoken in audio)</label>
-                            <textarea id="new-voice-text-page" rows="4" placeholder="Optional. If left blank, local Whisper ASR will auto-transcribe it." style="resize: none;"></textarea>
-                        </div>
-                        <button type="submit" class="btn-submit" style="background: var(--success); border-color: var(--success); padding: 0.8rem; font-size: 0.95rem; margin-top: 0.5rem;">💾 Save Cloned Voice Profile</button>
-                    </form>
+
+                <div id="story-select-group">
+                    <label style="display: block; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.4rem;">2. Select Lore-Keeper Story *</label>
+                    <select id="lore-keeper-select" style="width: 100%; padding: 0.6rem; border-radius: 8px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff; margin-bottom: 1.2rem;"></select>
                 </div>
-            </div>
+
+                <div id="custom-name-group" style="display: none;">
+                    <label style="display: block; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.4rem;">2. Project Name *</label>
+                    <input type="text" id="custom-proj-input" placeholder="e.g. 5-giai-ma-khoa-hoc-thay-doi-nhan-thuc" style="width: 100%; padding: 0.6rem; border-radius: 8px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff; margin-bottom: 1rem;">
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-bottom: 1.2rem;">
+                    <div>
+                        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">Language</label>
+                        <select id="new-lang-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                            <option value="vi">🇻🇳 Tiếng Việt</option>
+                            <option value="en">🇺🇸 English</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">Aspect Ratio</label>
+                        <select id="new-aspect-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                            <option value="9:16">📱 9:16</option>
+                            <option value="16:9">🎬 16:9</option>
+                        </select>
+                    </div>
+                </div>
+
+                <button type="submit" class="run-btn" style="width: 100%; padding: 0.75rem; font-size: 0.95rem;">🚀 Create Project</button>
+            </form>
         </div>
+    </div>
 
-        <script>
-            if (!localStorage.getItem("taka_visited_before")) {
-                localStorage.setItem("taka_visited_before", "true");
-                window.location.href = "/welcome";
+    <!-- ADD ITEM MODAL -->
+    <div id="add-item-modal" class="modal-overlay" style="display: none;">
+        <div class="glass-card" style="max-width: 620px; width: 92%; margin: auto; padding: 1.8rem; border-radius: 16px; position: relative; max-height: 90vh; overflow-y: auto;">
+            <button onclick="closeAddItemModal()" style="position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-muted); font-size: 1.4rem; cursor: pointer;">&times;</button>
+            <h3 style="font-size: 1.25rem; font-weight: 800; margin-bottom: 0.3rem; color: #fff;">✨ Add New Item / Video Script</h3>
+            <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;">Nhập thông số kịch bản mới hoặc Nạp trực tiếp từ file JSON / TXT mẫu.</p>
+
+            <div style="background: rgba(255,255,255,0.03); border: 1px dashed var(--primary); padding: 0.8rem 1rem; border-radius: 8px; margin-bottom: 1.2rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+                <div>
+                    <div style="font-size: 0.85rem; font-weight: bold; color: #fff;">📂 Import từ file JSON / TXT mẫu</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">Tự động đọc Title, Short Title, Channel, Aspect Ratio & Script Content</div>
+                </div>
+                <label style="background: linear-gradient(135deg, var(--primary), #7c3aed); color: #fff; padding: 0.45rem 1rem; border-radius: 6px; font-size: 0.8rem; font-weight: bold; cursor: pointer; flex-shrink: 0; display: inline-flex; align-items: center; gap: 0.4rem;">
+                    📁 Chọn file
+                    <input type="file" id="item-json-file-input" accept=".json,.txt" onchange="handleItemJsonFileUpload(event)" style="display: none;" />
+                </label>
+            </div>
+
+            <form onsubmit="handleAddItemSubmit(event)">
+                <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 0.8rem; margin-bottom: 0.8rem;">
+                    <div>
+                        <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Số tập (Episode #)</label>
+                        <input type="number" id="new-item-episode-input" min="1" value="1" style="width: 100%; padding: 0.55rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" oninput="updateEpisodeLabelDefault()" />
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Nhãn tập (Episode Label)</label>
+                        <input type="text" id="new-item-episode-label-input" placeholder="e.g. Tập 01" value="Tập 01" style="width: 100%; padding: 0.55rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1.8fr 1.2fr; gap: 0.8rem; margin-bottom: 0.8rem;">
+                    <div>
+                        <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Tiêu đề chính (Title) *</label>
+                        <input type="text" id="new-item-title-input" required placeholder="e.g. 5 Giải Mã Khoa Học Kỳ Thú..." style="width: 100%; padding: 0.55rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" oninput="autoPopulateItemSlug()" />
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Tiêu đề ngắn (Short Title)</label>
+                        <input type="text" id="new-item-short-title-input" placeholder="e.g. 5 Giải Mã Khoa Học" style="width: 100%; padding: 0.55rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" oninput="autoPopulateItemSlug()" />
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-bottom: 0.8rem;">
+                    <div>
+                        <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Mã Slug / Item ID *</label>
+                        <input type="text" id="new-item-slug-input" required placeholder="e.g. 5-giai-ma-khoa-hoc" style="width: 100%; padding: 0.55rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Kênh / Channel</label>
+                        <input type="text" id="new-item-channel-input" placeholder="e.g. @playnet.zone-vi" value="@playnet.zone-vi" style="width: 100%; padding: 0.55rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-bottom: 0.8rem;">
+                    <div>
+                        <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Tỷ lệ khung hình (Aspect Ratio)</label>
+                        <select id="new-item-aspect-select" style="width: 100%; padding: 0.55rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                            <option value="16:9">🎬 Horizontal 16:9 (YouTube Long)</option>
+                            <option value="9:16">📱 Vertical 9:16 (Reels / Shorts)</option>
+                            <option value="1:1">🔲 Square 1:1</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Ngôn ngữ (Language)</label>
+                        <select id="new-item-lang-select" style="width: 100%; padding: 0.55rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                            <option value="vi">🇻🇳 Tiếng Việt</option>
+                            <option value="en">🇺🇸 English</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 1.2rem;">
+                    <label style="display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.3rem;">Nội dung kịch bản (Script Content)</label>
+                    <textarea id="new-item-content-input" rows="6" placeholder="Dán nội dung kịch bản văn bản vào đây..." style="width: 100%; padding: 0.6rem; border-radius: 8px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff; font-family: inherit; font-size: 0.82rem; resize: vertical;"></textarea>
+                </div>
+
+                <button type="submit" class="run-btn" style="width: 100%; padding: 0.75rem; font-size: 0.95rem;">🚀 Tạo Item Mới</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentCategoryFilter = 'all';
+        let selectedNewCategory = 'story';
+        let allProjectsList = [];
+        let activeStoryId = null;
+        let activeChapterId = null;
+        let loadedChapterConfigKey = null;
+
+        function toggleAgentDropdown(e) {
+            if (e) e.stopPropagation();
+            let menu = document.getElementById("agent-dropdown");
+            if (menu) {
+                menu.style.display = menu.style.display === "none" ? "block" : "none";
+            }
+        }
+
+        document.addEventListener("click", () => {
+            let menu = document.getElementById("agent-dropdown");
+            if (menu) menu.style.display = "none";
+        });
+
+        function showPage(pageId) {
+            let mainHeader = document.getElementById('main-app-header');
+            if (mainHeader) mainHeader.style.display = 'flex';
+            let menuNav = document.getElementById('header-menu-nav');
+            if (menuNav) menuNav.style.display = 'flex';
+            document.getElementById('nav-home').classList.remove('active');
+            document.getElementById('nav-voices').classList.remove('active');
+
+            if (pageId === 'home') {
+                document.getElementById('nav-home').classList.add('active');
+                backToProjectsHome();
+            } else if (pageId === 'voices') {
+                document.getElementById('nav-voices').classList.add('active');
+                document.getElementById('view-projects-home').style.display = 'none';
+                document.getElementById('view-project-workspace').style.display = 'none';
+                document.getElementById('view-voices').style.display = 'block';
+                loadVoicesDashboard();
+            }
+        }
+
+        function filterCategory(cat, el) {
+            currentCategoryFilter = cat;
+            document.querySelectorAll('.cat-pill').forEach(b => b.classList.remove('active'));
+            if (el) el.classList.add('active');
+            renderProjectsCards();
+        }
+
+        async function updateAgentStatus() {
+            try {
+                let res = await fetch("/v1/agent/status");
+                let data = await res.json();
+                let badge = document.getElementById("agent-badge");
+                let status = document.getElementById("agent-status");
+                
+                let wsName = document.getElementById("dropdown-workspace-name");
+                let agentVer = document.getElementById("dropdown-agent-version");
+                let hwInfo = document.getElementById("dropdown-hardware-info");
+                let omniStatus = document.getElementById("dropdown-omnivoice-status");
+                let dropTitle = document.getElementById("dropdown-status-title");
+
+                if (data.connected) {
+                    badge.className = "agent-badge connected";
+                    status.innerText = "Agent Online";
+                    if (dropTitle) dropTitle.innerHTML = `<span style="color: var(--success);">🟢 Agent Online</span>`;
+                    
+                    let agentMeta = data.agents ? data.agents[data.workspace_id] : null;
+                    if (wsName) wsName.innerText = data.workspace_id || "huutq_d23b05";
+                    if (agentVer) agentVer.innerText = "v" + (data.agent_version || "0.4.3");
+                    
+                    if (agentMeta) {
+                        if (hwInfo) hwInfo.innerText = agentMeta.mps_available ? "MPS (Apple Silicon)" : agentMeta.cuda_available ? "CUDA GPU" : "CPU";
+                        if (omniStatus) omniStatus.innerText = agentMeta.omnivoice_installed ? "Active (v0.1.0)" : "Not Installed";
+                    }
+                } else {
+                    badge.className = "agent-badge";
+                    status.innerText = "Agent Offline";
+                    if (dropTitle) dropTitle.innerHTML = `<span style="color: var(--text-muted);">🔴 Agent Offline</span>`;
+                    if (wsName) wsName.innerText = "--";
+                    if (agentVer) agentVer.innerText = "v" + (data.agent_version || "0.4.3");
+                }
+                if (document.getElementById("view-project-workspace").style.display !== "none") {
+                    updateCurrentChapterStatusBanner();
+                }
+            } catch(e) {}
+        }
+
+        async function loadProjects() {
+            try {
+                let res = await fetch("/v1/projects");
+                allProjectsList = await res.json();
+                renderProjectsCards();
+            } catch(e) {
+                console.error("loadProjects error:", e);
+            }
+        }
+
+        function renderProjectsCards() {
+            let container = document.getElementById("projects-cards-container");
+            if (!container) return;
+            container.innerHTML = "";
+
+            // New Project Button Card
+            let newCard = document.createElement("div");
+            newCard.className = "project-card create-project-card";
+            newCard.onclick = openNewProjectModal;
+            newCard.innerHTML = `
+                <div style="font-size: 2.5rem; margin-bottom: 0.5rem; color: var(--primary);">✨</div>
+                <h3 style="color: #fff; font-size: 1.1rem; margin-bottom: 0.3rem;">Create New Project</h3>
+                <p style="color: var(--text-muted); font-size: 0.8rem;">Story, Reels, Long, Sketch, or Music</p>
+            `;
+            container.appendChild(newCard);
+
+            if (!Array.isArray(allProjectsList)) return;
+
+            let filtered = allProjectsList.filter(p => {
+                if (currentCategoryFilter === 'all') return true;
+                let pType = p.project_type || p.story_id;
+                if (currentCategoryFilter === 'story' && (pType === 'story' || p.story_id === 'kien-thuc' || p.story_id === 'monochromatic_pencil_sketch')) return true;
+                if (currentCategoryFilter === 'reels' && (pType === 'reels' || p.story_id === 'dao-ly')) return true;
+                return pType === currentCategoryFilter;
+            });
+
+            filtered.forEach(p => {
+                let card = document.createElement("div");
+                card.className = "project-card";
+                card.onclick = () => openProjectWorkspace(p.story_id);
+
+                let pType = p.project_type || p.story_id;
+                let badgeClass = "story";
+                let badgeIcon = "📖 Story";
+                if (pType === "reels" || p.story_id === "dao-ly") { badgeClass = "reels"; badgeIcon = "📱 Reels"; }
+                else if (pType === "long") { badgeClass = "long"; badgeIcon = "🎬 Long"; }
+                else if (pType === "sketch") { badgeClass = "sketch"; badgeIcon = "✏️ Sketch"; }
+                else if (pType === "music") { badgeClass = "music"; badgeIcon = "🎵 Music"; }
+
+                let completedCount = p.chapters ? p.chapters.filter(c => c.status === "completed").length : 0;
+                let totalCount = p.chapters ? p.chapters.length : 0;
+
+                card.innerHTML = `
+                    <div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem;">
+                            <span class="proj-category-badge ${badgeClass}">${badgeIcon}</span>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">${completedCount}/${totalCount} Rendered</span>
+                        </div>
+                        <h3 style="font-size: 1.2rem; font-weight: 800; color: #fff; margin-bottom: 0.5rem;">${p.title || p.story_id}</h3>
+                        <p style="font-size: 0.8rem; color: var(--text-muted);">ID: ${p.story_id}</p>
+                    </div>
+                    <div style="margin-top: 1.2rem; border-top: 1px solid var(--border); padding-top: 0.8rem; display: flex; justify-content: space-between; align-items: center;">
+                        <div style="display: flex; align-items: center; gap: 0.6rem;">
+                            <span style="font-size: 0.8rem; color: var(--primary); font-weight: 600;">${totalCount} items</span>
+                            <button onclick="deleteProject(event, '${p.story_id}', '${p.title || p.story_id}')" style="background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35); color: #f87171; padding: 0.3rem 0.6rem; border-radius: 6px; font-weight: bold; font-size: 0.75rem; cursor: pointer; transition: all 0.2s;" title="Xóa Project">🗑️ Xóa</button>
+                        </div>
+                        <button style="background: linear-gradient(135deg, var(--primary), #7c3aed); border: none; color: #fff; padding: 0.4rem 0.9rem; border-radius: 6px; font-weight: bold; font-size: 0.8rem; cursor: pointer;">Open Project →</button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function openProjectWorkspace(storyId) {
+            activeStoryId = storyId;
+            let proj = allProjectsList.find(p => p.story_id === storyId);
+            if (!proj) return;
+
+            let mainHeader = document.getElementById('main-app-header');
+            if (mainHeader) mainHeader.style.display = 'none';
+
+            let menuNav = document.getElementById('header-menu-nav');
+            if (menuNav) menuNav.style.display = 'none';
+
+            document.getElementById("view-projects-home").style.display = "none";
+            document.getElementById("view-project-workspace").style.display = "block";
+            document.getElementById("view-voices").style.display = "none";
+
+            document.getElementById("active-project-title").innerText = proj.title || storyId;
+            let badge = document.getElementById("active-project-badge");
+            let pType = proj.project_type || storyId;
+            badge.className = "proj-category-badge " + (pType === "reels" ? "reels" : pType === "long" ? "long" : pType === "sketch" ? "sketch" : pType === "music" ? "music" : "story");
+            badge.innerText = pType.toUpperCase();
+
+            document.getElementById("active-project-stats").innerText = `${proj.chapters ? proj.chapters.length : 0} items`;
+
+            let chList = document.getElementById("workspace-chapters-list");
+            chList.innerHTML = "";
+
+            if (!proj.chapters || proj.chapters.length === 0) {
+                activeChapterId = null;
+                chList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem;">No chapters found in this project.</p>`;
+                document.getElementById("no-chapter-selected").style.display = "block";
+                document.getElementById("no-chapter-selected").innerHTML = `
+                    <div style="font-size: 2.5rem; margin-bottom: 0.8rem;">📭</div>
+                    <h3 style="font-size: 1.1rem; color: #fff; margin-bottom: 0.5rem;">Chưa có Item nào trong Project này</h3>
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.2rem;">Hãy bấm nút <strong>"+ Thêm Item mới"</strong> ở góc trên danh sách bên trái để bắt đầu.</p>
+                `;
+                document.getElementById("details-panel").style.display = "none";
+                let wsContent = document.getElementById("workspace-content");
+                if (wsContent) wsContent.innerHTML = "";
+                let btnFinal = document.getElementById("btn-preview-final");
+                if (btnFinal) btnFinal.style.display = "none";
+                return;
             }
 
-            async function browseLocalFileForMusic() {
-                try {
-                    let res = await fetch("/v1/system/select-file?prompt=Chọn tệp nhạc (audio file)");
-                    if (!res.ok) {
-                        let errData = await res.json().catch(() => ({ detail: res.statusText }));
-                        alert("Không thể mở chọn file: " + (errData.detail || res.statusText));
-                        return;
-                    }
-                    let data = await res.json();
-                    if (data && data.path) {
-                        document.getElementById("music-path").value = data.path;
-                        document.getElementById("music-file").value = "";
-                    } else {
-                        alert("Không thể mở hộp thoại chọn file ổ đĩa local. Nếu bạn đang dùng trang web trên Server Production từ xa, vui lòng nhấn dòng chữ 'upload file manually' ngay bên dưới ô nhập để chọn file từ máy bạn.");
-                    }
-                } catch(e) {
-                    alert("Không thể mở hộp thoại chọn file: " + e.message);
+            proj.chapters.forEach((c, idx) => {
+                let item = document.createElement("div");
+                if (idx === 0 && (!activeChapterId || !proj.chapters.some(x => x.id === activeChapterId))) {
+                    activeChapterId = c.id;
                 }
+                let isActive = (c.id === activeChapterId);
+                item.className = "chapter-item" + (isActive ? " active" : "");
+                item.dataset.chapterId = c.id;
+                item.onclick = () => selectChapterInWorkspace(proj.story_id, c.id, c.title);
+                
+                let statusColor = c.status === "completed" ? "#10b981" : c.status === "processing" ? "#f59e0b" : "var(--text-muted)";
+                let statusIcon = c.status === "completed" ? "● completed" : c.status === "processing" ? "⚡ processing" : "● idle";
+                item.innerHTML = `
+                    <div style="flex: 1; min-width: 0; margin-right: 0.4rem;">
+                        <div style="font-weight: 600; font-size: 0.85rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${c.title}</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted);">ID: ${c.id}</div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.3rem;">
+                        <span class="ch-status-badge" style="font-size: 0.7rem; color: ${statusColor}; font-weight: bold;">${statusIcon}</span>
+                        <button onclick="openFolder(event, '${proj.story_id}', '${c.id}')" style="background: rgba(255,255,255,0.08); border: 1px solid var(--border); color: #fff; width: 26px; height: 26px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.2s;" title="Mở thư mục Chapter này">📁</button>
+                        <button onclick="deleteChapter(event, '${proj.story_id}', '${c.id}', '${c.title}')" style="background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35); color: #f87171; width: 26px; height: 26px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.2s;" title="Xóa Item này">🗑️</button>
+                    </div>
+                `;
+                chList.appendChild(item);
+            });
+
+            if (proj.chapters.length > 0) {
+                let targetCh = proj.chapters.find(c => c.id === activeChapterId) || proj.chapters[0];
+                selectChapterInWorkspace(storyId, targetCh.id, targetCh.title);
             }
+        }
 
-            async function browseLocalFileForVoice() {
-                try {
-                    let res = await fetch("/v1/system/select-file?prompt=Chọn file âm thanh giọng mẫu");
-                    if (!res.ok) {
-                        let errData = await res.json().catch(() => ({ detail: res.statusText }));
-                        alert("Không thể mở chọn file: " + (errData.detail || res.statusText));
-                        return;
-                    }
-                    let data = await res.json();
-                    if (data && data.path) {
-                        document.getElementById("new-voice-path-page").value = data.path;
-                        document.getElementById("new-voice-file-page").value = "";
-                    } else {
-                        alert("Không thể mở hộp thoại chọn file ổ đĩa local. Nếu bạn đang dùng trang web trên Server Production từ xa, vui lòng nhấn dòng chữ 'upload file manually' ngay bên dưới ô nhập để chọn file từ máy bạn.");
-                    }
-                } catch(e) {
-                    alert("Không thể mở hộp thoại chọn file: " + e.message);
-                }
-            }
+        function backToProjectsHome() {
+            activeStoryId = null;
+            activeChapterId = null;
+            let mainHeader = document.getElementById('main-app-header');
+            if (mainHeader) mainHeader.style.display = 'flex';
+            let menuNav = document.getElementById('header-menu-nav');
+            if (menuNav) menuNav.style.display = 'flex';
+            document.getElementById("view-projects-home").style.display = "block";
+            document.getElementById("view-project-workspace").style.display = "none";
+            document.getElementById("view-voices").style.display = "none";
+            loadProjects();
+        }
 
-            // Register change listeners for manual upload fallbacks after DOM content load
-            window.addEventListener('DOMContentLoaded', (event) => {
-                updateAgentStatus();
-                setInterval(updateAgentStatus, 5000);
+        async function selectChapterInWorkspace(storyId, chapterId, title) {
+            activeStoryId = storyId;
+            activeChapterId = chapterId;
+            loadedChapterConfigKey = null;
 
-                const musicFile = document.getElementById('music-file');
-                if (musicFile) {
-                    musicFile.addEventListener('change', function(e) {
-                        if (e && e.target && e.target.files && e.target.files.length > 0) {
-                            document.getElementById('music-path').value = "Staged Upload: " + e.target.files[0].name;
-                        }
-                    });
-                }
-                const voiceFile = document.getElementById('new-voice-file-page');
-                if (voiceFile) {
-                    voiceFile.addEventListener('change', function(e) {
-                        if (e && e.target && e.target.files && e.target.files.length > 0) {
-                            document.getElementById('new-voice-path-page').value = "Staged Upload: " + e.target.files[0].name;
-                        }
-                    });
+            document.querySelectorAll("#workspace-chapters-list .chapter-item").forEach(el => {
+                if (el.dataset.chapterId === chapterId) {
+                    el.classList.add("active");
+                } else {
+                    el.classList.remove("active");
                 }
             });
 
-            function checkUrlWorkspace() {
-                try {
-                    let urlParams = new URLSearchParams(window.location.search);
-                    let wsParam = urlParams.get("ws") || urlParams.get("workspace_id") || urlParams.get("workspace");
-                    if (wsParam && wsParam.trim()) {
-                        let cleanWs = wsParam.trim();
-                        localStorage.setItem("taka_workspace_id", cleanWs);
-                        let el = document.getElementById("workspace-id-text");
-                        if (el) el.innerText = cleanWs;
-                        if (window.history && window.history.replaceState) {
-                            let cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
-                            window.history.replaceState({path: cleanUrl}, '', cleanUrl);
-                        }
+            document.getElementById("no-chapter-selected").style.display = "none";
+            document.getElementById("details-panel").style.display = "block";
+            document.getElementById("current-chapter-title").innerText = title || chapterId;
+            document.getElementById("current-chapter-subtitle").innerText = `Project: ${storyId} • ID: ${chapterId}`;
+            
+            updateCurrentChapterStatusBanner();
+            loadVoicesSelect();
+            loadFragments(storyId, chapterId);
+        }
+
+        async function updateCurrentChapterStatusBanner() {
+            if (!activeStoryId || !activeChapterId) return;
+            let banner = document.getElementById("status-banner");
+            if (!banner) return;
+            try {
+                let res = await fetch(`/v1/projects/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/status`);
+                let stData = await res.json();
+                let st = stData.status || "idle";
+                let isBusy = (st === "processing" || st === "running" || st === "queued" || st === "starting");
+                
+                let hasImages = !!stData.has_images;
+                let hasAudio = !!stData.has_audio;
+                let hasVideo = !!stData.has_video;
+
+                let currentKey = activeStoryId + "/" + activeChapterId;
+                if (loadedChapterConfigKey !== currentKey) {
+                    if (stData.art_style && document.getElementById("art-style-select")) {
+                        document.getElementById("art-style-select").value = stData.art_style;
                     }
-                } catch(e) {}
-            }
-            checkUrlWorkspace();
-
-            function getWorkspaceId() {
-                checkUrlWorkspace();
-                let wsId = localStorage.getItem("taka_workspace_id");
-                if (!wsId || wsId === "null" || wsId === "undefined") {
-                    wsId = "";
-                }
-                return wsId;
-            }
-
-            function setWorkspaceId(wsId) {
-                if (wsId) {
-                    localStorage.setItem("taka_workspace_id", wsId.trim());
-                    let el = document.getElementById("workspace-id-text");
-                    if (el) el.innerText = wsId.trim();
-                    if (typeof fetchStories === "function") fetchStories();
-                    if (typeof loadProjects === "function") loadProjects();
-                    if (typeof fetchVoicesPage === "function") fetchVoicesPage();
-                    updateAgentStatus();
-                }
-            }
-
-            function changeWorkspacePrompt() {
-                let current = getWorkspaceId();
-                let newWs = prompt("Nhập/Đổi không gian làm việc (Workspace ID):", current || "");
-                if (newWs && newWs.trim()) {
-                    setWorkspaceId(newWs.trim());
-                }
-            }
-
-            // Intercept window.fetch to automatically append X-Workspace-ID header
-            const originalFetch = window.fetch;
-            window.fetch = function(url, options) {
-                options = options || {};
-                options.headers = options.headers || {};
-                let wsId = getWorkspaceId();
-                let urlStr = typeof url === 'string' ? url : (url ? url.toString() : '');
-                if (wsId && !urlStr.includes(":8766")) {
-                    if (options.headers instanceof Headers) {
-                        options.headers.set("X-Workspace-ID", wsId);
-                    } else if (Array.isArray(options.headers)) {
-                        options.headers.push(["X-Workspace-ID", wsId]);
-                    } else {
-                        options.headers["X-Workspace-ID"] = wsId;
+                    if (stData.subtitle_preset && document.getElementById("subtitle-preset-select")) {
+                        document.getElementById("subtitle-preset-select").value = stData.subtitle_preset;
                     }
+                    if (stData.aspect_ratio && document.getElementById("aspect-ratio-select")) {
+                        document.getElementById("aspect-ratio-select").value = stData.aspect_ratio;
+                    }
+                    if (stData.use_watermark !== undefined && document.getElementById("toggle-watermark")) {
+                        document.getElementById("toggle-watermark").checked = !!stData.use_watermark;
+                    }
+                    if (stData.use_subtitles !== undefined && document.getElementById("toggle-subtitles")) {
+                        document.getElementById("toggle-subtitles").checked = !!stData.use_subtitles;
+                    }
+                    if (stData.use_waveform !== undefined && document.getElementById("toggle-waveform")) {
+                        document.getElementById("toggle-waveform").checked = !!stData.use_waveform;
+                    }
+                    loadedChapterConfigKey = currentKey;
                 }
-                return originalFetch.call(this, url, options);
-            };
 
-            let currentStory = "";
-            let currentChapter = "";
-            let timerId = null;
-            let storyFragments = [];
+                let btnAll = document.getElementById("btn-run-all");
+                let btnImages = document.getElementById("btn-run-images");
+                let btnAudio = document.getElementById("btn-run-audio");
+                let btnSub = document.getElementById("btn-run-subtitles");
+                let btnVideo = document.getElementById("btn-run-video");
+                let btnCancel = document.getElementById("btn-cancel-job");
 
-            async function updateAgentStatus() {
-                try {
-                    // Auto-detect local machine agent via localhost HTTP endpoint (port 8766)
-                    try {
-                        let controller = new AbortController();
-                        let timeoutId = setTimeout(() => controller.abort(), 800);
-                        let localRes = await originalFetch("http://127.0.0.1:8766/v1/local/info", { signal: controller.signal });
-                        clearTimeout(timeoutId);
-                        if (localRes.ok) {
-                            let localInfo = await localRes.json();
-                            if (localInfo && localInfo.workspace_id) {
-                                let curWs = localStorage.getItem("taka_workspace_id");
-                                if (curWs !== localInfo.workspace_id) {
-                                    localStorage.setItem("taka_workspace_id", localInfo.workspace_id);
-                                    if (typeof loadProjects === "function") loadProjects();
-                                }
-                            }
+                if (isBusy) {
+                    [btnAll, btnImages, btnAudio, btnSub, btnVideo].forEach(b => {
+                        if (b) {
+                            b.disabled = true;
+                            b.style.opacity = "0.45";
+                            b.style.cursor = "not-allowed";
+                            b.title = "⚠️ Pipeline job is currently running...";
                         }
-                    } catch(e) {}
-
-                    let res = await fetch("/v1/agent/status?_t=" + Date.now());
-                    let data = await res.json();
-                    let badge = document.getElementById("agent-badge");
-                    let text = document.getElementById("agent-text");
-                    let welcomeStatus = document.getElementById("welcome-agent-status");
-                    let welcomeText = document.getElementById("welcome-status-text");
-                    let welcomeDot = document.getElementById("welcome-status-dot");
-
-                    let curWs = getWorkspaceId();
-                    let wsEl = document.getElementById("workspace-id-text");
-
-                    if (data.connected && data.workspace_id) {
-                        if (curWs !== data.workspace_id) {
-                            localStorage.setItem("taka_workspace_id", data.workspace_id);
-                            curWs = data.workspace_id;
-                            if (typeof loadProjects === "function") loadProjects();
-                        }
-                        if (wsEl) wsEl.innerText = curWs;
-                    } else {
-                        if (wsEl) wsEl.innerText = curWs || "Chưa chọn";
-                    }
-
-                    if (data.connected) {
-                        if (badge) badge.classList.add("connected");
-                        let info = (data.agents && data.workspace_id && data.agents[data.workspace_id]) || (data.agents ? Object.values(data.agents)[0] : {}) || {};
-                        let version = info.agent_version || data.agent_version || "";
-                        
-                        if (data.needs_update) {
-                            if (text) text.innerHTML = `Agent Connected ${version} <span style="background: #f59e0b; color: #000; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-left: 0.5rem; display: inline-block;">Update Available (v${data.server_version})</span>`;
-                            
-                            if (welcomeStatus) {
-                                welcomeStatus.style.background = "rgba(245, 158, 11, 0.1)";
-                                welcomeStatus.style.borderColor = "rgba(245, 158, 11, 0.2)";
-                                welcomeStatus.style.color = "#f59e0b";
-                            }
-                            if (welcomeText) {
-                                welcomeText.innerHTML = `Taka Agent Connected (v${version}) nhưng đã có bản cập nhật mới (v${data.server_version})! <a href="/v1/system/install-agent.sh" style="color: #f59e0b; font-weight: bold; text-decoration: underline;">Cập nhật ngay</a>`;
-                            }
-                            if (welcomeDot) {
-                                welcomeDot.style.background = "#f59e0b";
-                                welcomeDot.style.boxShadow = "0 0 8px #f59e0b";
-                            }
-                        } else {
-                            if (text) text.innerText = "Agent Connected " + version;
-                            
-                            if (welcomeStatus) {
-                                welcomeStatus.style.background = "rgba(16, 185, 129, 0.1)";
-                                welcomeStatus.style.borderColor = "rgba(16, 185, 129, 0.2)";
-                                welcomeStatus.style.color = "#10b981";
-                            }
-                            if (welcomeText) {
-                                welcomeText.innerText = `Taka Agent đã kết nối thành công (${curWs})! Chọn chương truyện ở danh sách bên trái để bắt đầu.`;
-                            }
-                            if (welcomeDot) {
-                                welcomeDot.style.background = "#10b981";
-                                welcomeDot.style.boxShadow = "0 0 8px #10b981";
-                            }
-                        }
-                    } else {
-                        if (badge) badge.classList.remove("connected");
-                        if (text) text.innerText = "Agent Offline";
-                        
-                        if (welcomeStatus) {
-                            welcomeStatus.style.background = "rgba(239, 68, 68, 0.1)";
-                            welcomeStatus.style.borderColor = "rgba(239, 68, 68, 0.2)";
-                            welcomeStatus.style.color = "#ef4444";
-                        }
-                        if (welcomeText) {
-                            welcomeText.innerText = curWs ? `Đang chờ Taka Agent kết nối cho Workspace '${curWs}'... (Hãy đảm bảo Agent đã được chạy trên máy tính của bạn)` : "Đang chờ Taka Agent kết nối... Hãy chạy lệnh cài đặt Agent trên máy tính của bạn.";
-                        }
-                        if (welcomeDot) {
-                            welcomeDot.style.background = "#ef4444";
-                            welcomeDot.style.boxShadow = "0 0 8px #ef4444";
-                        }
-                    }
-                } catch(e) {
-                    console.error("Error updating agent status:", e);
-                }
-            }
-
-            async function addNewStory() {
-                let storyId = prompt("Nhập Story ID mới:");
-                if (!storyId || !storyId.trim()) return;
-                try {
-                    let res = await fetch(`/v1/projects?story_id=${encodeURIComponent(storyId.trim())}`, { method: "POST" });
-                    if (res.ok) {
-                        loadProjects();
-                    } else {
-                        let err = await res.json();
-                        alert(err.detail || "Không thể tạo story");
-                    }
-                } catch (e) {
-                    alert("Error creating story: " + e);
-                }
-            }
-
-            async function loadProjects() {
-                try {
-                    let res = await fetch("/v1/projects");
-                    let stories = await res.json();
-                    let list = document.getElementById("project-list");
-                    list.innerHTML = "";
-                    
-                    if (!Array.isArray(stories) || stories.length === 0) {
-                        list.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem; padding: 1rem;">No stories loaded yet. Click '+' to load one.</p>`;
-                        return;
-                    }
-                    
-                    stories.forEach(s => {
-                        let sec = document.createElement("div");
-                        sec.className = "story-section";
-                        
-                        let header = document.createElement("div");
-                        header.className = "story-header-title";
-                        if (s.story_id === "music") {
-                            header.innerHTML = `🎵 Music Projects`;
-                            header.style.color = "var(--success)";
-                        } else if (s.story_id === "dao-ly" || s.story_id === "dao_ly") {
-                            header.innerHTML = `☯️ Video Đạo Lý`;
-                            header.style.color = "#f59e0b";
-                        } else {
-                            header.innerHTML = `📖 Story: ${s.story_id}`;
-                        }
-                        sec.appendChild(header);
-                        
-                        let chList = document.createElement("div");
-                        chList.className = "chapter-list";
-                        
-                        let chapters = Array.isArray(s.chapters) ? s.chapters : [];
-                        chapters.forEach(c => {
-                            let targetStoryId = c.story_id || s.story_id;
-                            let displayTitle = c.title;
-                            if (s.story_id !== "music" && s.story_id !== "dao-ly" && s.story_id !== "dao_ly") {
-                                let idx = "";
-                                let match = c.id.match(/chuong[-_](\d+)/i) || c.id.match(/chapter[-_](\d+)/i) || c.id.match(/(\d+)/);
-                                if (match) {
-                                    idx = match[1];
-                                }
-                                let cleanTitle = c.title.replace(/^(Chương|chuong|chapter)\s*\d+[\s-:]*/i, "").trim();
-                                if (idx !== "") {
-                                    displayTitle = `Chương ${idx}` + (cleanTitle ? `: ${cleanTitle}` : "");
-                                } else {
-                                    displayTitle = cleanTitle || c.title;
-                                }
-                            }
-
-                            let activeClass = (targetStoryId === currentStory && c.id === currentChapter) ? "active" : "";
-                            let item = document.createElement("div");
-                            item.className = "chapter-item " + activeClass;
-                            item.onclick = () => selectChapter(targetStoryId, c.id, displayTitle);
-                            
-                            let btnId = `btn-${s.story_id}-${c.id}`;
-                            let isRunning = (c.status !== 'idle' && c.status !== 'completed');
-                            
-                            let subtitleP = "No video output yet";
-                            if (c.status === "queued" || (c.progress && c.progress.status === "queued")) {
-                                let pos = (c.progress && c.progress.queue_position) ? c.progress.queue_position : 1;
-                                subtitleP = `<span style="color: #f59e0b; font-weight: 600;">🟡 Queue (#${pos})</span>`;
-                            } else if (c.status !== 'idle' && c.status !== 'completed') {
-                                subtitleP = `<span style="color: #3b82f6; font-weight: 600;">🔵 Running...</span>`;
-                            } else if (c.has_video) {
-                                subtitleP = "🎬 Video completed";
-                            }
-                            
-                            item.innerHTML = `
-                                <div class="chapter-info" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                                    <div style="flex: 1; overflow: hidden; text-overflow: ellipsis;">
-                                        <h4>${displayTitle}</h4>
-                                        <p>${subtitleP}</p>
-                                    </div>
-                                    <button class="delete-item-btn" title="Xóa dự án này" onclick="event.stopPropagation(); deleteProject('${targetStoryId}', '${c.id}');" style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; padding: 0.25rem 0.5rem; border-radius: 5px; font-size: 0.75rem; cursor: pointer; font-weight: 600; margin-left: 0.5rem;">🗑️</button>
-                                </div>
-                            `;
-                            chList.appendChild(item);
-                        });
-                        
-                        if (chapters.length === 0) {
-                            chList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.8rem; padding-left: 0.5rem;">No chapters found</p>`;
-                        }
-                        
-                        sec.appendChild(chList);
-                        list.appendChild(sec);
                     });
-                } catch(e) {}
-            }
-
-            async function selectChapter(storyId, chapterId, title) {
-                currentStory = storyId;
-                currentChapter = chapterId;
-                let vc = document.getElementById("video-preview-container");
-                if (vc) vc.dataset.loadedUrl = "";
-                
-                document.querySelectorAll(".chapter-item").forEach(item => {
-                    item.classList.remove("active");
-                });
-                loadProjects();
-                
-                let placeholder = document.getElementById("details-placeholder");
-                let content = document.getElementById("details-content");
-                if (placeholder) placeholder.style.display = "none";
-                if (content) content.style.display = "block";
-                if (storyId === "dao-ly" || storyId === "dao_ly") {
-                    document.getElementById("current-project-title").innerText = title;
+                    if (btnCancel) {
+                        btnCancel.style.display = "inline-flex";
+                        btnCancel.innerText = "⛔ Hủy tiến trình";
+                    }
                 } else {
-                    document.getElementById("current-project-title").innerText = `${storyId} - ${title}`;
-                }
-                
-                let runBtn = document.getElementById("details-run-btn");
-                if (runBtn) {
-                    runBtn.disabled = false;
-                    if (storyId === "music") {
-                        runBtn.onclick = (event) => runChapter(event, storyId, chapterId);
-                    } else if (storyId === "dao-ly" || storyId === "dao_ly" || storyId.startsWith("dao_ly_") || storyId.startsWith("dao-ly-")) {
-                        runBtn.onclick = (event) => openDaoLyStudioModal(chapterId);
-                    } else {
-                        runBtn.onclick = (event) => openVoiceConfig(storyId, chapterId);
+                    if (btnCancel) {
+                        btnCancel.style.display = "none";
+                    }
+                    if (btnAll) { btnAll.disabled = false; btnAll.style.opacity = "1"; btnAll.style.cursor = "pointer"; btnAll.title = ""; }
+                    if (btnImages) { btnImages.disabled = false; btnImages.style.opacity = "1"; btnImages.style.cursor = "pointer"; btnImages.title = ""; }
+                    if (btnAudio) { btnAudio.disabled = false; btnAudio.style.opacity = "1"; btnAudio.style.cursor = "pointer"; btnAudio.title = ""; }
+
+                    if (btnSub) {
+                        if (!hasAudio) {
+                            btnSub.disabled = true;
+                            btnSub.style.opacity = "0.45";
+                            btnSub.style.cursor = "not-allowed";
+                            btnSub.title = "⚠️ Requires generated audio clips first";
+                        } else {
+                            btnSub.disabled = false;
+                            btnSub.style.opacity = "1";
+                            btnSub.style.cursor = "pointer";
+                            btnSub.title = "Run Whisper subtitle alignment on audio clips";
+                        }
+                    }
+
+                    if (btnVideo) {
+                        if (!hasImages && !hasAudio) {
+                            btnVideo.disabled = true;
+                            btnVideo.style.opacity = "0.45";
+                            btnVideo.style.cursor = "not-allowed";
+                            btnVideo.title = "⚠️ Requires both images and audio clips generated first";
+                        } else if (!hasImages) {
+                            btnVideo.disabled = true;
+                            btnVideo.style.opacity = "0.45";
+                            btnVideo.style.cursor = "not-allowed";
+                            btnVideo.title = "⚠️ Requires generated story images first";
+                        } else if (!hasAudio) {
+                            btnVideo.disabled = true;
+                            btnVideo.style.opacity = "0.45";
+                            btnVideo.style.cursor = "not-allowed";
+                            btnVideo.title = "⚠️ Requires generated audio clips first";
+                        } else {
+                            btnVideo.disabled = false;
+                            btnVideo.style.opacity = "1";
+                            btnVideo.style.cursor = "pointer";
+                            btnVideo.title = "Render final video with images, audio & subtitles";
+                        }
+                    }
+
+                    let btnPreviewFinal = document.getElementById("btn-preview-final");
+                    if (btnPreviewFinal) {
+                        if (hasVideo || st === "completed") {
+                            btnPreviewFinal.style.display = "inline-flex";
+                        } else {
+                            btnPreviewFinal.style.display = "none";
+                        }
                     }
                 }
 
-                if (timerId) clearInterval(timerId);
-                timerId = setInterval(() => pollChapterStatus(storyId, chapterId), 1000);
-                pollChapterStatus(storyId, chapterId);
-            }
-
-
-
-            let dialogStoryId = "";
-            let dialogChapterId = "";
-
-            async function openVoiceConfig(storyId, chapterId) {
-                dialogStoryId = storyId;
-                dialogChapterId = chapterId;
-                document.getElementById("dialog-chapter-id").innerText = chapterId;
-                
-                // Load voices dropdown
-                await loadVoicesDropdown();
-                
-                try {
-                    let res = await fetch("/v1/voice/defaults");
-                    let defaults = await res.json();
-                    
-                    document.getElementById("vc-voice-id").value = defaults.voice_id;
-                    document.getElementById("vc-start-fragment").value = 0;
-                    document.getElementById("vc-limit-fragments").value = 0;
-                } catch(e) {
-                    console.error("Failed to load voice defaults: ", e);
+                let itemEl = document.querySelector(`.chapter-item[data-chapter-id="${CSS.escape(activeChapterId)}"]`);
+                if (itemEl) {
+                    let badgeEl = itemEl.querySelector(".ch-status-badge");
+                    if (badgeEl) {
+                        let color = (st === "completed") ? "#10b981" : (st === "processing" || st === "running" || st === "queued") ? "#f59e0b" : "var(--text-muted)";
+                        let icon = (st === "completed") ? "● completed" : (st === "processing" || st === "running") ? "⚡ processing" : (st === "queued") ? "⏳ queued" : "● idle";
+                        badgeEl.style.color = color;
+                        badgeEl.innerText = icon;
+                    }
                 }
 
-                // Fetch fragments
-                storyFragments = [];
-                document.getElementById("story-frag-search").value = "";
-                let listContainer = document.getElementById("story-frag-list");
-                listContainer.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem;">Loading fragments...</p>`;
-                
-                fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/fragments`)
-                    .then(res => res.json())
-                    .then(frags => {
-                        storyFragments = Array.isArray(frags) ? frags : [];
-                        renderStoryFragments();
-                    })
-                    .catch(err => {
-                        storyFragments = [];
-                        listContainer.innerHTML = `<p style="color: #ff6b6b; font-size: 0.85rem; padding: 0.5rem;">Failed to load fragments: ${err}</p>`;
-                    });
-                
-                document.getElementById("voice-config-dialog").showModal();
-            }
-
-            function closeVoiceConfig() {
-                document.getElementById("voice-config-dialog").close();
-            }
-
-            function renderStoryFragments(filterKeyword = "") {
-                let listContainer = document.getElementById("story-frag-list");
-                listContainer.innerHTML = "";
-                
-                if (!Array.isArray(storyFragments)) storyFragments = [];
-                let filtered = storyFragments;
-                if (filterKeyword.trim()) {
-                    let kw = filterKeyword.toLowerCase();
-                    filtered = storyFragments.filter(f => f.text.toLowerCase().includes(kw));
+                if (st === "processing" || st === "running") {
+                    let step = stData.current_step || "Processing...";
+                    let pct = (stData.progress_percent !== undefined && stData.progress_percent !== null) ? ` (${stData.progress_percent}%)` : "";
+                    banner.innerHTML = `<span style="color: #f59e0b; font-weight: bold;">⚡ ${step}${pct}</span>`;
+                    banner.style.borderColor = "rgba(245, 158, 11, 0.4)";
+                    banner.style.background = "rgba(245, 158, 11, 0.15)";
+                } else if (st === "queued") {
+                    banner.innerHTML = `<span style="color: #a855f7; font-weight: bold;">⏳ Queued</span>`;
+                    banner.style.borderColor = "rgba(168, 85, 247, 0.4)";
+                    banner.style.background = "rgba(168, 85, 247, 0.15)";
+                } else if (st === "completed") {
+                    banner.innerHTML = `<span style="color: #10b981; font-weight: bold;">✅ Completed</span>`;
+                    banner.style.borderColor = "rgba(16, 185, 129, 0.4)";
+                    banner.style.background = "rgba(16, 185, 129, 0.15)";
+                } else if (st === "failed") {
+                    banner.innerHTML = `<span style="color: #ef4444; font-weight: bold;">❌ Failed</span>`;
+                    banner.style.borderColor = "rgba(239, 68, 68, 0.4)";
+                    banner.style.background = "rgba(239, 68, 68, 0.15)";
+                } else {
+                    banner.innerHTML = `<span style="color: var(--text-muted);">Ready</span>`;
+                    banner.style.borderColor = "var(--border)";
+                    banner.style.background = "rgba(255, 255, 255, 0.05)";
                 }
-                
-                if (filtered.length === 0) {
-                    listContainer.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem;">No fragments found.</p>`;
+            } catch(e) {}
+        }
+
+        async function loadVoicesSelect() {
+            try {
+                let res = await fetch("/v1/voices");
+                let voices = await res.json();
+                let select = document.getElementById("voice-select");
+                select.innerHTML = "";
+                voices.forEach(v => {
+                    let opt = document.createElement("option");
+                    opt.value = v.id;
+                    opt.innerText = (v.is_protected ? "🔒 " : "") + (v.name || v.id);
+                    select.appendChild(opt);
+                });
+            } catch(e) {}
+        }
+
+        async function loadFragments(storyId, chapterId) {
+            let container = document.getElementById("workspace-content");
+            container.innerHTML = `<p style="color: var(--text-muted);">Loading fragments...</p>`;
+            try {
+                let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/fragments`);
+                let frags = await res.json();
+                if (!Array.isArray(frags) || frags.length === 0) {
+                    container.innerHTML = `<p style="color: var(--text-muted);">No fragments found for this chapter.</p>`;
                     return;
                 }
                 
-                filtered.forEach(f => {
-                    let item = document.createElement("div");
-                    item.style.padding = "0.5rem 0.6rem";
-                    item.style.borderRadius = "6px";
-                    item.style.cursor = "pointer";
-                    item.style.fontSize = "0.85rem";
-                    item.style.color = "var(--text)";
-                    item.style.background = "rgba(255,255,255,0.03)";
-                    item.style.border = "1px solid rgba(255,255,255,0.05)";
-                    item.style.transition = "all 0.2s ease";
-                    item.style.display = "flex";
-                    item.style.gap = "0.5rem";
+                let html = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; margin-bottom: 0.8rem; background: rgba(0,0,0,0.25); padding: 0.8rem 1rem; border-radius: 8px; border: 1px solid var(--border);" onclick="toggleFragmentsAccordion()">
+                        <div>
+                            <h4 style="font-size: 0.95rem; margin: 0 0 0.25rem 0; color: var(--primary); font-weight: 700; display: flex; align-items: center; gap: 0.4rem;">
+                                📝 Fragments & Audio Clips (${frags.length})
+                            </h4>
+                            <div id="fragments-subtitle-info" style="font-size: 0.78rem; color: #a855f7; font-weight: 600;">
+                                Selected Range: Fragment #1 → #5 (5 clips included in pipeline)
+                            </div>
+                        </div>
+                        <span id="fragments-arrow" style="font-size: 0.85rem; color: var(--text-muted); transition: transform 0.2s ease;">▼</span>
+                    </div>
+                    <div id="fragments-list-container" style="display: flex; flex-direction: column; gap: 0.6rem;">
+                `;
+                frags.forEach(f => {
+                    let itemNum = f.index + 1;
                     
-                    // Check if this is the currently selected start fragment
-                    let startVal = parseInt(document.getElementById("vc-start-fragment").value) || 0;
-                    if (f.index === startVal) {
-                        item.style.background = "rgba(122, 209, 255, 0.15)";
-                        item.style.borderColor = "#7ad1ff";
-                        item.style.boxShadow = "0 0 8px rgba(122, 209, 255, 0.2)";
-                    }
-                    
-                    // Hover effects
-                    item.onmouseover = () => {
-                        if (f.index !== parseInt(document.getElementById("vc-start-fragment").value)) {
-                            item.style.background = "rgba(255,255,255,0.08)";
-                        }
-                    };
-                    item.onmouseout = () => {
-                        if (f.index !== parseInt(document.getElementById("vc-start-fragment").value)) {
-                            item.style.background = "rgba(255,255,255,0.03)";
-                        }
-                    };
-                    
-                    item.onclick = () => {
-                        document.getElementById("vc-start-fragment").value = f.index;
-                        renderStoryFragments(document.getElementById("story-frag-search").value);
-                    };
-                    
-                    item.innerHTML = `
-                        <span style="color:#7ad1ff; font-weight:bold; min-width:24px;">#${f.index}</span>
-                        <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${f.text.replace(/"/g, '&quot;')}">${f.text}</span>
+                    let imgHtml = f.image_url 
+                        ? `<img src="${f.image_url}" onclick="openMediaPreviewModal('${f.image_url}', 'image', 'Fragment #${itemNum} Image')" style="width: 36px; height: 36px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1.5px solid var(--primary); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'" title="Click to view image" />` 
+                        : `<span style="font-size: 0.7rem; color: rgba(255,255,255,0.25); padding: 0.25rem 0.4rem; border-radius: 4px; border: 1px dashed rgba(255,255,255,0.15);" title="No image generated">🎨 No Image</span>`;
+
+                    let audHtml = f.audio_url 
+                        ? `<button onclick="playFragmentAudio('${f.audio_url}', this)" style="background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; color: #60a5fa; padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.72rem; font-weight: bold; cursor: pointer; display: inline-flex; align-items: center; gap: 0.3rem;" title="Play TTS Audio">▶️ Audio</button>` 
+                        : `<span style="font-size: 0.7rem; color: rgba(255,255,255,0.25); padding: 0.25rem 0.4rem; border-radius: 4px; border: 1px dashed rgba(255,255,255,0.15);" title="No audio generated">🎙️ No Audio</span>`;
+
+                    let vidHtml = f.video_url 
+                        ? `<button onclick="openMediaPreviewModal('${f.video_url}', 'video', 'Fragment #${itemNum} Video Clip')" style="background: rgba(139, 92, 246, 0.15); border: 1px solid #8b5cf6; color: #c084fc; padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.72rem; font-weight: bold; cursor: pointer; display: inline-flex; align-items: center; gap: 0.3rem;" title="Preview Video Clip">🎬 Video</button>` 
+                        : ``;
+
+                    html += `
+                        <div class="frag-item" data-index="${itemNum}" style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); padding: 0.8rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 1rem; transition: all 0.2s ease;">
+                            <div style="flex: 1;">
+                                <span class="frag-badge" style="font-size: 0.75rem; color: var(--primary); font-weight: bold; margin-right: 0.5rem;">#${itemNum}</span>
+                                <span style="font-size: 0.85rem; color: #eee;">${f.text}</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
+                                ${imgHtml}
+                                ${audHtml}
+                                ${vidHtml}
+                            </div>
+                        </div>
                     `;
-                    
-                    listContainer.appendChild(item);
+                });
+                html += `</div>`;
+                container.innerHTML = html;
+                updateFragmentHighlights();
+            } catch(e) {
+                container.innerHTML = `<p style="color: var(--danger);">Error loading fragments: ${e.message}</p>`;
+            }
+        }
+
+        let currentAudioPlayer = null;
+        function playFragmentAudio(url, btn) {
+            if (currentAudioPlayer) {
+                currentAudioPlayer.pause();
+                currentAudioPlayer = null;
+                document.querySelectorAll(".frag-item button").forEach(b => {
+                    if (b.innerText.includes("Playing...")) b.innerHTML = "▶️ Audio";
                 });
             }
+            let audio = new Audio(url);
+            currentAudioPlayer = audio;
+            btn.innerHTML = "⏸️ Playing...";
+            audio.play();
+            audio.onended = () => {
+                btn.innerHTML = "▶️ Audio";
+                currentAudioPlayer = null;
+            };
+            audio.onerror = () => {
+                alert("Unable to play audio file.");
+                btn.innerHTML = "▶️ Audio";
+                currentAudioPlayer = null;
+            };
+        }
 
-            function filterStoryFragments() {
-                let kw = document.getElementById("story-frag-search").value;
-                renderStoryFragments(kw);
+        function openMediaPreviewModal(url, type, title) {
+            let modal = document.getElementById("media-preview-modal");
+            if (!modal) {
+                modal = document.createElement("div");
+                modal.id = "media-preview-modal";
+                modal.style.cssText = "position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10000; padding: 2rem;";
+                document.body.appendChild(modal);
             }
-
-             async function submitVoiceConfig(event) {
-                event.preventDefault();
-                closeVoiceConfig();
+            
+            let contentHtml = type === "image"
+                ? `<img src="${url}" style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.8);" />`
+                : `<video src="${url}" controls autoplay style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.8);"></video>`;
                 
-                let artStyle = document.getElementById("art-style-story").value;
-                let voiceId = document.getElementById("vc-voice-id").value;
-                let startFragment = parseInt(document.getElementById("vc-start-fragment").value) || 0;
-                let limitFragments = parseInt(document.getElementById("vc-limit-fragments").value) || 0;
-                let useWatermark = document.getElementById("story-use-watermark").checked;
-                let useSubtitles = document.getElementById("story-use-subtitles").checked;
-                let subtitlePreset = document.getElementById("story-subtitle-preset") ? document.getElementById("story-subtitle-preset").value : "viral-bold-yellow";
-                let forceRerun = document.getElementById("story-force-rerun") ? document.getElementById("story-force-rerun").checked : false;
+            modal.innerHTML = `
+                <div style="background: rgba(20,20,30,0.95); border: 1px solid var(--border); border-radius: 16px; padding: 1.5rem; max-width: 95vw; display: flex; flex-direction: column; align-items: center; position: relative;">
+                    <button onclick="closeMediaPreviewModal()" style="position: absolute; top: 1rem; right: 1rem; background: rgba(255,255,255,0.1); border: none; color: #fff; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 1.1rem; display: flex; justify-content: center; align-items: center;">✕</button>
+                    <h3 style="font-size: 1rem; font-weight: 700; color: var(--primary); margin-bottom: 1rem;">${title || 'Media Preview'}</h3>
+                    ${contentHtml}
+                </div>
+            `;
+            modal.style.display = "flex";
+            modal.onclick = (e) => {
+                if (e.target === modal) closeMediaPreviewModal();
+            };
+        }
 
-                let voiceConfig = {
-                    provider: "omnivoice",
-                    voice_id: voiceId,
-                    omnivoice_mode: "clone",
-                    start_fragment: startFragment,
-                    limit_fragments: limitFragments
-                };
-
-                let btnId = `btn-${dialogStoryId}-${dialogChapterId}`;
-                let btn = document.getElementById(btnId);
-                if (btn) {
-                    btn.disabled = true;
-                    btn.innerText = "Starting...";
-                }
-                let detailsBtn = document.getElementById("details-run-btn");
-                if (detailsBtn) {
-                    detailsBtn.disabled = true;
-                    detailsBtn.innerText = "Starting...";
-                }
-
-                let url = `/v1/projects/${encodeURIComponent(dialogStoryId)}/${encodeURIComponent(dialogChapterId)}/run`;
-                try {
-                    let res = await fetch(url, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({
-                            voice_config: voiceConfig,
-                            art_style: artStyle,
-                            use_watermark: useWatermark,
-                            use_subtitles: useSubtitles,
-                            subtitle_preset: subtitlePreset,
-                            force_rerun: forceRerun
-                        })
-                    });
-                    if (!res.ok) {
-                        let err = await res.json();
-                        alert(err.detail || "Failed to start run");
-                    }
-                    selectChapter(dialogStoryId, dialogChapterId, dialogChapterId);
-                } catch(e) {
-                    alert("Error: " + e);
-                }
+        function closeMediaPreviewModal() {
+            let modal = document.getElementById("media-preview-modal");
+            if (modal) {
+                modal.style.display = "none";
+                modal.innerHTML = "";
             }
+        }
 
-            // Voice Management JS Helpers
-            function openVoiceManagement() {
-                closeVoiceConfig();
-                showPage('voices');
+        function openFinalVideoPreview() {
+            if (!activeStoryId || !activeChapterId) return;
+            let videoUrl = `/v1/media/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/final.mp4?t=${Date.now()}`;
+            openMediaPreviewModal(videoUrl, 'video', `🎬 Final Video - ${activeStoryId} / ${activeChapterId}`);
+        }
+
+        function updateFragmentHighlights() {
+            let sEl = document.getElementById("frag-start-input");
+            let eEl = document.getElementById("frag-end-input");
+            if (!sEl || !eEl) return;
+            
+            let startNum = parseInt(sEl.value) || 1;
+            let endNum = parseInt(eEl.value) || 5;
+            
+            let subtitleEl = document.getElementById("fragments-subtitle-info");
+            if (subtitleEl) {
+                let count = Math.max(0, endNum - startNum + 1);
+                subtitleEl.innerText = `Selected Range: Fragment #${startNum} → #${endNum} (${count} clips included in pipeline)`;
             }
-
-            function closeVoiceManagement() {
-                showPage('home');
-            }
-
-            function showPage(pageId) {
-                // Close open dialogs if switching tabs
-                ['dao-ly-dialog', 'music-dialog', 'voice-config-dialog'].forEach(id => {
-                    let d = document.getElementById(id);
-                    if (d) {
-                        try { d.close(); } catch(e) {}
+            
+            let fragItems = document.querySelectorAll("#fragments-list-container .frag-item");
+            fragItems.forEach(item => {
+                let idx = parseInt(item.dataset.index);
+                let isSelected = (idx >= startNum && idx <= endNum);
+                if (isSelected) {
+                    item.style.background = "rgba(139, 92, 246, 0.14)";
+                    item.style.borderColor = "#8b5cf6";
+                    item.style.boxShadow = "0 0 10px rgba(139, 92, 246, 0.2)";
+                    item.style.opacity = "1";
+                    let badge = item.querySelector(".frag-badge");
+                    if (badge) {
+                        badge.style.color = "#c084fc";
+                        badge.innerText = `🎯 #${idx}`;
                     }
-                });
-
-                // Clear active from all navbar items
-                document.querySelectorAll('.header-menu a').forEach(a => a.classList.remove('active'));
-
-                if (pageId === 'home') {
-                    let homeBtn = document.getElementById('nav-home');
-                    if (homeBtn) homeBtn.classList.add('active');
-                    document.getElementById("main-grid").style.display = "grid";
-                    document.getElementById("voices-page").style.display = "none";
-                } else if (pageId === 'voices') {
-                    let voicesBtn = document.getElementById('nav-voices');
-                    if (voicesBtn) voicesBtn.classList.add('active');
-                    document.getElementById("main-grid").style.display = "none";
-                    document.getElementById("voices-page").style.display = "block";
-                    loadVoicesList();
-                } else if (pageId === 'dao-ly') {
-                    let daoLyBtn = document.getElementById('nav-dao-ly');
-                    if (daoLyBtn) daoLyBtn.classList.add('active');
-                    document.getElementById("main-grid").style.display = "grid";
-                    document.getElementById("voices-page").style.display = "none";
-                    openDaoLyStudioModal();
-                } else if (pageId === 'music') {
-                    let musicBtn = document.getElementById('nav-music');
-                    if (musicBtn) musicBtn.classList.add('active');
-                    document.getElementById("main-grid").style.display = "grid";
-                    document.getElementById("voices-page").style.display = "none";
-                    openMusicDialog();
-                }
-            }
-
-            async function loadVoicesDropdown() {
-                try {
-                    let res = await fetch("/v1/voices");
-                    if (!res.ok) return;
-                    let data = await res.json();
-                    let voices = Array.isArray(data) ? data : (data && Array.isArray(data.voices) ? data.voices : []);
-                    
-                    // 1. Populate #vc-voice-id
-                    let selectVc = document.getElementById("vc-voice-id");
-                    if (selectVc) {
-                        let currentValue = selectVc.value;
-                        selectVc.innerHTML = '<option value="">-- Select Voice Profile --</option>';
-                        voices.forEach(v => {
-                            let opt = document.createElement("option");
-                            opt.value = v.id;
-                            opt.textContent = `${v.name} (${v.has_audio ? "Ref Audio Present" : "Missing Audio"})`;
-                            selectVc.appendChild(opt);
-                        });
-                        if (currentValue) selectVc.value = currentValue;
-                    }
-
-                    // 2. Populate #dao-ly-voice dynamically
-                    let selectDaoLy = document.getElementById("dao-ly-voice");
-                    if (selectDaoLy) {
-                        let currentValue = selectDaoLy.value;
-                        selectDaoLy.innerHTML = "";
-                        
-                        voices.forEach(v => {
-                            let opt = document.createElement("option");
-                            opt.value = v.id;
-                            let emoji = "🎙️";
-                            if (v.id.includes("nam")) emoji = "👨";
-                            else if (v.id.includes("nu")) emoji = "👩";
-                            opt.textContent = `${emoji} ${v.id} (OmniVoice - ${v.name || v.id})`;
-                            selectDaoLy.appendChild(opt);
-                        });
-
-                        if (currentValue) {
-                            selectDaoLy.value = currentValue;
-                        }
-                    }
-                } catch (e) {
-                    console.error("Failed to load voices dropdown: " + e);
-                }
-            }
-
-            async function loadVoicesList() {
-                let container = document.getElementById("voices-page-list");
-                container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">Loading...</p>';
-                try {
-                    let res = await fetch("/v1/voices");
-                    if (!res.ok) {
-                        container.innerHTML = '<p style="color: #ff6b6b; font-size: 0.85rem; padding: 0.5rem; text-align: center;">Error loading voices.</p>';
-                        return;
-                    }
-                    let data = await res.json();
-                    let voices = Array.isArray(data) ? data : (data && Array.isArray(data.voices) ? data.voices : []);
-                    container.innerHTML = "";
-                    if (!voices || voices.length === 0) {
-                        container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem; text-align: center;">No voices cloned yet.</p>';
-                        return;
-                    }
-                    voices.forEach(v => {
-                        let card = document.createElement("div");
-                        card.style.background = "rgba(255,255,255,0.03)";
-                        card.style.border = "1px solid var(--border)";
-                        card.style.borderRadius = "8px";
-                        card.style.padding = "0.8rem 1rem";
-                        card.style.display = "flex";
-                        card.style.justifyContent = "space-between";
-                        card.style.alignItems = "center";
-                        
-                        let info = document.createElement("div");
-                        info.innerHTML = `
-                            <div style="font-weight: 600; font-size: 0.95rem; color: var(--text);">${v.name}</div>
-                            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.3rem;">
-                                🔊 ${v.has_audio ? "Audio File Present" : "No Audio File"} | 📝 ${v.has_text ? "Transcription Present" : "No Transcription"}
-                            </div>
-                        `;
-                        
-                        let delBtn = document.createElement("button");
-                        delBtn.innerHTML = "🗑️ Delete";
-                        delBtn.style.background = "rgba(239, 68, 68, 0.15)";
-                        delBtn.style.border = "1px solid var(--danger)";
-                        delBtn.style.color = "var(--danger)";
-                        delBtn.style.borderRadius = "6px";
-                        delBtn.style.padding = "0.4rem 0.8rem";
-                        delBtn.style.cursor = "pointer";
-                        delBtn.style.fontSize = "0.85rem";
-                        delBtn.onclick = () => deleteVoiceProfile(v.id);
-                        
-                        card.appendChild(info);
-                        card.appendChild(delBtn);
-                        container.appendChild(card);
-                    });
-                } catch(e) {
-                    container.innerHTML = `<p style="color: #ff6b6b; font-size: 0.85rem; padding: 0.5rem; text-align: center;">Error: ${e}</p>`;
-                }
-            }
-
-            async function submitCreateVoicePage(event) {
-                event.preventDefault();
-                let voiceIdInput = document.getElementById("new-voice-id-page");
-                let pathInput = document.getElementById("new-voice-path-page");
-                let fileInput = document.getElementById("new-voice-file-page");
-                let textInput = document.getElementById("new-voice-text-page");
-                
-                let voiceId = voiceIdInput.value.trim();
-                let file = fileInput.files[0];
-                let localPath = pathInput.value.trim();
-                let refText = textInput.value.trim();
-                
-                let isUpload = file && localPath.startsWith("Staged Upload:");
-                
-                if (!voiceId) {
-                    alert("Voice ID is required!");
-                    return;
-                }
-                if (!isUpload && !localPath) {
-                    alert("Please select a file via Browse or choose upload manual!");
-                    return;
-                }
-                
-                let formData = new FormData();
-                formData.append("voice_id", voiceId);
-                formData.append("ref_text", refText);
-                if (isUpload) {
-                    formData.append("file", file);
                 } else {
-                    formData.append("local_path", localPath);
+                    item.style.background = "rgba(255,255,255,0.02)";
+                    item.style.borderColor = "var(--border)";
+                    item.style.boxShadow = "none";
+                    item.style.opacity = "0.55";
+                    let badge = item.querySelector(".frag-badge");
+                    if (badge) {
+                        badge.style.color = "var(--text-muted)";
+                        badge.innerText = `#${idx}`;
+                    }
                 }
-                
-                let submitBtn = event.target.querySelector("button[type='submit']");
-                submitBtn.disabled = true;
-                submitBtn.textContent = "Cloning...";
-                
-                let url = "/v1/voices";
-                
-                try {
-                    let res = await fetch(url, {
-                        method: "POST",
-                        body: formData
-                    });
-                    if (!res.ok) {
-                        let err = await res.json();
-                        alert(err.detail || "Failed to create voice profile");
-                    } else {
-                        voiceIdInput.value = "";
-                        pathInput.value = "";
-                        fileInput.value = "";
-                        textInput.value = "";
-                        loadVoicesList();
-                    }
-                } catch(e) {
-                    alert("Error creating voice profile: " + e);
-                } finally {
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = "💾 Save Cloned Voice Profile";
-                }
-            }
-
-            async function deleteVoiceProfile(voiceId) {
-                if (!confirm(`Are you sure you want to delete voice profile "${voiceId}"?`)) {
-                    return;
-                }
-                try {
-                    let res = await fetch(`/v1/voices/${encodeURIComponent(voiceId)}`, {
-                        method: "DELETE"
-                    });
-                    if (!res.ok) {
-                        let err = await res.json();
-                        alert(err.detail || "Failed to delete voice profile");
-                    } else {
-                        loadVoicesList();
-                    }
-                } catch (e) {
-                    alert("Failed to delete voice profile: " + e);
-                }
-            }
-
-            async function deleteProject(storyId, chapterId) {
-                let targetStory = storyId || currentStory;
-                let targetChapter = chapterId || currentChapter;
-                if (!targetStory) return;
-
-                let displayLabel = targetStory;
-                if (targetChapter && targetChapter !== "story") {
-                    displayLabel += ` (${targetChapter})`;
-                }
-                if (!confirm(`Bạn có chắc chắn muốn XÓA DỰ ÁN "${displayLabel}" không?\n\nHành động này sẽ DỪNG TOÀN BỘ tiến trình pipeline đang chạy và XÓA TOÀN BỘ dữ liệu dự án trên đĩa cứng!`)) {
-                    return;
-                }
-
-                try {
-                    let url = `/v1/projects/${encodeURIComponent(targetStory)}`;
-                    if (targetChapter && targetChapter !== "story") {
-                        url += `/${encodeURIComponent(targetChapter)}`;
-                    }
-                    let res = await fetch(url, { method: "DELETE" });
-                    if (!res.ok) {
-                        let postUrl = `/v1/projects/${encodeURIComponent(targetStory)}/delete`;
-                        if (targetChapter && targetChapter !== "story") {
-                            postUrl = `/v1/projects/${encodeURIComponent(targetStory)}/${encodeURIComponent(targetChapter)}/delete`;
-                        }
-                        res = await fetch(postUrl, { method: "POST" });
-                    }
-                    if (res.ok) {
-                        if (!currentStory || currentStory === targetStory || currentStory.startsWith(targetStory)) {
-                            currentStory = "";
-                            currentChapter = "";
-                            let mainView = document.getElementById("main-details-view");
-                            if (mainView) mainView.style.display = "none";
-                            let emptyView = document.getElementById("empty-details-view");
-                            if (emptyView) emptyView.style.display = "block";
-                        }
-                        await loadProjects();
-                    } else {
-                        let txt = await res.text();
-                        let detail = txt;
-                        try { detail = JSON.parse(txt).detail || txt; } catch(_) {}
-                        alert("Lỗi xóa dự án: " + detail);
-                    }
-                } catch(e) {
-                    alert("Lỗi kết nối khi xóa dự án: " + e);
-                }
-            }
-
-            function deleteCurrentProject() {
-                deleteProject(currentStory, currentChapter);
-            }
-
-            async function runChapter(event, storyId, chapterId) {
-                if (event) event.stopPropagation();
-                let btnId = `btn-${storyId}-${chapterId}`;
-                let btn = document.getElementById(btnId);
-                if (btn) {
-                    btn.disabled = true;
-                    btn.innerText = "Starting...";
-                }
-                let detailsBtn = document.getElementById("details-run-btn");
-                if (detailsBtn) {
-                    detailsBtn.disabled = true;
-                    detailsBtn.innerText = "Starting...";
-                }
-                
-                let url = `/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/run`;
-                try {
-                    let res = await fetch(url, { method: "POST" });
-                    if (!res.ok) {
-                        let err = await res.json();
-                        alert(err.detail || "Failed to start run");
-                    }
-                    selectChapter(storyId, chapterId, chapterId);
-                } catch(e) {
-                    alert("Error: " + e);
-                }
-            }
-
-            async function pollChapterStatus(storyId, chapterId) {
-                if (currentStory !== storyId || currentChapter !== chapterId) return;
-                try {
-                    let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/status`);
-                    let status = await res.json();
-
-                    if (status.status === "completed" && timerId) {
-                        clearInterval(timerId);
-                        timerId = null;
-                    }
-                    
-                    let banner = document.getElementById("status-banner");
-                    let detailsBtn = document.getElementById("details-run-btn");
-                    
-                    if (status.status === "queued") {
-                        let qPos = status.queue_position || 1;
-                        let activeInfo = status.active_project ? ` (Đang chạy: ${status.active_project})` : '';
-                        banner.innerText = `🟡 In Queue (#${qPos})`;
-                        banner.className = "status-banner queued";
-                        banner.style.backgroundColor = "rgba(245, 158, 11, 0.15)";
-                        banner.style.borderColor = "rgba(245, 158, 11, 0.4)";
-                        banner.style.color = "#f59e0b";
-                        
-                        if (detailsBtn) {
-                            detailsBtn.innerText = `Queued (#${qPos})`;
-                            detailsBtn.disabled = true;
-                        }
-                        document.getElementById("current-project-desc").innerText = `Dự án đang xếp hàng ở vị trí #${qPos}${activeInfo}. Hệ thống sẽ tự động chuyển sang ngay khi tới lượt.`;
-                    } else {
-                        banner.innerText = status.status || "Idle";
-                        banner.className = "status-banner " + (status.status === 'completed' ? 'completed' : (status.status !== 'idle' ? 'processing' : ''));
-                        banner.style.backgroundColor = "";
-                        banner.style.borderColor = "";
-                        banner.style.color = "";
-                        
-                        if (detailsBtn) {
-                            let isRunning = (status.status !== 'idle' && status.status !== 'completed');
-                            detailsBtn.innerText = isRunning ? "Restart Pipeline" : "Run";
-                            detailsBtn.disabled = false;
-                        }
-                        document.getElementById("current-project-desc").innerText = "Pipeline step: " + (status.status || "idle");
-                    }
-
-                    let progressFill = document.getElementById("progress-bar");
-                    let pctText = document.getElementById("progress-percentage");
-                    let fracText = document.getElementById("progress-fraction");
-                    
-                    let total = status.total_fragments || 0;
-                    let current = status.current_fragment || 0;
-                    
-                    let percentage = total > 0 ? Math.round((current / total) * 100) : 0;
-                    if (status.status === "completed") {
-                        percentage = 100;
-                    }
-                    progressFill.style.width = percentage + "%";
-                    pctText.innerText = percentage + "%";
-                    fracText.innerText = current + " / " + total + " Fragments";
-
-                    // Dynamic fragments
-                    let grid = document.getElementById("fragments-grid");
-                    if (!grid) return;
-                    let buildCards = (!grid.children || grid.children.length !== total);
-                    if (buildCards) {
-                        grid.innerHTML = "";
-                    }
-                    
-                    for (let i = 0; i < total; i++) {
-                        let card = buildCards ? document.createElement("div") : grid.children[i];
-                        if (buildCards) {
-                            card.className = "fragment-card";
-                        }
-                        if (i === current) card.classList.add("active");
-                        else card.classList.remove("active");
-                        
-                        let voiceActive = false;
-                        let imgActive = false;
-                        let clipActive = false;
-
-                        let runStatus = status.status;
-
-                        if (runStatus === "generating_audio") {
-                            voiceActive = (i === current);
-                        } else if (runStatus === "generating_images") {
-                            imgActive = (i === current);
-                        } else if (runStatus === "compiling_clips") {
-                            clipActive = (i === current);
-                        }
-
-                        let audioUrlWav = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.wav`;
-                        let audioUrlMp3 = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/audio/voiceover${i}.mp3`;
-                        let imageUrlJpg = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.jpg`;
-                        let imageUrlPng = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/images/image${i}.png`;
-                        let videoUrl = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/videos/video${i}.mp4`;
-
-                        if (buildCards) {
-                            card.innerHTML = `
-                                <h4>Frag #${i}</h4>
-                                <div class="step-indicator">
-                                    <span class="step-btn ${voiceActive ? 'running' : ''}" id="preview-audio-${i}" title="Play Audio Voiceover">🎵</span>
-                                    <span class="step-btn ${imgActive ? 'running' : ''}" id="preview-image-${i}" title="Show Generated Image">🖼️</span>
-                                    <span class="step-btn ${clipActive ? 'running' : ''}" id="preview-video-${i}" title="Play Video Clip">🎬</span>
-                                </div>
-                            `;
-                            grid.appendChild(card);
-                        }
-
-                        getMediaExists(audioUrlWav).then(existsWav => {
-                            let btn = document.getElementById(`preview-audio-${i}`);
-                            if (btn) {
-                                if (existsWav) {
-                                    btn.classList.add("active");
-                                    btn.onclick = () => playAudioPreview(audioUrlWav, i);
-                                } else {
-                                    getMediaExists(audioUrlMp3).then(existsMp3 => {
-                                        if (existsMp3) {
-                                            btn.classList.add("active");
-                                            btn.onclick = () => playAudioPreview(audioUrlMp3, i);
-                                        } else if (!voiceActive) {
-                                            btn.classList.remove("active");
-                                            btn.classList.add("disabled");
-                                        }
-                                    });
-                                }
-                            }
-                        });
-
-                        getMediaExists(imageUrlJpg).then(existsJpg => {
-                            let btn = document.getElementById(`preview-image-${i}`);
-                            if (btn) {
-                                if (existsJpg) {
-                                    btn.classList.add("active");
-                                    btn.onclick = () => showImagePreview(imageUrlJpg, i);
-                                } else {
-                                    getMediaExists(imageUrlPng).then(existsPng => {
-                                        if (existsPng) {
-                                            btn.classList.add("active");
-                                            btn.onclick = () => showImagePreview(imageUrlPng, i);
-                                        } else if (!imgActive) {
-                                            btn.classList.remove("active");
-                                            btn.classList.add("disabled");
-                                        }
-                                    });
-                                }
-                            }
-                        });
-
-                        getMediaExists(videoUrl).then(exists => {
-                            let btn = document.getElementById(`preview-video-${i}`);
-                            if (btn) {
-                                if (exists) {
-                                    btn.classList.add("active");
-                                    btn.onclick = () => playVideoPreview(videoUrl, i);
-                                } else if (!clipActive) {
-                                    btn.classList.remove("active");
-                                    btn.classList.add("disabled");
-                                }
-                            }
-                        });
-                    }
-
-                    // Video Output Preview
-                    let videoContainer = document.getElementById("video-preview-container");
-                    let videoElement = document.getElementById("final-video");
-                    if (status.status === "completed" || status.status === "idle") {
-                        let videoUrl = `${LOCAL_MEDIA_ORIGIN}/media/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/final.mp4`;
-                        if (videoContainer.dataset.loadedUrl !== videoUrl) {
-                            let check = await getMediaExists(videoUrl);
-                            if (check) {
-                                videoContainer.dataset.loadedUrl = videoUrl;
-                                videoContainer.style.display = "block";
-                                let downloadBtn = document.getElementById("download-video-btn");
-                                if (downloadBtn) {
-                                    downloadBtn.href = videoUrl;
-                                }
-                                if (videoElement.src !== videoUrl) {
-                                    videoElement.src = videoUrl;
-                                    videoElement.load();
-                                }
-                            } else {
-                                videoContainer.dataset.loadedUrl = "";
-                                videoContainer.style.display = "none";
-                            }
-                        }
-                    } else {
-                        videoContainer.dataset.loadedUrl = "";
-                        videoContainer.style.display = "none";
-                    }
-
-                } catch(e) {}
-            }
-
-            function copyCommand(id) {
-                let text = document.getElementById(id).innerText;
-                navigator.clipboard.writeText(text);
-                
-                let btn = document.querySelector(`button[onclick="copyCommand('${id}')"]`);
-                let origText = btn.innerText;
-                btn.innerText = "Copied!";
-                btn.style.background = "var(--success)";
-                setTimeout(() => {
-                    btn.innerText = origText;
-                    btn.style.background = "rgba(255,255,255,0.1)";
-                }, 1500);
-            }
-
-            // Fill all placeholders with the current origin
-            document.querySelectorAll(".server-origin-placeholder").forEach(el => {
-                el.innerText = window.location.origin;
             });
+        }
 
-            setInterval(updateAgentStatus, 3000);
-            setInterval(loadProjects, 3000);
-            updateAgentStatus();
-            loadProjects();
+        function toggleFragmentsAccordion() {
+            let listContainer = document.getElementById("fragments-list-container");
+            let arrow = document.getElementById("fragments-arrow");
+            if (!listContainer) return;
+            if (listContainer.style.display === "none") {
+                listContainer.style.display = "flex";
+                if (arrow) arrow.innerText = "▼";
+            } else {
+                listContainer.style.display = "none";
+                if (arrow) arrow.innerText = "▶";
+            }
+        }
 
-            const DAO_LY_SAMPLES = {
-                v1: {
-                    title: `Bản Chất Của Kẻ Phản Bội`,
-                    text: `Kẻ phản bội bạn một lần, chắc chắn sẽ có lần thứ hai.
+        async function startPipelineForActiveProject(mode) {
+            if (!activeStoryId || !activeChapterId) {
+                alert("Please select a chapter first!");
+                return;
+            }
+            let btnAll = document.getElementById("btn-run-all");
+            if (btnAll && btnAll.disabled && btnAll.title.includes("running")) {
+                alert("⚠️ A pipeline job is already in progress. Please wait or cancel the current job.");
+                return;
+            }
 
-Đừng bao giờ tin vào những lời thề thốt muộn màng của một kẻ đã tráo trở quay lưng với tình nghĩa vợ chồng. Sự chung thủy là một loại lựa chọn và là bản lĩnh của người tử tế, chứ không phải là nghĩa vụ tạm thời khi họ chưa tìm thấy mối lợi tốt hơn ngoài kia. Kẻ lấy lý do "say nắng" hay "tạm thời ngã lòng" chỉ là sự ngụy trang hèn nhát cho một tâm hồn tham lam, ích kỷ và thiếu tự trọng.
+            if (mode === "subtitles_only" && document.getElementById("btn-run-subtitles") && document.getElementById("btn-run-subtitles").disabled) {
+                alert("⚠️ Cannot run Subtitles Only: Please generate Audio clips first!");
+                return;
+            }
+            if (mode === "video_only" && document.getElementById("btn-run-video") && document.getElementById("btn-run-video").disabled) {
+                alert("⚠️ Cannot run Video Render Only: Please generate both Images and Audio clips first!");
+                return;
+            }
 
-Khi một người đã sẵn sàng vứt bỏ người từng cùng mình đi qua những năm tháng gian khó nhất để chạy theo nụ cười xa lạ, thì sự tha thứ của bạn chỉ là chiếc thảm trải đường cho lần phản bội tiếp theo. Người đàn bà hay người đàn ông lén lút nhân danh tình yêu để phá nát một gia đình, bản chất họ cũng sẽ lại phản bội nhau khi sóng gió ập đến.
-
-Hãy nhớ rằng, tha thứ cho kẻ phản bội không phải là bao dung, mà là tự rước lấy mầm mống bi kịch cho tương lai của chính mình. Đừng tiếc nuối một chiếc lá đã ối vàng, cũng đừng níu kéo một kẻ đã không còn xứng đáng với tình cảm chân thành của bạn.
-
-Can đảm bước ra khỏi mối quan hệ độc hại, chữa lành bản thân và nâng cao giá trị của mình. Khi bạn tỏa sáng, bạn sẽ gặp được người biết trân trọng bạn như một báu vật.
-
-Đăng ký và theo dõi kênh để cùng rèn luyện sự tỉnh táo và bản lĩnh trong tình cảm mỗi ngày.`
-                },
-                v2: {
-                    title: `Đừng Yêu Đến Mất Đi Chính Mình`,
-                    text: `Tình yêu đẹp nhất là khi hai người cùng nhau tốt lên, chứ không phải một người liên tục chịu đựng và hạ thấp bản thân.
-
-Trong tình yêu, sai lầm lớn nhất của những kẻ lụy tình là nghĩ rằng sự hy sinh vô điều kiện sẽ đổi lấy tình cảm vĩnh cửu. Sự thật cay đắng là: khi bạn càng coi người khác là cả thế giới, người ta lại càng coi sự hiện diện của bạn là điều hiển nhiên và dễ dàng vứt bỏ. Yêu hết lòng nhưng phải giữ lại sự kiêu hãnh và ranh giới tự trọng của chính mình.
-
-Đừng biến mình thành cây tầm gửi phụ thuộc vào cảm xúc của người khác. Một người thực sự yêu bạn sẽ không bao giờ bắt bạn phải tha thứ hết lần này đến lần khác, không khiến bạn phải thức đêm khóc thầm hay hoài nghi về giá trị của bản thân. Tình yêu chân chính mang lại cảm giác an toàn, bình yên và sự tôn trọng lẫn nhau.
-
-Hãy học cách yêu bản thân mình trước khi chờ đợi ai đó đến yêu thương. Hãy có sự nghiệp riêng, có đam mê riêng và có một tâm hồn độc lập vững vàng. 
-
-Khi bạn đủ tự tin và tỏa sáng, bạn không cần phải van xin tình thương, bởi tình yêu chân thành sẽ tự tìm đến như một lẽ tự nhiên.
-
-Nhấn theo dõi kênh để cùng xây dựng tư duy tình cảm làm chủ cuộc đời mình.`
-                },
-                v3: {
-                    title: `Gia Đình Là Điểm Tựa Duy Nhất`,
-                    text: `Thế giới ngoài kia có thể tung hô bạn khi bạn thành công, nhưng chỉ có gia đình mới sẵn sàng ôm lấy bạn khi bạn vấp ngã.
-
-Ra ngoài xã hội, người ta nhìn vào ví tiền, địa vị và chiếc xe bạn đi để đong đếm sự tôn trọng. Nhưng khi bước qua cánh cửa nhà, mọi danh vọng hay thất bại đều phải bỏ lại bên ngoài. Cha mẹ là những người duy nhất trên đời không bao giờ soi xét hoàn cảnh của bạn, chỉ cần bạn trở về bình an, khỏe mạnh và nở nụ cười trọn vẹn.
-
-Bữa cơm gia đình đơn sơ với bát canh rau đắng đôi khi lại đắt giá hơn vạn yến tiệc sang trọng ngoài kia. Đừng phung phí thời gian và sự kiên nhẫn cho những cuộc vui xã giao vô bổ, để rồi khi quay về nhà lại vô tình buông ra những lời cộc lốc với người yêu thương mình nhất.
-
-Tóc cha thêm sợi bạc, lưng mẹ thêm còng theo từng bước trưởng thành của bạn. Thời gian của cha mẹ không chờ đợi sự nghiệp của bạn thành danh. Hãy yêu thương và trân trọng từng phút giây bên gia đình khi còn có thể.
-
-Gia đình là gốc rễ của mọi hạnh phúc. Giữ gìn ngọn lửa yêu thương trong mái nhà chính là giữ gìn phước báu lớn nhất của đời người.
-
-Bấm đăng ký kênh để cùng trân trọng những giá trị tình thân thiêng liêng mỗi ngày.`
-                },
-                v4: {
-                    title: `Cái Giá Của Sự Phản Bội`,
-                    text: `Cái cướp được từ tay người khác, chưa bao giờ là hạnh phúc thực sự.
-
-Nhiều kẻ tưởng rằng mình khôn khéo khi dối vợ phản chồng, lén lút vun vén cho thứ tình cảm bất chính ngoài luồng. Họ mê mải trong thứ cảm giác lén lút nhất thời mà quên mất rằng luật nhân quả trong hôn nhân chưa bao giờ bỏ sót một ai. Sự phản bội như một con dao hai lưỡi: hôm nay bạn làm tổn thương người cùng mình đồng cam cộng khổ, thì ngày mai thứ bạn nhận lại sẽ là sự cô đơn và khinh rẻ.
-
-Người thứ ba chen chân vào tổ ấm của người khác, đừng vội vã đắc ý khi cướp được một người đàn ông hay người đàn bà phản bội. Bởi một kẻ đã sẵn sàng bỏ rơi gia đình mình để theo bạn, thì mai này họ cũng sẽ dễ dàng bỏ rơi bạn để chạy theo một bóng hình mới lạ khác.
-
-Tình yêu bất chính được xây dựng trên sự đau khổ của người khác thì cái kết nhận lại sẽ luôn là cay đắng và tổn thương gấp bội. Hôn nhân là sự cam kết và trách nhiệm, gieo mầm dối trá sẽ thu hoạch đắng ngắt.
-
-Sống tử tế, giữ trọn đạo nghĩa vợ chồng để đời đời được an nhiên và không thẹn với lòng.
-
-Theo dõi kênh để tìm hiểu những bài học nhân quả sâu sắc trong cuộc sống gia đình.`
-                },
-                v5: {
-                    title: `Gặp Đúng Người, Đúng Thời Điểm`,
-                    text: `Yêu đúng người là khi bạn không cần phải giả vờ hoàn hảo, vẫn cảm thấy mình được trân trọng và an toàn.
-
-Thời trẻ, chúng ta thường say mê những lời thề thốt ngọt ngào và những lãng mạn thoáng qua. Nhưng khi trải qua vài lần tổn thương, bạn mới nhận ra: một người đồng hành tuyệt vời không nằm ở vẻ bề ngoài hay những hứa hẹn xa xôi, mà nằm ở sự kiên định, trách nhiệm và cách họ nắm tay bạn qua những ngày sóng gió nhất của cuộc đời.
-
-Tình yêu trưởng thành không có sự thao túng hay kiểm soát ích kỷ. Đó là sự thấu hiểu từ những điều nhỏ nhặt, là sự tôn trọng khoảng trời riêng của nhau, và là cảm giác bình yên đến lạ mỗi khi ở bên cạnh người ấy. 
-
-Đừng vội vã kết hôn chỉ vì áp lực tuổi tác hay lời giục giã của số đông. Hạnh phúc cả đời không thể đánh đổi bằng sự vội vàng tạm thời. Thà kiên nhẫn chờ đợi người phù hợp còn hơn bước nhầm vào một cuộc hôn nhân lạnh ngắt.
-
-Hãy cứ sống thật rực rỡ, tu dưỡng tâm hồn và hoàn thiện bản thân. Người thuộc về bạn chắc chắn sẽ xuất hiện vào thời điểm đẹp đẽ nhất.
-
-Nhấn đăng ký kênh để đón nhận thêm nhiều thông điệp ý nghĩa về tình yêu và cuộc sống.`
+            // Immediately lock UI buttons and show cancel button
+            [document.getElementById("btn-run-all"), document.getElementById("btn-run-subtitles"), document.getElementById("btn-run-images"), document.getElementById("btn-run-audio"), document.getElementById("btn-run-video")].forEach(b => {
+                if (b) {
+                    b.disabled = true;
+                    b.style.opacity = "0.45";
+                    b.style.cursor = "not-allowed";
                 }
+            });
+            let cancelBtn = document.getElementById("btn-cancel-job");
+            if (cancelBtn) cancelBtn.style.display = "inline-flex";
+
+            let itemEl = document.querySelector(`.chapter-item[data-chapter-id="${CSS.escape(activeChapterId)}"]`);
+            if (itemEl) {
+                let badgeEl = itemEl.querySelector(".ch-status-badge");
+                if (badgeEl) {
+                    badgeEl.style.color = "#f59e0b";
+                    badgeEl.innerText = "⚡ processing";
+                }
+            }
+
+            let voiceId = document.getElementById("voice-select") ? document.getElementById("voice-select").value : null;
+            let ttsProvider = document.getElementById("tts-provider-select") ? document.getElementById("tts-provider-select").value : "omnivoice";
+            let artStyle = document.getElementById("art-style-select") ? document.getElementById("art-style-select").value : "comic";
+            let aspectRatio = document.getElementById("aspect-ratio-select") ? document.getElementById("aspect-ratio-select").value : "9:16";
+            let subtitlePreset = document.getElementById("subtitle-preset-select") ? document.getElementById("subtitle-preset-select").value : "viral-bold-yellow";
+            let effectType = document.getElementById("effect-type-select") ? document.getElementById("effect-type-select").value : "leaves";
+            
+            let fragStartEl = document.getElementById("frag-start-input");
+            let fragEndEl = document.getElementById("frag-end-input");
+            let fragStart = fragStartEl ? (parseInt(fragStartEl.value) || 1) : 1;
+            let fragEnd = fragEndEl ? (parseInt(fragEndEl.value) || 5) : 5;
+
+            let useWatermark = document.getElementById("toggle-watermark") ? document.getElementById("toggle-watermark").checked : false;
+            let useSubtitles = document.getElementById("toggle-subtitles") ? document.getElementById("toggle-subtitles").checked : true;
+            let useWaveform = document.getElementById("toggle-waveform") ? document.getElementById("toggle-waveform").checked : false;
+
+            let url = `/v1/projects/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/run`;
+            let banner = document.getElementById("status-banner");
+            if (banner) {
+                banner.innerHTML = `<span style="color: #f59e0b; font-weight: bold;">⚡ Launching Pipeline (${mode}, Frags ${fragStart}-${fragEnd})...</span>`;
+                banner.style.borderColor = "rgba(245, 158, 11, 0.4)";
+                banner.style.background = "rgba(245, 158, 11, 0.15)";
+            }
+            try {
+                let res = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        voice_config: { 
+                            voice_id: voiceId, 
+                            provider: ttsProvider,
+                            start_fragment: fragStart,
+                            end_fragment: fragEnd,
+                            limit_fragments: Math.max(0, fragEnd - fragStart + 1)
+                        },
+                        art_style: artStyle,
+                        aspect_ratio: aspectRatio,
+                        subtitle_preset: subtitlePreset,
+                        effect_type: effectType,
+                        use_watermark: useWatermark,
+                        use_subtitles: useSubtitles,
+                        use_waveform: useWaveform,
+                        rerun_mode: mode,
+                        start_fragment: fragStart,
+                        end_fragment: fragEnd
+                    })
+                });
+                if (res.ok) {
+                    alert(`🚀 Pipeline launched (${mode}, Fragments ${fragStart} to ${fragEnd})! Agent is rendering in background.`);
+                    updateCurrentChapterStatusBanner();
+                } else {
+                    let err = await res.json();
+                    alert("Failed: " + (err.detail || "Error launching pipeline"));
+                    updateCurrentChapterStatusBanner();
+                }
+            } catch(e) {
+                alert("Error: " + e.message);
+                updateCurrentChapterStatusBanner();
+            }
+        }
+
+        async function cancelPipelineForActiveProject() {
+            if (!activeStoryId || !activeChapterId) return;
+            if (!confirm(`⛔ Bạn có chắc chắn muốn HỦY TIẾN TRÌNH cho ${activeChapterId}? (Sẽ dừng toàn bộ Render & các Job ima2-gen đang chạy)`)) return;
+
+            let banner = document.getElementById("status-banner");
+            if (banner) {
+                banner.innerHTML = `<span style="color: #ef4444; font-weight: bold;">⏳ Đang gửi lệnh HỦY TIẾN TRÌNH & ima2-gen...</span>`;
+                banner.style.borderColor = "rgba(239, 68, 68, 0.4)";
+                banner.style.background = "rgba(239, 68, 68, 0.15)";
+            }
+
+            try {
+                let res = await fetch(`/v1/projects/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/cancel`, {
+                    method: "POST"
+                });
+                if (res.ok) {
+                    let data = await res.json();
+                    alert("⛔ Đã HỦY THÀNH CÔNG toàn bộ tiến trình và các job ima2-gen!");
+                    updateCurrentChapterStatusBanner();
+                } else {
+                    let err = await res.json();
+                    alert("Lỗi khi hủy: " + (err.detail || "Không thể hủy"));
+                    updateCurrentChapterStatusBanner();
+                }
+            } catch(e) {
+                alert("Lỗi kết nối: " + e.message);
+                updateCurrentChapterStatusBanner();
+            }
+        }
+
+        async function loadVoicesDashboard() {
+            let grid = document.getElementById("voices-grid");
+            grid.innerHTML = `<p style="color: var(--text-muted);">Loading OmniVoice profiles...</p>`;
+            try {
+                let res = await fetch("/v1/voices");
+                let voices = await res.json();
+                grid.innerHTML = "";
+                voices.forEach(v => {
+                    let card = document.createElement("div");
+                    card.style.cssText = "background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 12px; padding: 1.2rem;";
+                    let isProtected = v.is_protected || v.id === 'nam-dao-ly' || v.id === 'nu-doc-truyen';
+                    let protectedTag = isProtected ? `<span style="background: rgba(245,158,11,0.15); border: 1px solid #f59e0b; color: #f59e0b; font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 50px; font-weight: bold;">🔒 Protected</span>` : "";
+                    
+                    card.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem;">
+                            <h4 style="font-size: 1.05rem; font-weight: 700; color: #fff;">🎙️ ${v.name || v.id}</h4>
+                            ${protectedTag}
+                        </div>
+                        <p style="font-size: 0.8rem; color: var(--text-muted); background: rgba(0,0,0,0.2); padding: 0.6rem; border-radius: 6px; margin-bottom: 1rem;">
+                            "${v.ref_text || 'Xin chào, đây là giọng đọc mẫu từ gờ o gờ chấm zone...'}"
+                        </p>
+                        <button onclick="playVoicePreview('${v.id}')" style="background: rgba(16,185,129,0.2); border: 1px solid #10b981; color: #10b981; padding: 0.4rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">▶ Play Sample Audio</button>
+                    `;
+                    grid.appendChild(card);
+                });
+            } catch(e) {
+                grid.innerHTML = `<p style="color: var(--danger);">Failed to load voices.</p>`;
+            }
+        }
+
+        function playVoicePreview(voiceId) {
+            let url = `/v1/voices/${encodeURIComponent(voiceId)}/ref.wav`;
+            let a = new Audio(url);
+            a.play().catch(e => alert("Audio playback error: " + e.message));
+        }
+
+        function openNewProjectModal() {
+            document.getElementById("new-project-modal").style.display = "flex";
+            loadLoreKeeperStories();
+        }
+
+        function closeNewProjectModal() {
+            document.getElementById("new-project-modal").style.display = "none";
+        }
+
+        function selectNewCategory(cat) {
+            selectedNewCategory = cat;
+            document.querySelectorAll('.cat-choice').forEach(c => c.classList.remove('active'));
+            document.getElementById('cat-choice-' + cat).classList.add('active');
+            
+            if (cat === 'story') {
+                document.getElementById('story-select-group').style.display = 'block';
+                document.getElementById('custom-name-group').style.display = 'none';
+            } else {
+                document.getElementById('story-select-group').style.display = 'none';
+                document.getElementById('custom-name-group').style.display = 'block';
+            }
+        }
+
+        async function loadLoreKeeperStories() {
+            let select = document.getElementById("lore-keeper-select");
+            select.innerHTML = `<option value="">Loading stories from Lore-Keeper...</option>`;
+            try {
+                let res = await fetch("/v1/lore-keeper/stories");
+                let stories = await res.json();
+                select.innerHTML = "";
+                stories.forEach(s => {
+                    let opt = document.createElement("option");
+                    opt.value = s.id;
+                    opt.innerText = s.title || s.id;
+                    select.appendChild(opt);
+                });
+            } catch(e) {
+                select.innerHTML = `<option value="bang">Băng (Fallback Default)</option>`;
+            }
+        }
+
+        async function handleCreateProjectSubmit(e) {
+            e.preventDefault();
+            let storyId = document.getElementById("lore-keeper-select").value;
+            let customName = document.getElementById("custom-proj-input").value.trim();
+            let lang = document.getElementById("new-lang-select").value;
+            let aspect = document.getElementById("new-aspect-select").value;
+
+            let payload = {
+                project_type: selectedNewCategory,
+                story_id: selectedNewCategory === 'story' ? storyId : null,
+                project_name: selectedNewCategory !== 'story' ? customName : null,
+                language: lang,
+                aspect_ratio: aspect
             };
 
-            let currentEditingDaoLyStoryId = null;
-
-            async function openDaoLyStudioModal(storyId = null) {
-                currentEditingDaoLyStoryId = storyId;
-                let dialog = document.getElementById("dao-ly-dialog");
-                if (dialog) {
-                    let titleInput = document.getElementById("dao-ly-title");
-                    let textInput = document.getElementById("dao-ly-story-text");
-                    let submitBtn = document.getElementById("dao-ly-submit-btn");
-
-                    if (storyId) {
-                        if (submitBtn) submitBtn.innerText = "🚀 Khởi Chạy Lại Pipeline Video Social";
-                        if (titleInput) titleInput.value = storyId;
-                        if (textInput) textInput.value = "Đang tải kịch bản...";
-                        
-                        try {
-                            let storyRes = await fetch(`/v1/projects/dao-ly/${encodeURIComponent(storyId)}/fragments`);
-                            if (storyRes.ok) {
-                                let frags = await storyRes.json();
-                                if (Array.isArray(frags) && frags.length > 0) {
-                                    textInput.value = frags.map(f => f.text).join("\\n\\n");
-                                } else {
-                                    textInput.value = "";
-                                }
-                            } else {
-                                if (textInput) textInput.value = "";
-                            }
-                        } catch(e) {
-                            console.error("Failed to load fragments", e);
-                            if (textInput) textInput.value = "";
-                        }
-                    } else {
-                        if (submitBtn) submitBtn.innerText = "🚀 Khởi Tạo & Render Video Social";
-                        if (titleInput) titleInput.value = "";
-                        if (textInput) textInput.value = "";
-                    }
-                    await loadVoicesDropdown();
-                    dialog.showModal();
+            try {
+                let res = await fetch("/v1/projects/create", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                let data = {};
+                try { data = await res.json(); } catch(e) {}
+                if (res.ok) {
+                    closeNewProjectModal();
+                    alert("🎉 Project created successfully!");
+                    await loadProjects();
+                    openProjectWorkspace(data.project_name || storyId || customName);
+                } else {
+                    alert("Error (" + res.status + "): " + (data.detail || "Creation failed"));
                 }
+            } catch(err) {
+                alert("Creation error: " + err.message);
+            }
+        }
+
+        async function deleteProject(e, storyId, projectTitle) {
+            if (e) e.stopPropagation();
+            let confirmMsg = `Bạn có chắc chắn muốn xóa Project "${projectTitle || storyId}"? (Thao tác này không thể hoàn tác)`;
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}`, {
+                    method: "DELETE"
+                });
+                if (res.ok) {
+                    alert("🗑️ Đã xóa project thành công!");
+                    loadProjects();
+                } else {
+                    let data = {};
+                    try { data = await res.json(); } catch(err) {}
+                    alert("Lỗi khi xóa: " + (data.detail || "Không thể xóa project"));
+                }
+            } catch(err) {
+                alert("Lỗi khi xóa project: " + err.message);
+            }
+        }
+
+        function updateEpisodeLabelDefault() {
+            let epVal = parseInt(document.getElementById("new-item-episode-input").value) || 1;
+            let lang = document.getElementById("new-item-lang-select") ? document.getElementById("new-item-lang-select").value : "vi";
+            let epStr = epVal < 10 ? "0" + epVal : epVal;
+            document.getElementById("new-item-episode-label-input").value = (lang === "vi" ? `Tập ${epStr}` : `Episode ${epStr}`);
+        }
+
+        function openAddItemModal() {
+            if (!activeStoryId) {
+                alert("Please select or open a project first!");
+                return;
+            }
+            document.getElementById("new-item-title-input").value = "";
+            document.getElementById("new-item-short-title-input").value = "";
+            document.getElementById("new-item-slug-input").value = "";
+            document.getElementById("new-item-content-input").value = "";
+            
+            let proj = allProjectsList.find(p => p.story_id === activeStoryId);
+            let nextEp = (proj && proj.chapters) ? proj.chapters.length + 1 : 1;
+            document.getElementById("new-item-episode-input").value = nextEp;
+            updateEpisodeLabelDefault();
+
+            if (document.getElementById("item-json-file-input")) document.getElementById("item-json-file-input").value = "";
+
+            let defaultAspect = (proj && (proj.project_type === "reels" || proj.story_id.includes("reels"))) ? "9:16" : "16:9";
+            if (document.getElementById("new-item-aspect-select")) {
+                document.getElementById("new-item-aspect-select").value = defaultAspect;
             }
 
-            function closeDaoLyStudioModal() {
-                let dialog = document.getElementById("dao-ly-dialog");
-                if (dialog) dialog.close();
-                document.querySelectorAll('.header-menu a').forEach(a => a.classList.remove('active'));
-                let homeBtn = document.getElementById('nav-home');
-                if (homeBtn) homeBtn.classList.add('active');
+            document.getElementById("add-item-modal").style.display = "flex";
+        }
+
+        function closeAddItemModal() {
+            document.getElementById("add-item-modal").style.display = "none";
+        }
+
+        function autoPopulateItemSlug() {
+            let shortTitle = document.getElementById("new-item-short-title-input").value.trim();
+            let mainTitle = document.getElementById("new-item-title-input").value.trim();
+            let src = shortTitle || mainTitle;
+            if (src) {
+                let slug = src.toLowerCase()
+                    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                    .replace(/[đĐ]/g, "d")
+                    .replace(/[^a-z0-9\s-]/g, "")
+                    .trim().replace(/\s+/g, "-");
+                document.getElementById("new-item-slug-input").value = slug;
             }
+        }
 
-            function onSelectDaoLySample(key) {
-                let titleInput = document.getElementById("dao-ly-title");
-                let textInput = document.getElementById("dao-ly-story-text");
-                if (DAO_LY_SAMPLES[key]) {
-                    if (titleInput) titleInput.value = DAO_LY_SAMPLES[key].title;
-                    if (textInput) textInput.value = DAO_LY_SAMPLES[key].text;
-                }
-            }
-
-            async function submitDaoLyProject(event) {
-                event.preventDefault();
-                let titleVal = document.getElementById("dao-ly-title").value.trim();
-                let storyText = document.getElementById("dao-ly-story-text").value.trim();
-                let voiceVal = document.getElementById("dao-ly-voice").value;
-                let artStyle = document.getElementById("dao-ly-art-style").value;
-                let aspect = document.getElementById("dao-ly-aspect").value;
-                let effectVal = document.getElementById("dao-ly-effect") ? document.getElementById("dao-ly-effect").value : "leaves";
-
-                if (!titleVal || !storyText) {
-                    alert("Vui lòng nhập cả Tiêu đề video và Nội dung kịch bản đọc!");
-                    return;
-                }
-
+        function handleItemJsonFileUpload(event) {
+            let file = event.target.files[0];
+            if (!file) return;
+            let reader = new FileReader();
+            reader.onload = function(e) {
                 try {
-                    let projName = currentEditingDaoLyStoryId;
-                    if (!projName) {
-                        let slug = titleVal.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-                            .replace(/đ/g, "d").replace(/Đ/g, "d")
-                            .replace(/[^a-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
-                        
-                        let timestamp = new Date().toISOString().replace(/[-:T.]/g, "").slice(2, 10);
-                        projName = "dao_ly_" + (slug || "story") + "_" + timestamp;
-
-                        closeDaoLyStudioModal();
-
-                        let res = await fetch("/v1/projects?story_id=" + encodeURIComponent(projName), { method: "POST" });
-                        if (!res.ok) {
-                            let txt = await res.text();
-                            let detail = txt;
-                            try { detail = JSON.parse(txt).detail || txt; } catch(_) {}
-                            alert("Lỗi tạo dự án: " + detail);
-                            return;
+                    let text = e.target.result;
+                    if (file.name.endsWith(".json")) {
+                        let data = JSON.parse(text);
+                        if (data.episode !== undefined) document.getElementById("new-item-episode-input").value = data.episode;
+                        if (data.episode_label) document.getElementById("new-item-episode-label-input").value = data.episode_label;
+                        if (data.title) document.getElementById("new-item-title-input").value = data.title;
+                        if (data.short_title) document.getElementById("new-item-short-title-input").value = data.short_title;
+                        if (data.slug) document.getElementById("new-item-slug-input").value = data.slug;
+                        else autoPopulateItemSlug();
+                        if (data.channel) document.getElementById("new-item-channel-input").value = data.channel;
+                        if (data.aspect_ratio) document.getElementById("new-item-aspect-select").value = data.aspect_ratio;
+                        if (data.language) document.getElementById("new-item-lang-select").value = data.language;
+                        if (data.content) document.getElementById("new-item-content-input").value = data.content;
+                    } else {
+                        document.getElementById("new-item-content-input").value = text;
+                        if (!document.getElementById("new-item-title-input").value) {
+                            let titleGuess = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+                            document.getElementById("new-item-title-input").value = titleGuess;
+                            autoPopulateItemSlug();
                         }
-                    } else {
-                        closeDaoLyStudioModal();
                     }
-
-                    let voiceConfig = {
-                        provider: "omnivoice",
-                        voice_id: voiceVal,
-                        start_fragment: 0,
-                        limit_fragments: 0
-                    };
-
-                    // Run pipeline with created project under dao-ly category
-                    let runUrl = `/v1/projects/dao-ly/${encodeURIComponent(projName)}/run`;
-                    let runRes = await fetch(runUrl, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            voice_config: voiceConfig,
-                            art_style: artStyle,
-                            effect_type: effectVal,
-                            story_text: storyText,
-                            use_watermark: document.getElementById("dao-ly-watermark") ? document.getElementById("dao-ly-watermark").checked : false,
-                            use_waveform: document.getElementById("dao-ly-waveform") ? document.getElementById("dao-ly-waveform").checked : false,
-                            use_subtitles: document.getElementById("dao-ly-subtitles") ? document.getElementById("dao-ly-subtitles").checked : true,
-                            subtitle_preset: document.getElementById("dao-ly-subtitle-preset") ? document.getElementById("dao-ly-subtitle-preset").value : "viral-bold-yellow"
-                        })
-                    });
-
-                    if (runRes.ok) {
-                        await loadProjects();
-                        selectChapter("dao-ly", projName, titleVal);
-                    } else {
-                        let txt = await runRes.text();
-                        let detail = txt;
-                        try { detail = JSON.parse(txt).detail || txt; } catch(_) {}
-                        alert("Lỗi chạy pipeline: " + detail);
-                    }
-
-                } catch(e) {
-                    alert("Không thể khởi tạo dự án Đạo Lý: " + e);
+                } catch(err) {
+                    alert("Lỗi khi đọc file JSON: " + err.message);
                 }
+            };
+            reader.readAsText(file);
+        }
+
+        async function handleAddItemSubmit(e) {
+            e.preventDefault();
+            if (!activeStoryId) return;
+
+            let episode = parseInt(document.getElementById("new-item-episode-input").value) || 1;
+            let episodeLabel = document.getElementById("new-item-episode-label-input").value.trim();
+            let title = document.getElementById("new-item-title-input").value.trim();
+            let shortTitle = document.getElementById("new-item-short-title-input").value.trim();
+            let slug = document.getElementById("new-item-slug-input").value.trim();
+            let channel = document.getElementById("new-item-channel-input").value.trim();
+            let aspectRatio = document.getElementById("new-item-aspect-select").value;
+            let language = document.getElementById("new-item-lang-select").value;
+            let content = document.getElementById("new-item-content-input").value.trim();
+
+            if (!title || !slug) {
+                alert("Vui lòng nhập đầy đủ Tiêu đề và Slug ID!");
+                return;
             }
 
-            function openMusicDialog() {
-                document.getElementById("music-project-name").value = "";
-                document.getElementById("music-path").value = "";
-                document.getElementById("music-file").value = "";
-                document.getElementById("music-dialog").showModal();
-            }
-
-            function closeMusicDialog() {
-                let dialog = document.getElementById("music-dialog");
-                if (dialog) dialog.close();
-                document.querySelectorAll('.header-menu a').forEach(a => a.classList.remove('active'));
-                let homeBtn = document.getElementById('nav-home');
-                if (homeBtn) homeBtn.classList.add('active');
-            }
-
-             async function submitMusicProject(event) {
-                event.preventDefault();
-                let projectName = document.getElementById("music-project-name").value.trim();
-                let pathInput = document.getElementById("music-path");
-                let musicFile = document.getElementById("music-file").files[0];
-                let artStyle = document.getElementById("art-style-music").value;
-                let useWatermark = document.getElementById("music-use-watermark").checked;
-                let useSubtitles = document.getElementById("music-use-subtitles").checked;
-                let subtitlePreset = document.getElementById("music-subtitle-preset") ? document.getElementById("music-subtitle-preset").value : "karaoke-green";
-                let useWhisper = document.getElementById("music-use-whisper").checked;
-                let forceRerun = document.getElementById("music-force-rerun") ? document.getElementById("music-force-rerun").checked : false;
-                
-                let localPath = pathInput.value.trim();
-                let isUpload = musicFile && localPath.startsWith("Staged Upload:");
-
-                if (!projectName) {
-                    alert("Project Name is required!");
-                    return;
+            try {
+                let res = await fetch(`/v1/projects/${encodeURIComponent(activeStoryId)}/items/add`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        episode: episode,
+                        episode_label: episodeLabel,
+                        title: title,
+                        short_title: shortTitle,
+                        slug: slug,
+                        item_id: slug,
+                        channel: channel,
+                        aspect_ratio: aspectRatio,
+                        language: language,
+                        content: content
+                    })
+                });
+                let data = {};
+                try { data = await res.json(); } catch(err) {}
+                if (res.ok) {
+                    closeAddItemModal();
+                    alert("🎉 Item added successfully!");
+                    let projRes = await fetch("/v1/projects");
+                    allProjectsList = await projRes.json();
+                    openProjectWorkspace(activeStoryId);
+                    selectChapterInWorkspace(activeStoryId, data.item_id, data.title);
+                } else {
+                    alert("Error: " + (data.detail || "Failed to add item"));
                 }
-                if (!isUpload && !localPath) {
-                    alert("Please select a music file via Browse or choose upload manual!");
-                    return;
-                }
-
-                closeMusicDialog();
-
-                let formData = new FormData();
-                if (isUpload) {
-                    formData.append("file", musicFile);
-                }
-
-                let detailsPanel = document.getElementById("details-panel");
-                detailsPanel.style.display = "block";
-                document.getElementById("current-project-title").innerText = isUpload ? `Uploading: ${projectName}` : `Starting Music: ${projectName}`;
-                document.getElementById("status-banner").innerText = isUpload ? "Uploading..." : "Starting...";
-                
-                let url = "/v1/projects/music?project_name=" + encodeURIComponent(projectName);
-                if (!isUpload) {
-                    url += `&local_path=${encodeURIComponent(localPath)}`;
-                }
-
-                try {
-                    let res = await fetch(url, {
-                        method: "POST",
-                        body: formData
-                    });
-                    if (res.ok) {
-                        let runRes = await fetch(`/v1/projects/music/${encodeURIComponent(projectName)}/run`, {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json"
-                            },
-                            body: JSON.stringify({
-                                art_style: artStyle,
-                                use_watermark: useWatermark,
-                                use_subtitles: useSubtitles,
-                                subtitle_preset: subtitlePreset,
-                                use_whisper: useWhisper,
-                                force_rerun: forceRerun
-                            })
-                        });
-                        if (runRes.ok) {
-                            selectChapter("music", projectName, projectName);
-                        } else {
-                            let err = await runRes.json();
-                            alert("Failed to start music pipeline: " + (err.detail || "Unknown error"));
-                        }
-                    } else {
-                        let err = await res.json();
-                        alert("Creation failed: " + (err.detail || "Unknown error"));
-                    }
-                } catch (e) {
-                    alert("Error: " + e);
-                }
+            } catch(err) {
+                alert("Creation error: " + err.message);
             }
+        }
 
-            function toggleSubtitlePresetDisplay(prefix) {
-                let checkEl = document.getElementById(prefix + "-subtitles") || document.getElementById(prefix + "-use-subtitles");
-                let containerEl = document.getElementById(prefix + "-preset-container");
-                if (checkEl && containerEl) {
-                    containerEl.style.display = checkEl.checked ? "flex" : "none";
+        async function openFolder(event, storyId, chapterId) {
+            if (event) event.stopPropagation();
+            let url = chapterId ? `/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/open-folder` : `/v1/projects/${encodeURIComponent(storyId)}/open-folder`;
+            try {
+                let res = await fetch(url, { method: "POST" });
+                if (!res.ok) {
+                    let err = await res.json();
+                    alert("Failed to open folder: " + (err.detail || "Unknown error"));
                 }
+            } catch(e) {
+                alert("Error opening folder: " + e.message);
             }
+        }
 
-            const LOCAL_MEDIA_ORIGIN = window.location.origin;
-            let mediaExistsCache = {};
-
-            async function getMediaExists(url) {
-                if (mediaExistsCache[url] === true) {
-                    return true;
+        async function deleteChapter(event, storyId, chapterId, title) {
+            if (event) event.stopPropagation();
+            if (!confirm(`Bạn có chắc chắn muốn xóa item '${title || chapterId}'?`)) return;
+            try {
+                let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}`, { method: "DELETE" });
+                if (res.ok) {
+                    if (activeChapterId === chapterId) activeChapterId = null;
+                    let projRes = await fetch("/v1/projects");
+                    allProjectsList = await projRes.json();
+                    openProjectWorkspace(storyId);
+                } else {
+                    let err = await res.json();
+                    alert("Failed to delete item: " + (err.detail || "Unknown error"));
                 }
-                if (mediaExistsCache[url] === "checking") {
-                    return false;
-                }
-                mediaExistsCache[url] = "checking";
-                try {
-                    let res = await fetch(url, { method: "HEAD" });
-                    if (res.ok) {
-                        mediaExistsCache[url] = true;
-                        return true;
-                    }
-                    if (url.startsWith("/media/")) {
-                        let localFallback = url.replace("/media", window.location.origin);
-                        try {
-                            let resLocal = await fetch(localFallback, { method: "HEAD" });
-                            if (resLocal.ok) {
-                                mediaExistsCache[url] = true;
-                                return true;
-                            }
-                        } catch (errLocal) {}
-                    }
-                    mediaExistsCache[url] = false;
-                    return false;
-                } catch(e) {
-                    mediaExistsCache[url] = false;
-                    return false;
-                }
+            } catch(e) {
+                alert("Error deleting item: " + e.message);
             }
+        }
 
-            function showPreviewModal(title, contentHtml) {
-                document.getElementById("preview-modal-title").innerText = title;
-                document.getElementById("preview-modal-media").innerHTML = contentHtml;
-                document.getElementById("preview-modal").style.display = "flex";
-            }
-
-            function closePreviewModal(event) {
-                if (event) event.stopPropagation();
-                let container = document.getElementById("preview-modal-media");
-                let media = container.querySelector("video, audio");
-                if (media) {
-                    media.pause();
-                }
-                document.getElementById("preview-modal").style.display = "none";
-                container.innerHTML = "";
-            }
-
-            function playAudioPreview(url, fragIdx) {
-                showPreviewModal(`Frag #${fragIdx} - Audio Voiceover`, `
-                    <audio src="${url}" controls autoplay style="width:100%; max-width:500px; margin-top:1rem;">
-                        Your browser does not support the audio element.
-                    </audio>
-                `);
-            }
-
-            function showImagePreview(url, fragIdx) {
-                showPreviewModal(`Frag #${fragIdx} - Generated Image`, `
-                    <img src="${url}" alt="Frag #${fragIdx} Image" style="max-width:100%; max-height:60vh; border-radius:8px;">
-                `);
-            }
-
-            function playVideoPreview(url, fragIdx) {
-                showPreviewModal(`Frag #${fragIdx} - Video segment`, `
-                    <video src="${url}" controls autoplay style="max-width: 100%; max-height: 60vh; aspect-ratio: 9 / 16; border-radius: 8px; background: #000; object-fit: contain;">
-                        Your browser does not support the video element.
-                    </video>
-                `);
-            }
-
-            // Initial load & periodic polling
-            updateAgentStatus();
-            loadProjects();
-            setInterval(updateAgentStatus, 3000);
-        </script>
-
-        <!-- Preview Modal Overlay -->
-        <div id="preview-modal" class="preview-modal" onclick="closePreviewModal(event)">
-            <div class="preview-modal-content" onclick="event.stopPropagation()">
-                <span class="preview-modal-close" onclick="closePreviewModal(event)">&times;</span>
-                <h3 id="preview-modal-title" style="margin-top: 0; color: var(--primary-light);">Preview</h3>
-                <div class="preview-media-container" id="preview-modal-media">
-                    <!-- Dynamic preview element goes here -->
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
+        setInterval(updateAgentStatus, 3000);
+        updateAgentStatus();
+        loadProjects();
+    </script>
+</body>
+</html>"""
     return HTMLResponse(
         content=html_content,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
-
-if __name__ == "__main__":
-    import uvicorn
-    import os
-    port = int(os.getenv("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)

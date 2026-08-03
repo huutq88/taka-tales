@@ -58,38 +58,46 @@ class TranscriptResolver:
                 if s_idx < S and a_idx < A:
                     token_times[s_idx] = (aligned_words[a_idx].start, aligned_words[a_idx].end)
 
-        # Interpolate missing timing for unmapped script tokens
+        # 3. Fill missing timing for unmapped tokens in contiguous spans
         total_start = aligned_words[0].start
-        total_end = aligned_words[-1].end
+        total_end = max(aligned_words[-1].end, total_start + 1.0)
+
+        i = 0
+        while i < S:
+            if token_times[i] is None:
+                span_start = i
+                while i < S and token_times[i] is None:
+                    i += 1
+                span_end = i - 1  # inclusive
+                span_len = span_end - span_start + 1
+
+                # Prev known end time
+                if span_start > 0 and token_times[span_start - 1] is not None:
+                    prev_t = token_times[span_start - 1][1]
+                else:
+                    prev_t = total_start
+
+                # Next known start time
+                if span_end < S - 1 and token_times[span_end + 1] is not None:
+                    next_t = token_times[span_end + 1][0]
+                else:
+                    next_t = total_end
+
+                if next_t <= prev_t:
+                    next_t = prev_t + (span_len * 0.25)
+
+                step = (next_t - prev_t) / float(span_len)
+                for k in range(span_len):
+                    curr_idx = span_start + k
+                    st = prev_t + (k * step)
+                    et = prev_t + ((k + 1) * step)
+                    token_times[curr_idx] = (round(st, 3), round(et, 3))
+            else:
+                i += 1
 
         resolved_words: List[TimedWord] = []
         for i in range(S):
-            if token_times[i] is not None:
-                st, et = token_times[i]
-            else:
-                # Find previous known time
-                prev_time = None
-                for p in range(i - 1, -1, -1):
-                    if token_times[p] is not None:
-                        prev_time = token_times[p][1]
-                        break
-                if prev_time is None:
-                    prev_time = total_start
-
-                # Find next known time
-                next_time = None
-                for n in range(i + 1, S):
-                    if token_times[n] is not None:
-                        next_time = token_times[n][0]
-                        break
-                if next_time is None:
-                    next_time = total_end
-
-                # Distribute linearly between prev_time and next_time
-                unmapped_count = sum(1 for k in range(i, S) if token_times[k] is None and (k == i or token_times[k-1] is None))
-                st = prev_time + (next_time - prev_time) * (1.0 / (unmapped_count + 1))
-                et = st + max(0.1, (next_time - prev_time) / (unmapped_count + 1))
-
+            st, et = token_times[i]
             resolved_words.append(TimedWord(
                 id=f"w_{i:04d}",
                 text=script_tokens[i],
@@ -102,7 +110,7 @@ class TranscriptResolver:
         for i in range(len(resolved_words) - 1):
             if resolved_words[i].end > resolved_words[i + 1].start:
                 mid = (resolved_words[i].start + resolved_words[i + 1].end) / 2.0
-                resolved_words[i].end = max(resolved_words[i].start + 0.05, mid)
+                resolved_words[i].end = max(resolved_words[i].start + 0.05, round(mid, 3))
                 resolved_words[i + 1].start = resolved_words[i].end
 
         return resolved_words

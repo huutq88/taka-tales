@@ -77,17 +77,17 @@ FREE_SWAP_GB: int = int(config["GENERAL"]["FREE_SWAP"])
 FPS: int = int(config["GENERAL"]["FPS"])
 
 # TEXT
-FRAGMENT_LENGTH: int = int(config["TEXT_FRAGMENT"]["FRAGMENT_LENGTH"])
+FRAGMENT_LENGTH: int = int(config.get("TEXT_FRAGMENT", "FRAGMENT_LENGTH", fallback="20"))
 
 # AUDIO
-TTS_PROVIDER: str = config["AUDIO"]["TTS_PROVIDER"]
-ELEVENLABS_VOICE_ID: str = config["AUDIO"]["ELEVENLABS_VOICE_ID"]
-KOKORO_VOICE_ID: str = config["AUDIO"]["KOKORO_VOICE_ID"]
-KOKORO_URL: str = config["AUDIO"]["KOKORO_URL"]
-VOICE: str = config["AUDIO"]["VOICE"]
-BG_MUSIC: bool = config["AUDIO"].getboolean("BG_MUSIC")
-BG_MUSIC_PATH: pathlib.Path = pathlib.Path(__file__).parent.parent / config["AUDIO"]["BG_MUSIC_PATH"]
-MUSIC_VOLUME: float = float(config["AUDIO"]["MUSIC_VOLUME"])
+TTS_PROVIDER: str = config.get("AUDIO", "TTS_PROVIDER", fallback="omnivoice")
+ELEVENLABS_VOICE_ID: str = config.get("AUDIO", "ELEVENLABS_VOICE_ID", fallback="")
+KOKORO_VOICE_ID: str = config.get("AUDIO", "KOKORO_VOICE_ID", fallback="af_heart")
+KOKORO_URL: str = config.get("AUDIO", "KOKORO_URL", fallback="http://localhost:8880/v1/audio/speech")
+VOICE: str = config.get("AUDIO", "VOICE", fallback="nam-dao-ly")
+BG_MUSIC: bool = config.getboolean("AUDIO", "BG_MUSIC", fallback=True)
+BG_MUSIC_PATH: pathlib.Path = pathlib.Path(__file__).parent.parent / config.get("AUDIO", "BG_MUSIC_PATH", fallback="downloaded_albums/Hết Buồn Hết Điên Hết Say/01 - Tà Áo Lụa Trắng.mp3")
+MUSIC_VOLUME: float = float(config.get("AUDIO", "MUSIC_VOLUME", fallback="0.15"))
 
 # IMAGE PROMPTS
 IMAGE_PROMPT_PROVIDER: str = config["IMAGE_PROMPT"]["IMAGE_PROMPT_PROVIDER"]
@@ -97,11 +97,10 @@ OLLAMA_MODEL: str = config["IMAGE_PROMPT"]["OLLAMA_MODEL"]
 POSITIVE_PREFIX: str = config["STABLE_DIFFUSION"]["positive_prompt_prefix"]
 POSITIVE_SUFFIX: str = config["STABLE_DIFFUSION"]["positive_prompt_suffix"]
 ART_STYLES: Dict[str, str] = {
+    "2d_stick_figure": "minimalist 2D flat vector explainer illustration, educational infographic animation style, cream background #ECE7D8, stickman character with white circular head, thick 8px black outline, orange shirt #F4A621, black necktie, simple black limbs, clean geometric shapes, flat color fills, high contrast vector art, Adobe Illustrator style presentation",
+    "2d-stick-figure-cartoon": "minimalist 2D flat vector explainer illustration, educational infographic animation style, cream background #ECE7D8, stickman character with white circular head, thick 8px black outline, orange shirt #F4A621, black necktie, simple black limbs, clean geometric shapes, flat color fills, high contrast vector art, Adobe Illustrator style presentation",
+    "monochromatic_pencil_sketch": "A clean monochromatic graphite pencil concept art sketch, Warhammer 40K codex art style, clean pencil linework, smooth graphite shading, high contrast, dramatic cinematic lighting, focused composition, white and grey pencil tone, no color, dark grimdark atmosphere",
     "watercolor": "hand-painted watercolor style, soft edges, ink washes, detailed textures, classical literary book illustration of old Vietnam, warm nostalgic colors, featuring traditional Vietnamese clothing, Vietnamese village house, Vietnamese landscape, masterpiece",
-    "dong_ho": "traditional Vietnamese Dong Ho folk painting style, woodblock print texture, bold hand-drawn ink outlines, natural pigments on aged textured Dzo paper, depicting traditional Vietnamese rural life, Vietnamese peasants, Vietnamese countryside context, folk art masterpiece",
-    "son_mai": "detailed Vietnamese lacquer painting style, gold leaf accents, cinnabar red highlights, polished dark lacquer surface, organic textures, featuring traditional Vietnamese motifs and Vietnamese village scenery, cultural masterpiece",
-    "woodblock": "rustic monochrome Vietnamese folk woodblock print style, black ink printing on aged yellowish parchment paper, bold textured carving lines, traditional Vietnamese country life depiction, hand-carved block printing aesthetic",
-    "thuy_mac": "classical East Asian ink wash painting style, sumi-e aesthetic, elegant black ink strokes on white Xuan paper, subtle grey washes, misty atmosphere, zen art style, poetic nostalgic look, masterpiece",
     "thuy_mac_blackwhite": "strict monochrome traditional East Asian black ink wash brush painting, ancient Chinese sumi-e style, bold black ink calligraphic brush strokes, charcoal grey washes, pure black ink on aged white Xuan paper, minimalist zen ink painting, high contrast black and white, negative space, no colors, monochrome masterpiece"
 }
 NEGATIVE_PROMPT: str = config["STABLE_DIFFUSION"]["negative_prompt"]
@@ -112,6 +111,45 @@ IMAGE_WIDTH: int = int(config["STABLE_DIFFUSION"]["image_width"])
 IMAGE_HEIGHT: int = int(config["STABLE_DIFFUSION"]["image_height"])
 POLLINATIONS_MODEL: str = config["STABLE_DIFFUSION"].get("POLLINATIONS_MODEL", fallback="flux")
 EFFECT_TYPE: str = config["STABLE_DIFFUSION"].get("EFFECT_TYPE", fallback="none")
+
+def configure_project_resolution(project_dir: pathlib.Path = None, aspect_ratio: str = None) -> None:
+    global IMAGE_WIDTH, IMAGE_HEIGHT
+    is_horizontal = False
+    if aspect_ratio:
+        is_horizontal = (aspect_ratio in ("16:9", "horizontal", "landscape"))
+    elif project_dir:
+        ar_file = project_dir / "aspect_ratio.txt"
+        if ar_file.exists():
+            try:
+                ar_val = ar_file.read_text(encoding="utf-8").strip()
+                if ar_val in ("16:9", "horizontal", "landscape"):
+                    is_horizontal = True
+                elif ar_val in ("9:16", "vertical", "portrait"):
+                    is_horizontal = False
+            except Exception:
+                pass
+        elif (project_dir / "project_config.json").exists():
+            try:
+                with open(project_dir / "project_config.json", "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                aspect_val = cfg.get("aspect_ratio") or cfg.get("aspect")
+                if aspect_val in ("16:9", "horizontal", "landscape"):
+                    is_horizontal = True
+                elif aspect_val in ("9:16", "vertical", "portrait"):
+                    is_horizontal = False
+            except Exception:
+                pass
+        elif "longform" in str(project_dir).lower():
+            is_horizontal = True
+                
+    if is_horizontal:
+        IMAGE_WIDTH = 1920
+        IMAGE_HEIGHT = 1080
+        _log(f"[VideoEngine] Resolution set to 16:9 Horizontal (Long-Form): {IMAGE_WIDTH}x{IMAGE_HEIGHT}")
+    else:
+        IMAGE_WIDTH = 1080
+        IMAGE_HEIGHT = 1920
+        _log(f"[VideoEngine] Resolution set to 9:16 Vertical (Reels): {IMAGE_WIDTH}x{IMAGE_HEIGHT}")
 
 USE_CHAR_DESC: bool = config["STABLE_DIFFUSION"].getboolean("USE_CHARACTERS_DESCRIPTIONS")
 SHOW_WATERMARK: bool = config["STABLE_DIFFUSION"].getboolean("SHOW_WATERMARK", fallback=True)
@@ -154,6 +192,9 @@ def _read_text(path: pathlib.Path) -> str:
 # ---------- Text Processing ----------
 def clean_text(text: str) -> str:
     """Normalize punctuation, quotes, dashes, HTML tags and Markdown."""
+    # 0. Convert escaped literal '\n' sequences to real linebreaks
+    text = text.replace("\\n", "\n")
+
     # 1. Remove HTML tags like <i>, <b>, <p>, <br> entirely
     text = re.sub(r'<[^>]+>', '', text)
     
@@ -165,12 +206,12 @@ def clean_text(text: str) -> str:
     
     # 3. Standard character mapping
     # NOTE: Do NOT strip Vietnamese tone marks (é, ê, ô, ơ, ư, etc.)
+    # NOTE: Preserve \n\n and ... for proper paragraph breaks & pauses
     mapping = {
         ">": "",
         "<": "",
         "=": "",
         "#": "",
-        "..": ".",
         "\u201c": "",
         "\u201d": "",
         "-": " ",
@@ -181,12 +222,9 @@ def clean_text(text: str) -> str:
         "~": "",
         "XXXXXX": "",
         "xxxxx": "",
-        ".....": ".",
-        "....": ".",
-        "...": ", ",
-        "\u2026": ", ",
-        "\n\n\n": "\n",
-        "\n\n": "\n",
+        ".....": "...",
+        "....": "...",
+        "\u2026": "...",
     }
     for k, v in sorted(mapping.items(), key=lambda kv: len(kv[0]), reverse=True):
         text = text.replace(k, v)
@@ -197,46 +235,69 @@ def load_and_split_to_sentences(story_path: pathlib.Path) -> int:
     """
     Split *story.txt* into sentences and write into
     ``text/story_sentences/story_sentence{idx}.txt``.
+    Respects paragraph breaks (\n\n) as hard sentence/fragment boundaries.
     """
     raw = story_path.read_text(encoding="utf-8")
     raw = clean_text(raw)
-    sentences = sent_tokenize(raw)
 
-    punctuation_list = [',', ';', ':']
+    # Split by paragraph breaks (\n\n or multi-newlines)
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', raw) if p.strip()]
+
+    punctuation_list = [',', ';', ':', '...']
     new_sentences: List[str] = []
-    frag_len = 3*FRAGMENT_LENGTH
-    for sent in sentences:
-        words = sent.split()
-        if len(words) <= FRAGMENT_LENGTH:
-            new_sentences.append(sent)
-        else:
-            part = []
-            for word in words:
-                part.append(word)
-                if word[-1] in punctuation_list and len(part) > frag_len:
-                    new_sentences.append(' '.join(part))
-                    part = []
-            if part:
-                new_sentences.append(" ".join(part))
+    frag_len = 3 * FRAGMENT_LENGTH
+
+    for p in paragraphs:
+        # Split paragraph into sentences via sent_tokenize
+        sentences = sent_tokenize(p)
+        for sent in sentences:
+            sent_str = sent.strip()
+            if not sent_str:
+                continue
+            words = sent_str.split()
+            if len(words) <= FRAGMENT_LENGTH:
+                new_sentences.append(sent_str)
+            else:
+                part = []
+                for word in words:
+                    part.append(word)
+                    if (word[-1] in punctuation_list or word.endswith("...")) and len(part) >= frag_len:
+                        new_sentences.append(' '.join(part))
+                        part = []
+                if part:
+                    new_sentences.append(" ".join(part))
+
+        # Insert paragraph break sentinel
+        new_sentences.append("<PARA_BREAK>")
+
+    if new_sentences and new_sentences[-1] == "<PARA_BREAK>":
+        new_sentences.pop()
 
     for idx, sent in enumerate(new_sentences):
         _write_text(story_path.parent / f"text/story_sentences/story_sentence{idx}.txt", sent)
 
-    _log(f"Created {len(new_sentences)} sentence files.")
+    _log(f"Created {len(new_sentences)} sentence files across {len(paragraphs)} paragraphs.")
     return len(new_sentences)
 
 
 def sentences_to_fragments(num_sentences: int, project_dir: pathlib.Path) -> int:
     """
-    Group consecutive sentences into fragments of at least *FRAGMENT_LENGTH* words.
+    Group consecutive sentences into fragments of at least *FRAGMENT_LENGTH* words,
+    flushing fragments immediately on paragraph boundaries (<PARA_BREAK>).
     """
     fragments: List[str] = []
     current_words: List[str] = []
 
     for i in range(num_sentences):
         sentence = _read_text(project_dir / f"text/story_sentences/story_sentence{i}.txt")
+        if sentence == "<PARA_BREAK>":
+            if current_words:
+                fragments.append(" ".join(current_words))
+                current_words = []
+            continue
+
         current_words.extend(sentence.split())
-        if len(current_words) > FRAGMENT_LENGTH:
+        if len(current_words) >= FRAGMENT_LENGTH:
             fragments.append(" ".join(current_words))
             current_words = []
 
@@ -329,33 +390,43 @@ VIETNAMESE_CONCEPT_MAP: Dict[str, str] = {
 }
 
 
-def _smart_vietnamese_prompt(fragment: str) -> str:
+def _smart_vietnamese_prompt(fragment: str, art_style: str = None) -> str:
     frag_lower = fragment.lower()
     for kw, visual in VIETNAMESE_CONCEPT_MAP.items():
         if kw in frag_lower:
+            if art_style not in ("dong_ho", "son_mai", "watercolor", "woodblock"):
+                visual = visual.replace("Vietnamese ", "").replace("Vietnamese", "")
             return visual
     
-    # Try KeyBERT if available, else extract meaningful Vietnamese words
     try:
         kw = _keywords_fallback(fragment)
         if kw and len(kw) > 3 and not any(x in kw.lower() for x in ("không", "là", "của", "với")):
-            return f"a traditional Vietnamese visual scene depicting {kw}"
+            if art_style in ("dong_ho", "son_mai", "watercolor", "woodblock"):
+                return f"a traditional Vietnamese visual scene depicting {kw}"
+            return f"a detailed visual scene depicting {kw}"
     except Exception:
         pass
-        
-    return "a peaceful traditional Vietnamese landscape with misty mountains, bamboo trees, and a calm river"
+    return "a peaceful landscape with misty mountains and trees"
 
 
 def build_image_prompt(fragment: str, art_style: str = None) -> str:
     style_suffix = ART_STYLES.get(art_style, POSITIVE_SUFFIX) if art_style else POSITIVE_SUFFIX
     color_rule = ""
-    if art_style == "thuy_mac_blackwhite":
+    if art_style in ("2d_stick_figure", "2d-stick-figure-cartoon"):
+        color_rule = " CRITICAL: The image MUST be a minimalist 2D flat vector stickman character with white circular head, thick 8px black outline, orange shirt (#F4A621), and black necktie on a cream background (#ECE7D8)."
+    elif art_style == "thuy_mac_blackwhite":
         color_rule = " CRITICAL: The image MUST be strict monochrome black and white ink wash brush drawing (sumi-e style). DO NOT mention any colors (such as warm, red, blue, green, yellow, watercolor)."
+
+    no_text_rule = ""
+    if art_style in ("watercolor", "thuy_mac_blackwhite", "monochromatic_pencil_sketch"):
+        no_text_rule = " CRITICAL: Do NOT include any written text, letters, words, chinese calligraphy, watermark, signature, or typography inside the generated image scene."
+
     prompt_instruction = (
-        "Translate the specific visual subject, object, and scene of the following Vietnamese sentence into a vivid single-sentence English image prompt for Stable Diffusion. "
-        f"Style context: {style_suffix}.{color_rule} "
-        "Describe the SPECIFIC OBJECT, PERSON, or ACTION in the text. Max 20 words. "
-        "Do NOT include any text, words, or letters on the image. Output ONLY the English prompt."
+        "Translate the specific visual subject, object, and scene of the following sentence into a vivid single-sentence English image prompt for Stable Diffusion. "
+        f"Style context: {style_suffix}.{color_rule}{no_text_rule} "
+        "Describe ONLY the specific objects, figures, or actions present in the input text. Max 20 words. "
+        "DO NOT add unmentioned cultural or religious tropes (such as Buddha, Vietnamese temple, bamboo, or lanterns) unless explicitly present in the input text. "
+        "Strictly align with the theme, tone, and atmosphere of the style context. Output ONLY the English prompt."
     )
 
     prompt = ""
@@ -386,7 +457,7 @@ def build_image_prompt(fragment: str, art_style: str = None) -> str:
             _log(f"Ollama failed: {e}. Using Smart Concept Fallback.")
 
     if not prompt or any(x in prompt.lower() for x in ("i cannot", "?", "failed")):
-        prompt = _smart_vietnamese_prompt(fragment)
+        prompt = _smart_vietnamese_prompt(fragment, art_style)
 
     if CHAR_DESC:
         prompt = _find_characters(fragment) + prompt
@@ -394,7 +465,6 @@ def build_image_prompt(fragment: str, art_style: str = None) -> str:
     return prompt
 
 
-# ---------- Image Generation ---------- 
 def _unload_sd() -> None:
     if USE_SD_API == "yes":
         try:
@@ -415,10 +485,10 @@ def _reload_sd() -> None:
             print(f"[Engine] Warning: Failed to reload SD: {e}")
 
 
-def _sd_api_payload(prompt: str) -> dict:
+def generate_sd_payload(prompt: str, negative_prompt: str) -> Dict[str, Any]:
     return {
-        "prompt": f"{prompt}",
-        "negative_prompt": NEGATIVE_PROMPT,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
         "steps": 20,
         "width": IMAGE_WIDTH,
         "height": IMAGE_HEIGHT,
@@ -436,15 +506,40 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None) -
 
     prompt_raw = _read_text(prompt_path)
     
-    if art_style == "thuy_mac_blackwhite":
+    if art_style in ("2d_stick_figure", "2d-stick-figure-cartoon"):
+        preset_file = pathlib.Path(__file__).parent.parent / "presets/2d-stick-figure-cartoon.json"
+        prefix = "minimalist 2D flat vector explainer illustration, educational infographic animation style, cream background #ECE7D8, stickman character with white circular head, thick 8px black outline, orange shirt #F4A621, black necktie, simple black limbs"
+        style_suffix = "clean geometric shapes, flat color fills, no gradients, no photorealism, no texture, high contrast vector art, Adobe Illustrator style presentation"
+        negative_str = "photorealistic, 3d render, complex gradient, dark shadows, noise, grainy texture, busy detailed background, glossy"
+        if preset_file.exists():
+            try:
+                with open(preset_file, "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                ip = pdata.get("image_prompt", {})
+                prefix = ip.get("prefix", prefix)
+                style_suffix = ip.get("suffix", style_suffix)
+                negative_str = ip.get("negative", negative_str)
+            except Exception:
+                pass
+        p_raw = prompt_raw.strip()
+        if "minimalist 2D flat vector stickman character" in p_raw or "white circular head" in p_raw:
+            prompt = f"{p_raw}, {style_suffix}"
+        else:
+            prompt = f"{prefix}, {p_raw}, {style_suffix}"
+    elif art_style in ("monochromatic_pencil_sketch", "pencil_sketch", "sketch"):
+        prefix = "A clean monochromatic graphite pencil concept art sketch of"
+        style_suffix = "Warhammer 40K codex art style, clean pencil linework, smooth graphite shading, high contrast, dramatic cinematic lighting, focused composition, white and grey pencil tone, no color"
+        negative_str = "color, colorful, red, blue, green, yellow, warm colors, watercolor, oil painting, 3d, cgi, photorealistic, 2d stick figure, cartoon, nsfw, text, letters, words, signature, watermark"
+        prompt = f"{prefix} {prompt_raw}, {style_suffix}"
+    elif art_style == "thuy_mac_blackwhite":
         prefix = "traditional monochrome black and white Chinese ink brush painting, sumi-e style, masterwork black ink brushwork on white Xuan paper,"
         style_suffix = "pure black ink, charcoal grey wash gradients, expressive calligraphic brush strokes, negative space, dramatic silhouette, zen art aesthetic, no color, black and white masterpiece"
-        negative_str = "color, colorful, red, green, blue, yellow, warm colors, watercolor, oil painting, 3d, cgi, photorealistic, digital painting, nsfw"
+        negative_str = "color, colorful, red, green, blue, yellow, warm colors, watercolor, oil painting, 3d, cgi, photorealistic, digital painting, nsfw, text, letters, words, signature, watermark, typography, chinese characters"
         prompt = f"{prefix} {prompt_raw}, {style_suffix}"
-    elif art_style == "thuy_mac":
-        prefix = "classical East Asian ink wash painting style, sumi-e aesthetic, elegant ink brush drawing of"
-        style_suffix = "black ink strokes on white Xuan paper, subtle grey washes, misty atmosphere, zen art style, poetic nostalgic look, masterpiece"
-        negative_str = "vivid bright color, 3d, cgi, photorealistic, digital painting, nsfw"
+    elif art_style == "watercolor":
+        prefix = "traditional Vietnamese watercolor illustration showing"
+        style_suffix = "hand-painted watercolor style, soft edges, ink washes, detailed textures, classical literary book illustration of old Vietnam, warm nostalgic colors, featuring traditional Vietnamese clothing, Vietnamese village house, Vietnamese landscape, masterpiece"
+        negative_str = "low quality, worst quality, watermark, logo, text, letters, words, signature, calligraphy, typography, chinese characters, asian text, extra limbs, bad anatomy, deformed, cgi, 3d render"
         prompt = f"{prefix} {prompt_raw}, {style_suffix}"
     else:
         style_suffix = ART_STYLES.get(art_style, POSITIVE_SUFFIX) if art_style else POSITIVE_SUFFIX
@@ -452,16 +547,26 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None) -
         negative_str = NEGATIVE_PROMPT
     
     _log(f"{idx} Loaded Prompt: {prompt}")
-    do_it = True
-    wait_time = 10
+    attempts = 0
+    max_retries = 2
+    wait_time = 2
     
-    while(do_it):
+    while attempts < max_retries:
+        attempts += 1
         try:
             if USE_SD_API == "yes":
-                url = SD_URL
-                payload = _sd_api_payload(prompt)
+                payload = {
+                    "prompt": prompt,
+                    "negative_prompt": negative_str,
+                    "steps": 20,
+                    "cfg_scale": 7,
+                    "width": IMAGE_WIDTH,
+                    "height": IMAGE_HEIGHT,
+                    "seed": SEED,
+                }
+                url = SD_URL.rstrip('/')
                 option_payload = {
-                    "sd_model_checkpoint": "aamXLAnimeMix_v10.safetensors",
+                    "sd_model_checkpoint": "sd_xl_base_1.0.safetensors [31e35c80cf]",
                     "sd_vae": "sdxl_vae.safetensors",
                 }
                 requests.post(f"{url}/sdapi/v1/options", json=option_payload)
@@ -489,12 +594,31 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None) -
                     img = Image.open(image)
                     img.save(image_path)
                 else:
-                    raise requests.exceptions.HTTPError(f'Failed to download. Status: {response.status_code}')    
+                    raise requests.exceptions.HTTPError(f'Failed to download. Status: {response.status_code}')
+
+            elif USE_SD_API == "ima2":
+                import subprocess
+                cmd = [
+                    "ima2", "gen", prompt,
+                    "--mode", "direct",
+                    "--quality", "low",
+                    "-s", f"{IMAGE_WIDTH}x{IMAGE_HEIGHT}",
+                    "-o", str(image_path)
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                if res.returncode != 0:
+                    _log(f"[Agent] ima2-gen error: {res.stderr.strip()}. Tự động re-authenticate làm mới token...")
+                    subprocess.run(["npx", "-y", "ima2-gen", "setup"], input="1\n", text=True, capture_output=True)
+                    res_retry = subprocess.run(cmd, capture_output=True, text=True)
+                    if res_retry.returncode != 0:
+                        raise RuntimeError(f"ima2-gen error sau khi re-auth: {res_retry.stderr}")
                 
-            do_it = False
+            break
             
         except Exception as e:   
-            _log(f"Exception!!! {idx} \n{e} \nWaiting {wait_time}s...")
+            _log(f"Exception!!! {idx} (attempt {attempts}/{max_retries})\n{e}")
+            if attempts >= max_retries:
+                break
             time.sleep(wait_time)
 
 
@@ -864,7 +988,9 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, au
         
         effect_type = idx % 3
         
-        if effect_type == 0:
+        if effect in ["static", "none_static"]:
+            img_cropped = img
+        elif effect_type == 0:
             # Zoom In: 1.0 to 1.15
             factor = 1.0 + 0.15 * (t / duration)
             crop_w = w / factor
@@ -978,6 +1104,7 @@ def apply_ken_burns_effect(clip: ImageClip, idx: int, is_music: bool = False, au
 
 
 def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
+    configure_project_resolution(project_dir)
     frag_path = project_dir / f"text/story_fragments/story_fragment{idx}.txt"
     img_path = project_dir / f"images/image{idx}.jpg"
     audio_wav = project_dir / f"audio/voiceover{idx}.wav"
@@ -985,15 +1112,25 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
 
     is_music = "projects/music" in str(project_dir)
     audio_path = audio_mp3 if audio_mp3.exists() else audio_wav
+
+    if not audio_path.exists():
+        try:
+            from pydub import AudioSegment
+            silence = AudioSegment.silent(duration=3000, frame_rate=44100)
+            audio_wav.parent.mkdir(parents=True, exist_ok=True)
+            silence.export(str(audio_wav), format="wav")
+            audio_path = audio_wav
+        except Exception as e:
+            print(f"[Engine] Warning: Failed to create silent audio fallback: {e}")
     
-    if not is_music:
+    if not is_music and audio_path.exists():
         from pydub import AudioSegment
         audio_seg = AudioSegment.from_file(str(audio_path))
-        # Fade in 50ms, fade out 50ms
-        audio_seg = audio_seg.fade_in(50).fade_out(50)
-        # Create 0.5s silence segment matching same parameters
-        silence = AudioSegment.silent(duration=500, frame_rate=audio_seg.frame_rate)
-        # Concatenate silence + audio + silence
+        # Fade in 25ms, fade out 25ms for smooth zero-crossing transitions
+        audio_seg = audio_seg.fade_in(25).fade_out(25)
+        # Create 120ms silence with matching frame_rate, sample_width, and channels
+        silence = AudioSegment.silent(duration=120, frame_rate=audio_seg.frame_rate)
+        silence = silence.set_sample_width(audio_seg.sample_width).set_channels(audio_seg.channels)
         padded_audio = silence + audio_seg + silence
         
         temp_audio_path = project_dir / f"audio/processed_voiceover{idx}.wav"
@@ -1021,6 +1158,15 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
             print(f"Error loading project_config.json: {e}")
 
     # Ensure image size matches configured IMAGE_WIDTH and IMAGE_HEIGHT
+    if not img_path.exists():
+        img_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_imgs = sorted(list(img_path.parent.glob("image*.jpg")))
+        if existing_imgs:
+            img_path = existing_imgs[0]
+        else:
+            blank = Image.new("RGB", (IMAGE_WIDTH, IMAGE_HEIGHT), color=(20, 20, 20))
+            blank.save(str(img_path))
+
     img = Image.open(str(img_path))
     if img.size != (IMAGE_WIDTH, IMAGE_HEIGHT):
         img_resized = img.resize((IMAGE_WIDTH, IMAGE_HEIGHT), Image.Resampling.LANCZOS)
@@ -1243,7 +1389,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
     video = CompositeVideoClip([image_clip.set_audio(audio_clip)] + extra_clips + txt_clips)
     out = project_dir / f"videos/video{idx}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
-    video.write_videofile(str(out), fps=FPS, codec="libx264", audio_codec="aac", logger=None)
+    video.write_videofile(str(out), fps=FPS, codec="libx264", audio_codec="pcm_s16le", logger=None)
 
 
 def concat_clips(project_dir: pathlib.Path, start_idx: int = None, end_idx: int = None) -> List[VideoFileClip]:
@@ -1254,28 +1400,64 @@ def concat_clips(project_dir: pathlib.Path, start_idx: int = None, end_idx: int 
 
 
 def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: int = None, end_idx: int = None) -> None:
+    configure_project_resolution(project_dir)
     clips = concat_clips(project_dir, start_idx, end_idx)
-    clips = [c.crossfadein(1.0).crossfadeout(1.0) for c in clips]
-    final = concatenate_videoclips(clips, padding=-1, method="compose")
+    is_music = "projects/music" in str(project_dir)
+    if is_music:
+        clips = [c.crossfadein(1.0).crossfadeout(1.0) for c in clips]
+        final = concatenate_videoclips(clips, padding=-1, method="compose")
+    else:
+        final = concatenate_videoclips(clips, method="compose")
+        # Build seamless master voiceover audio using Pydub to prevent any inter-clip demuxing click/pop sounds
+        try:
+            from pydub import AudioSegment
+            files = sorted(project_dir.glob("videos/video*.mp4"), key=lambda p: int(p.stem[5:]))
+            if start_idx is not None and end_idx is not None:
+                files = [f for f in files if start_idx <= int(f.stem[5:]) < end_idx]
+            
+            clean_voice_seg = AudioSegment.empty()
+            for f in files:
+                idx = int(f.stem[5:])
+                proc_wav = project_dir / f"audio/processed_voiceover{idx}.wav"
+                raw_wav = project_dir / f"audio/voiceover{idx}.wav"
+                raw_mp3 = project_dir / f"audio/voiceover{idx}.mp3"
+                target_a = proc_wav if proc_wav.exists() else (raw_wav if raw_wav.exists() else raw_mp3)
+                if target_a.exists():
+                    seg = AudioSegment.from_file(str(target_a))
+                    clean_voice_seg += seg
+            
+            if len(clean_voice_seg) > 0:
+                clean_voice_path = project_dir / "audio/full_voiceover_concat.wav"
+                clean_voice_seg.export(str(clean_voice_path), format="wav")
+                voice_audio_clip = AudioFileClip(str(clean_voice_path))
+                
+                if BG_MUSIC:
+                    bg_path = BG_MUSIC_PATH
+                    if "chuong-1" in str(project_dir):
+                        bg_path = BG_MUSIC_PATH.parent / "01 - Tà Áo Lụa Trắng.mp3"
+                    elif "chuong-2" in str(project_dir):
+                        bg_path = BG_MUSIC_PATH.parent / "02 - Ly Cà Phê Vỉa Hè.mp3"
+                    elif "chuong-3" in str(project_dir):
+                        bg_path = BG_MUSIC_PATH.parent / "03 - Truyện Kiều Bìa Rách.mp3"
 
-    if BG_MUSIC:
-        bg_path = BG_MUSIC_PATH
-        if "chuong-1" in str(project_dir):
-            bg_path = BG_MUSIC_PATH.parent / "01 - Tà Áo Lụa Trắng.mp3"
-        elif "chuong-2" in str(project_dir):
-            bg_path = BG_MUSIC_PATH.parent / "02 - Ly Cà Phê Vỉa Hè.mp3"
-        elif "chuong-3" in str(project_dir):
-            bg_path = BG_MUSIC_PATH.parent / "03 - Truyện Kiều Bìa Rách.mp3"
-
-        if bg_path.exists():
-            bg = AudioFileClip(str(bg_path)).audio_loop(duration=final.duration)
-            bg = volumex(bg, MUSIC_VOLUME)
-            final = final.set_audio(CompositeAudioClip([final.audio, bg]))
-        else:
-            print(f"[Warning] Background music path not found: {bg_path}")
+                    if bg_path.exists():
+                        bg = AudioFileClip(str(bg_path)).audio_loop(duration=voice_audio_clip.duration)
+                        bg = volumex(bg, MUSIC_VOLUME)
+                        final = final.set_audio(CompositeAudioClip([voice_audio_clip, bg]))
+                    else:
+                        final = final.set_audio(voice_audio_clip)
+                else:
+                    final = final.set_audio(voice_audio_clip)
+                print(f"[VideoEngine] Successfully built clean seamless audio master ({clean_voice_path.name})")
+        except Exception as ex:
+            print(f"[VideoEngine Warning] Failed to generate clean Pydub master audio: {ex}")
 
     out = project_dir / f"{project_name}.mp4"
-    final.write_videofile(str(out), fps=FPS, codec="libx264", audio_codec="aac")
+    temp_audio = project_dir / "temp_audio.m4a"
+    final.write_videofile(
+        str(out), fps=FPS, codec="libx264", audio_codec="aac",
+        audio_bitrate="192k", temp_audiofile=str(temp_audio), remove_temp=True
+    )
 
     # Check if subtitle engine burn is enabled in project_config.json
     config_file = project_dir / "project_config.json"
@@ -1315,7 +1497,9 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
 
         video_path = project_dir / f"{project_name}.mp4"
         if not video_path.exists():
-            return
+            video_path = project_dir / "final.mp4"
+        if not video_path.exists():
+            video_path = project_dir / f"{project_dir.parent.name}_{project_dir.name}.mp4"
 
         # 1. Pick base image
         img_candidates = list((project_dir / "images").glob("*.jpg")) + list((project_dir / "images").glob("*.png"))
@@ -1335,81 +1519,93 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
         thumb_img = PILImage.alpha_composite(base_img, overlay).convert("RGB")
         draw = ImageDraw.Draw(thumb_img)
 
-        # 3. Typography & Styling (Option A - Serif Georgia)
-        title_text = project_name.replace("dao_ly_", "").replace("dao-ly-", "").replace("_", " ").strip().title()
+        # 3. Typography & Styling according to 3-line requirement:
+        # Line 1: short_title (Yellow Pill Badge)
+        # Line 2: title (Main bold title)
+        # Line 3: first sentence of content
+        short_title = ""
+        title_text = ""
         
-        ep_match = re.search(r"(\d+)", title_text)
-        ep_num = f"#{int(ep_match.group(1)):02d}" if ep_match else "#01"
-        
-        clean_title = re.sub(r"^\d+\s*", "", title_text).upper()
-        if len(clean_title) > 35:
-            clean_title = clean_title[:35] + "..."
+        config_file = project_dir / "project_config.json"
+        if config_file.exists():
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                short_title = cfg.get("short_title", "")
+                title_text = cfg.get("title", "")
+            except Exception:
+                pass
 
-        # Extract dynamic quote & infer topic_tag from title and story.txt
-        quote_text = ""
-        story_content = ""
+        if not short_title or not title_text:
+            story_id = project_dir.parent.name
+            chap_id = project_dir.name
+            data_dir = pathlib.Path(__file__).parent.parent / "data"
+            for jpath in data_dir.rglob("*.json"):
+                try:
+                    with open(jpath, "r", encoding="utf-8") as f:
+                        jdata = json.load(f)
+                    if jdata.get("slug") in (chap_id, story_id, project_name):
+                        if not short_title: short_title = jdata.get("short_title", "")
+                        if not title_text: title_text = jdata.get("title", "")
+                        break
+                except Exception:
+                    pass
+
+        if not short_title:
+            short_title = project_name.replace("dao_ly_", "").replace("dao-ly-", "").replace("_", " ").strip().title()
+        if not title_text:
+            title_text = short_title
+
+        # Line 3: Extract first sentence of content
+        first_sentence = ""
         story_file = project_dir / "story.txt"
         if story_file.exists():
             try:
-                story_content = story_file.read_text(encoding="utf-8").strip()
-                story_lines = [l.strip() for l in story_content.splitlines() if l.strip()]
-                for line in story_lines:
-                    if not quote_text and not line.startswith("#"):
-                        first_sent = re.split(r"[.!?]", line)[0].strip()
-                        first_sent = re.sub(r'^[“"\'”]+', '', first_sent).strip()
-                        if len(first_sent) > 42:
-                            first_sent = first_sent[:42] + "..."
-                        if first_sent:
-                            quote_text = f"“{first_sent}”"
-                            break
+                raw_story = story_file.read_text(encoding="utf-8").strip()
+                raw_story = re.sub(r'\[.*?\]', '', raw_story).strip()
+                paragraphs = [p.strip() for p in raw_story.splitlines() if p.strip()]
+                for p in paragraphs:
+                    # Clean ellipses temporarily to find sentence boundary
+                    p_clean = p.replace("...", "___ELLIPSIS___")
+                    sents = [s.replace("___ELLIPSIS___", "...").strip() for s in re.split(r'[.!?\n]', p_clean) if s.strip()]
+                    if sents:
+                        first_sentence = sents[0]
+                        if len(sents) > 1 and len(first_sentence) < 30:
+                            first_sentence += " " + sents[1]
+                        break
             except Exception:
                 pass
                 
-        if not quote_text:
-            quote_text = "“Nhìn người nhìn mặt, chớ nhìn nụ cười”"
+        if not first_sentence:
+            first_sentence = "Bài học cuộc sống sâu sắc và ý nghĩa"
 
-        # Topic Inference Logic for Tag Badge (Dòng 1)
-        combined_text = (clean_title + " " + story_content).lower()
-        if any(k in combined_text for k in ["phản bội", "ngoại tình", "vợ", "chồng", "gia đình", "con cái", "kẻ thứ ba", "đào hoa"]):
-            topic_tag = "NGOẠI TÌNH & GIA ĐÌNH"
-        elif any(k in combined_text for k in ["bạn", "kẻ thù", "tiểu nhân", "thị phi", "ứng xử", "giao tiếp", "nói dối", "đố đố", "gièm pha"]):
-            topic_tag = "TRIẾT LÝ ỨNG XỬ"
-        elif any(k in combined_text for k in ["buông", "tĩnh tâm", "bình yên", "an nhiên", "tha thứ", "chữa lành", "mưa rào"]):
-            topic_tag = "TĨNH TÂM & BÌNH YÊN"
-        elif any(k in combined_text for k in ["tình yêu", "người yêu", "yêu thương", "tình cảm", "say nắng", "ngã lòng"]):
-            topic_tag = "TÌNH YÊU & HẠNH PHÚC"
-        elif any(k in combined_text for k in ["tiền", "tài chính", "nghèo", "giàu", "sự nghiệp", "thành công"]):
-            topic_tag = "BÀI HỌC THÀNH CÔNG"
-        else:
-            topic_tag = "ĐẠO LÝ NHÂN SINH"
-
-        font_path_title = "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
-        font_path_sub = "/System/Library/Fonts/Supplemental/Georgia.ttf"
+        font_path_title = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+        font_path_sub = "/System/Library/Fonts/Supplemental/Georgia Italic.ttf"
         font_path_tag = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
         
         try:
-            pil_font_title = PILFont.truetype(font_path_title, int(0.038 * IMAGE_HEIGHT))
+            pil_font_title = PILFont.truetype(font_path_title, int(0.032 * IMAGE_HEIGHT))
             pil_font_sub = PILFont.truetype(font_path_sub, int(0.020 * IMAGE_HEIGHT))
-            pil_font_tag = PILFont.truetype(font_path_tag, int(0.017 * IMAGE_HEIGHT))
+            pil_font_tag = PILFont.truetype(font_path_tag, int(0.020 * IMAGE_HEIGHT))
         except Exception:
             pil_font_title = PILFont.load_default()
             pil_font_sub = pil_font_title
             pil_font_tag = pil_font_title
 
-        # Draw Pill Badge Tag: #01 • ĐẠO LÝ NHÂN SINH
-        tag_text = f"  {ep_num} • {topic_tag}  "
+        # Line 1: Short Title Pill Badge
+        tag_text = f"  {short_title.upper()}  "
         tag_bbox = draw.textbbox((0, 0), tag_text, font=pil_font_tag)
         tag_w = tag_bbox[2] - tag_bbox[0]
         tag_h = tag_bbox[3] - tag_bbox[1]
         tag_x = (IMAGE_WIDTH - tag_w) // 2
-        tag_y = int(IMAGE_HEIGHT * 0.28)
+        tag_y = int(IMAGE_HEIGHT * 0.22)
 
-        draw.rounded_rectangle([tag_x - 15, tag_y - 10, tag_x + tag_w + 15, tag_y + tag_h + 10], radius=20, fill=(245, 158, 11, 235))
+        draw.rounded_rectangle([tag_x - 18, tag_y - 10, tag_x + tag_w + 18, tag_y + tag_h + 10], radius=22, fill=(245, 158, 11, 240))
         draw.text((tag_x, tag_y), tag_text, font=pil_font_tag, fill=(15, 23, 42))
 
-        # Wrap title lines
-        max_w = int(0.80 * IMAGE_WIDTH)
-        words = clean_title.split()
+        # Line 2: Title (Wrap lines)
+        max_w = int(0.85 * IMAGE_WIDTH)
+        words = title_text.split()
         lines, curr = [], []
         for w in words:
             bbox = draw.textbbox((0, 0), " ".join(curr + [w]), font=pil_font_title)
@@ -1420,7 +1616,7 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
                 curr = [w]
         if curr: lines.append(" ".join(curr))
 
-        curr_y = int(IMAGE_HEIGHT * 0.35)
+        curr_y = tag_y + tag_h + 45
         stroke_w = max(4, int(0.004 * IMAGE_HEIGHT))
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=pil_font_title)
@@ -1428,24 +1624,42 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
             lh = bbox[3] - bbox[1]
             lx = (IMAGE_WIDTH - lw) // 2
             
-            draw.text((lx, curr_y), line, font=pil_font_title, fill=(248, 250, 252), stroke_width=stroke_w, stroke_fill=(15, 23, 42))
-            curr_y += lh + 22
+            draw.text((lx, curr_y), line, font=pil_font_title, fill=(255, 255, 255), stroke_width=stroke_w, stroke_fill=(15, 23, 42))
+            curr_y += lh + 18
 
-        # Draw Subtitle Quote
-        quote_text = "“Nhìn người nhìn mặt, chớ nhìn nụ cười”"
-        q_bbox = draw.textbbox((0, 0), quote_text, font=pil_font_sub)
-        qx = (IMAGE_WIDTH - (q_bbox[2] - q_bbox[0])) // 2
-        draw.text((qx, curr_y + 30), quote_text, font=pil_font_sub, fill=(245, 158, 11), stroke_width=2, stroke_fill=(0, 0, 0))
+        # Line 3: Full content text (Wrap all lines naturally)
+        quote_text = f"“{first_sentence}”"
+
+        q_words = quote_text.split()
+        q_lines, curr_q = [], []
+        max_q_w = int(0.82 * IMAGE_WIDTH)
+        for w in q_words:
+            bbox = draw.textbbox((0, 0), " ".join(curr_q + [w]), font=pil_font_sub)
+            if bbox[2] - bbox[0] <= max_q_w:
+                curr_q.append(w)
+            else:
+                if curr_q: q_lines.append(" ".join(curr_q))
+                curr_q = [w]
+        if curr_q: q_lines.append(" ".join(curr_q))
+
+        curr_y += 25
+        for qline in q_lines:
+            bbox = draw.textbbox((0, 0), qline, font=pil_font_sub)
+            qw = bbox[2] - bbox[0]
+            qh = bbox[3] - bbox[1]
+            qx = (IMAGE_WIDTH - qw) // 2
+            draw.text((qx, curr_y), qline, font=pil_font_sub, fill=(252, 211, 77), stroke_width=2, stroke_fill=(0, 0, 0))
+            curr_y += qh + 12
 
         thumb_jpg = project_dir / "thumbnail.jpg"
         thumb_img.save(thumb_jpg, "JPEG", quality=95)
         print(f"[VideoEngine] Saved thumbnail cover image at {thumb_jpg}")
 
         # 4. Embed Metadata + Cover Art Image into MP4 via FFmpeg
-        meta_title = clean_title
-        meta_artist = "@daoly.giaitri"
-        meta_comment = "#daoly #trietly #nhansinh #thuctinh #cuocsong #daolygiaitri"
-        meta_copyright = "© 2026 Đạo Lý Giải Trí"
+        meta_title = title_text
+        meta_artist = "@tramgactrithuc"
+        meta_comment = "#tramgactrithuc #trithuc #khampha #tuduy #cuocsong #khoahoc"
+        meta_copyright = "© 2026 Trạm Gác Tri Thức"
         meta_encoder = "Media Engine v1.0"
         
         tagged_mp4 = project_dir / f"{project_name}_tagged.mp4"
@@ -1475,9 +1689,36 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
 
 def transcribe_audio_file(audio_path: pathlib.Path) -> List[Dict[str, any]]:
     """
-    Transcribe audio/music file. First tries OpenAI Whisper API,
-    then falls back to Hugging Face transformers pipeline.
+    Transcribe audio/music file. First tries WhisperX local pipeline,
+    then OpenAI Whisper API, and falls back to transformers pipeline.
     """
+    # 1. Try WhisperX local transcription
+    try:
+        import whisperx
+        import torch
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "float16" if device == "cuda" else "int8"
+
+        print(f"[Transcribe] Using local WhisperX model (small) on device: {device}...")
+        model = whisperx.load_model("small", device=device, compute_type=compute_type, language="vi")
+        audio = whisperx.load_audio(str(audio_path))
+        result = model.transcribe(audio, batch_size=16)
+
+        segments = []
+        for seg in result.get("segments", []):
+            segments.append({
+                "start": float(seg.get("start", 0.0)),
+                "end": float(seg.get("end", 0.0)),
+                "text": seg.get("text", "").strip()
+            })
+
+        if segments:
+            print(f"[Transcribe] WhisperX returned {len(segments)} segments.")
+            return group_whisper_chunks(segments)
+    except Exception as wx_err:
+        print(f"[Transcribe] Local WhisperX skipped/failed: {wx_err}. Trying OpenAI API...")
+
     api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_TOKEN")
     if not api_key:
         api_key = config.get("OPENAI", "API_KEY", fallback=None) or config.get("IMAGE_PROMPT", "OPENAI_TOKEN", fallback=None)

@@ -139,5 +139,17 @@ class TestSubtitleEngine(unittest.TestCase):
         self.assertEqual(processor.preset.id, "viral-bold-yellow")
 
 
+    def test_whisperx_alignment_provider(self):
+        from subtitle_engine.alignment import WhisperXAlignmentProvider
+        provider = WhisperXAlignmentProvider()
+        self.assertIsNotNone(provider)
+
+    def test_subtitle_processor_with_whisperx(self):
+        processor = SubtitleProcessor(use_whisperx=True)
+        from subtitle_engine.alignment import WhisperXAlignmentProvider
+        self.assertIsInstance(processor.alignment_provider, WhisperXAlignmentProvider)
+
+
 if __name__ == "__main__":
     unittest.main()
+

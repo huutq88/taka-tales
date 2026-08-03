@@ -20,7 +20,48 @@ class WhisperAlignmentProvider(AlignmentProvider):
 
         words: List[TimedWord] = []
         api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_TOKEN")
+        if not api_key:
+            try:
+                import configparser
+                cfg = configparser.ConfigParser()
+                cfg_path = pathlib.Path(__file__).parent.parent / "config.ini"
+                if cfg_path.exists():
+                    cfg.read(cfg_path)
+                    api_key = cfg.get("OPENAI", "API_KEY", fallback=None) or cfg.get("IMAGE_PROMPT", "OPENAI_TOKEN", fallback=None)
+            except Exception:
+                pass
         
+        # 1. Try local faster_whisper model
+        try:
+            from faster_whisper import WhisperModel
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            compute_type = "float16" if device == "cuda" else "int8"
+            
+            print(f"[WhisperAlignmentProvider] Running local faster_whisper alignment on {audio_path.name}...")
+            fw_model = WhisperModel("small", device=device, compute_type=compute_type)
+            initial_prompt = transcript.strip() if transcript else None
+            segments, info = fw_model.transcribe(str(audio_path), word_timestamps=True, initial_prompt=initial_prompt, language=language)
+            
+            w_idx = 0
+            for segment in segments:
+                for w in (getattr(segment, "words", None) or []):
+                    w_text = w.word.strip()
+                    if w_text:
+                        words.append(TimedWord(
+                            id=f"w_{w_idx:04d}",
+                            text=w_text,
+                            start=round(float(w.start), 3),
+                            end=round(float(w.end), 3),
+                            confidence=round(float(getattr(w, "probability", 0.95)), 2)
+                        ))
+                        w_idx += 1
+            if words:
+                print(f"[WhisperAlignmentProvider] Extracted {len(words)} word timestamps using local faster_whisper.")
+                return words
+        except Exception as fw_err:
+            print(f"[WhisperAlignmentProvider] Local faster_whisper skipped: {fw_err}")
+
         if api_key:
             try:
                 from openai import OpenAI
@@ -31,7 +72,8 @@ class WhisperAlignmentProvider(AlignmentProvider):
                         file=af,
                         response_format="verbose_json",
                         timestamp_granularities=["word"],
-                        language=language
+                        language=language,
+                        prompt=transcript
                     )
                 
                 raw_words = getattr(transcription, "words", [])
@@ -54,38 +96,103 @@ class WhisperAlignmentProvider(AlignmentProvider):
             except Exception as err:
                 print(f"[AlignmentProvider] OpenAI Whisper API word alignment skipped: {err}")
 
-        # Fallback 1: Use pydub / moviepy to get total audio duration and linear interpolate transcript words
-        duration = 1.0
+        raise RuntimeError(f"[WhisperAlignmentProvider] Failed to extract word timestamps using Whisper AI for '{audio_path.name}'. Whisper alignment is strictly required.")
+
+
+class WhisperXAlignmentProvider(AlignmentProvider):
+    def align(self, audio_path: pathlib.Path, transcript: Optional[str] = None, language: str = "vi") -> List[TimedWord]:
+        """Aligns audio with text using local WhisperX pipeline with Forced Alignment."""
+        audio_path = pathlib.Path(audio_path)
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
         try:
-            from pydub import AudioSegment
-            seg = AudioSegment.from_file(str(audio_path))
-            duration = len(seg) / 1000.0
-        except Exception:
-            try:
-                from moviepy.editor import AudioFileClip
-                clip = AudioFileClip(str(audio_path))
-                duration = clip.duration
-                clip.close()
-            except Exception:
-                duration = 10.0
+            import whisperx
+            import torch
 
-        target_text = transcript.strip() if transcript else ""
-        if not target_text:
-            target_text = "Nội dung video tự động"
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            compute_type = "float16" if device == "cuda" else "int8"
 
-        clean_words = [w for w in re.split(r'\s+', target_text) if w]
-        num_w = len(clean_words)
-        if num_w == 0:
-            return []
+            print(f"[WhisperXAlignmentProvider] Transcribing {audio_path.name} using WhisperX on device: {device}...")
+            model = whisperx.load_model("small", device=device, compute_type=compute_type, language=language)
+            audio = whisperx.load_audio(str(audio_path))
+            result = model.transcribe(audio, batch_size=16)
 
-        word_dur = duration / num_w
-        for i, w in enumerate(clean_words):
-            words.append(TimedWord(
-                id=f"w_{i:04d}",
-                text=w,
-                start=round(i * word_dur, 3),
-                end=round((i + 1) * word_dur, 3),
-                confidence=0.8
-            ))
+            lang_code = result.get("language", language)
+            print(f"[WhisperXAlignmentProvider] Loading alignment model for language '{lang_code}'...")
+            model_a, metadata = whisperx.load_align_model(language_code=lang_code, device=device)
+            aligned_result = whisperx.align(
+                result["segments"],
+                model_a,
+                metadata,
+                audio,
+                device=device,
+                return_char_alignments=False
+            )
 
-        return words
+            words: List[TimedWord] = []
+            idx = 0
+            
+            # Map aligned segments and scale word timestamps if Phoneme model compressed timestamps
+            for raw_seg, aligned_seg in zip(result.get("segments", []), aligned_result.get("segments", [])):
+                orig_start = float(raw_seg.get("start", 0.0))
+                orig_end = float(raw_seg.get("end", orig_start + 1.0))
+                
+                seg_words = aligned_seg.get("words", [])
+                if not seg_words:
+                    continue
+                
+                valid_words = [w for w in seg_words if "start" in w and "end" in w]
+                if not valid_words:
+                    continue
+                
+                w_start = float(valid_words[0]["start"])
+                w_end = float(valid_words[-1]["end"])
+                
+                w_dur = w_end - w_start
+                orig_dur = orig_end - orig_start
+                
+                # Calculate scale factor if alignment model compressed timestamps
+                scale = (orig_dur / w_dur) if (w_dur > 0 and orig_dur > 0 and abs(orig_dur - w_dur) > 0.5) else 1.0
+                
+                for w in seg_words:
+                    w_text = w.get("word", "").strip()
+                    if not w_text:
+                        continue
+                    
+                    raw_s = float(w.get("start", w_start))
+                    raw_e = float(w.get("end", raw_s + 0.3))
+                    
+                    if scale != 1.0:
+                        start_t = orig_start + (raw_s - w_start) * scale
+                        end_t = orig_start + (raw_e - w_start) * scale
+                    else:
+                        start_t = raw_s
+                        end_t = raw_e
+                    
+                    conf = float(w.get("score", 0.95))
+                    words.append(TimedWord(
+                        id=f"w_{idx:04d}",
+                        text=w_text,
+                        start=round(start_t, 3),
+                        end=round(end_t, 3),
+                        confidence=conf
+                    ))
+                    idx += 1
+
+            if words:
+                expected_count = len(re.split(r'\s+', transcript.strip())) if transcript else 0
+                if expected_count > 5 and len(words) < (expected_count * 0.5):
+                    print(f"[WhisperXAlignmentProvider Warning] WhisperX extracted only {len(words)}/{expected_count} words. Falling back to faster_whisper Alignment...")
+                    fallback_provider = WhisperAlignmentProvider()
+                    return fallback_provider.align(audio_path, transcript, language)
+
+                print(f"[WhisperXAlignmentProvider] Extracted {len(words)} word timestamps using WhisperX (scaled & aligned).")
+                return words
+        except Exception as err:
+            print(f"[WhisperXAlignmentProvider] WhisperX failed: {err}. Falling back to Whisper API/Standard...")
+
+        # Fallback to WhisperAlignmentProvider if WhisperX encounters error
+        fallback_provider = WhisperAlignmentProvider()
+        return fallback_provider.align(audio_path, transcript, language)
+

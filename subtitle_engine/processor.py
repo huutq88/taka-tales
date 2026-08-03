@@ -7,7 +7,7 @@ from typing import Optional, Union, Dict, Any
 from subtitle_engine.domain import (
     RenderScene, StylePreset, Canvas, Caption
 )
-from subtitle_engine.alignment import WhisperAlignmentProvider
+from subtitle_engine.alignment import WhisperAlignmentProvider, WhisperXAlignmentProvider
 from subtitle_engine.transcript_resolver import TranscriptResolver
 from subtitle_engine.caption_segmenter import CaptionSegmenter
 from subtitle_engine.layout_engine import LayoutEngine
@@ -20,9 +20,12 @@ from subtitle_engine.svg_renderer import SVGRenderer
 
 
 class SubtitleProcessor:
-    def __init__(self, preset_path_or_id: Optional[Union[str, pathlib.Path]] = None, enable_emoji: bool = False):
+    def __init__(self, preset_path_or_id: Optional[Union[str, pathlib.Path]] = None, enable_emoji: bool = False, use_whisperx: bool = False):
         self.preset = self._load_preset(preset_path_or_id)
-        self.alignment_provider = WhisperAlignmentProvider()
+        if use_whisperx:
+            self.alignment_provider = WhisperXAlignmentProvider()
+        else:
+            self.alignment_provider = WhisperAlignmentProvider()
         self.transcript_resolver = TranscriptResolver()
         self.caption_segmenter = CaptionSegmenter(rules=self.preset.segmentation)
         self.ass_renderer = ASSRenderer()
@@ -115,6 +118,106 @@ class SubtitleProcessor:
 
         return scene
 
+    def build_render_scene_from_fragments(
+        self,
+        project_dir: pathlib.Path,
+        transcript: Optional[str] = None,
+        canvas_width: int = 1080,
+        canvas_height: int = 1920,
+        fps: int = 30
+    ) -> RenderScene:
+        """Builds RenderScene by accurately calculating per-fragment timestamps (accounting for 0.5s silence padding per fragment)."""
+        import glob
+        import re
+        from pydub import AudioSegment
+        from subtitle_engine.domain import TimedWord, Canvas, RenderScene
+
+        def get_frag_num(p_str):
+            m = re.search(r"story_fragment(\d+)\.txt$", str(p_str))
+            return int(m.group(1)) if m else 0
+
+        frag_files = sorted(
+            glob.glob(str(project_dir / "text/story_fragments/story_fragment*.txt")),
+            key=get_frag_num
+        )
+
+        all_words: List[TimedWord] = []
+        clip_offset = 0.0
+        word_idx = 0
+
+        for ff in frag_files:
+            i = get_frag_num(ff)
+            txt = pathlib.Path(ff).read_text(encoding="utf-8").strip()
+            proc_wav = project_dir / f"audio/processed_voiceover{i}.wav"
+            raw_wav = project_dir / f"audio/voiceover{i}.wav"
+            raw_mp3 = project_dir / f"audio/voiceover{i}.mp3"
+            
+            target_a = proc_wav if proc_wav.exists() else (raw_wav if raw_wav.exists() else raw_mp3)
+
+            if not target_a.exists():
+                continue
+
+            try:
+                audio_seg = AudioSegment.from_file(str(target_a))
+                total_dur = len(audio_seg) / 1000.0
+            except Exception:
+                total_dur = 3.0
+
+            if target_a == proc_wav:
+                pad_start = 0.12
+                pad_end = 0.12
+                speech_dur = max(0.1, total_dur - pad_start - pad_end)
+            else:
+                pad_start = 0.0
+                pad_end = 0.0
+                speech_dur = total_dur
+
+            clean_words = [w for w in re.split(r"\s+", txt) if w]
+            if not clean_words:
+                clip_offset += total_dur
+                continue
+
+            # Run Whisper / WhisperX Alignment Provider for exact word-level AI timestamps (Strictly required)
+            raw_frag_words = self.alignment_provider.align(target_a, transcript=txt)
+            if not raw_frag_words:
+                raise RuntimeError(f"[SubtitleProcessor] Whisper alignment returned no timestamps for fragment #{i} ({target_a.name}). Whisper alignment is required.")
+
+            frag_words = self.transcript_resolver.resolve(txt, raw_frag_words)
+            if not frag_words:
+                frag_words = raw_frag_words
+
+            max_word_end = max(w.end for w in frag_words) if frag_words else 0.0
+            scale = (total_dur / max_word_end) if max_word_end > total_dur else 1.0
+
+            for w in frag_words:
+                w_s = w.start * scale
+                w_e = w.end * scale
+                w_s = max(0.0, min(w_s, total_dur - 0.05))
+                w_e = max(w_s + 0.05, min(w_e, total_dur))
+
+                all_words.append(TimedWord(
+                    id=f"w_{word_idx:04d}",
+                    text=w.text,
+                    start=round(clip_offset + w_s, 3),
+                    end=round(clip_offset + w_e, 3),
+                    confidence=w.confidence
+                ))
+                word_idx += 1
+
+            clip_offset += total_dur
+
+        captions = self.caption_segmenter.segment(all_words)
+        if self.emoji_engine:
+            captions = self.emoji_engine.enhance_captions(captions)
+
+        canvas = Canvas(width=canvas_width, height=canvas_height, fps=fps)
+        return RenderScene(
+            canvas=canvas,
+            duration=clip_offset,
+            captions=captions,
+            preset=self.preset
+        )
+
     def process_and_render_ass(
         self,
         audio_or_video_path: pathlib.Path,
@@ -150,12 +253,43 @@ class SubtitleProcessor:
         output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
         ass_path = input_video_path.parent / f"{input_video_path.stem}_subs.ass"
-        scene = self.build_render_scene(
-            audio_or_video_path=input_video_path,
-            transcript=transcript,
-            canvas_width=1080,
-            canvas_height=1920
-        )
+        
+        project_dir = input_video_path.parent
+        canvas_w, canvas_h = 1080, 1920
+        aspect_file = project_dir / "aspect_ratio.txt"
+        config_file = project_dir / "project_config.json"
+        is_horiz = "longform" in str(project_dir).lower()
+        if aspect_file.exists():
+            asp_txt = aspect_file.read_text(encoding="utf-8").strip()
+            if asp_txt in ("16:9", "horizontal", "landscape"):
+                is_horiz = True
+            elif asp_txt in ("9:16", "vertical", "portrait"):
+                is_horiz = False
+        elif config_file.exists():
+            try:
+                import json
+                with open(config_file, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                asp_val = cfg.get("aspect_ratio") or cfg.get("aspect")
+                if asp_val in ("16:9", "horizontal", "landscape"):
+                    is_horiz = True
+                elif asp_val in ("9:16", "vertical", "portrait"):
+                    is_horiz = False
+            except Exception:
+                pass
+        
+        if is_horiz:
+            canvas_w, canvas_h = 1920, 1080
+
+        if (project_dir / "text/story_fragments").exists():
+            scene = self.build_render_scene_from_fragments(project_dir=project_dir, transcript=transcript, canvas_width=canvas_w, canvas_height=canvas_h)
+        else:
+            scene = self.build_render_scene(
+                audio_or_video_path=input_video_path,
+                transcript=transcript,
+                canvas_width=canvas_w,
+                canvas_height=canvas_h
+            )
         self.ass_renderer.render_to_file(scene, ass_path)
 
         # 1. Try FFmpeg libass filter
@@ -190,9 +324,18 @@ class SubtitleProcessor:
 
         video = VideoFileClip(str(input_video_path))
         w, h = video.w, video.h
+        is_horiz = (w > h)
         preset = scene.preset
         font_path = FontManager.resolve_font_path(preset.font.family) or "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
-        font_size = int(preset.font.size * (h / 1920.0))
+        if is_horiz:
+            font_size = int(preset.font.size * (h / 1080.0))
+            safe_bottom_px = int(h * 0.12)
+            stroke_w = max(3, int(preset.outline.width * (h / 1080.0)))
+        else:
+            font_size = int(preset.font.size * (h / 1920.0))
+            safe_bottom_px = int(preset.layout.safe_bottom * (h / 1920.0))
+            stroke_w = max(3, int(preset.outline.width * (h / 1920.0)))
+
         try:
             pil_font = PILFont.truetype(font_path, font_size)
         except Exception:
@@ -206,8 +349,6 @@ class SubtitleProcessor:
             pil_font_active = pil_font
 
         sub_clips = []
-        stroke_w = max(3, int(preset.outline.width * (h / 1920.0)))
-        safe_bottom_px = int(preset.layout.safe_bottom * (h / 1920.0))
         max_allowed_w = int(w * preset.layout.max_width_ratio)  # 80% screen width limit
         margin_x_min = int(w * 0.10)  # 10% margin on left/right
 
@@ -238,10 +379,18 @@ class SubtitleProcessor:
                 sub_clips.append(sub_clip)
                 continue
 
-            # Render Word-by-Word active highlight clips with Word Zoom Pop 115%
+            # Render Word-by-Word active highlight clips cleanly without flicker or layout shift
             for active_idx, active_word in enumerate(cap_words):
-                w_start = active_word.start
-                w_end = active_word.end if active_idx < len(cap_words) - 1 else cap.end
+                if active_idx == 0:
+                    w_start = min(cap.start, active_word.start)
+                else:
+                    w_start = cap_words[active_idx - 1].end
+
+                if active_idx < len(cap_words) - 1:
+                    w_end = max(active_word.end, cap_words[active_idx + 1].start)
+                else:
+                    w_end = max(active_word.end, cap.end)
+
                 w_dur = max(0.08, w_end - w_start)
 
                 img = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -270,23 +419,23 @@ class SubtitleProcessor:
                     for word_obj in l_words:
                         is_active = (word_counter == active_idx)
                         word_str = apply_transform(word_obj.text)
-                        f = pil_font_active if is_active else pil_font
-                        word_color = preset.text.active_color if is_active else preset.text.color
-                        word_w = draw.textbbox((0, 0), word_str, font=f)[2]
+                        
+                        # Use base font for width calculation so word positions stay 100% fixed
+                        base_bbox = draw.textbbox((0, 0), word_str, font=pil_font)
+                        word_w = base_bbox[2] - base_bbox[0]
 
-                        # Adjust vertical y position so active word scales UP in place without dropping baseline
-                        y_offset = (font_size_active - font_size) // 2 if is_active else 0
-                        word_y = line_y - y_offset
+                        word_color = preset.text.active_color if is_active else preset.text.color
+                        sw = stroke_w + 1 if is_active else stroke_w
 
                         # Draw subtle drop shadow
                         draw.text(
-                            (curr_x + 2, word_y + 4), word_str, font=f,
-                            fill=preset.shadow.color, stroke_width=stroke_w, stroke_fill="#000000"
+                            (curr_x + 2, line_y + 4), word_str, font=pil_font,
+                            fill=preset.shadow.color, stroke_width=sw, stroke_fill="#000000"
                         )
                         # Draw main text with outline
                         draw.text(
-                            (curr_x, word_y), word_str, font=f,
-                            fill=word_color, stroke_width=stroke_w, stroke_fill=preset.outline.color
+                            (curr_x, line_y), word_str, font=pil_font,
+                            fill=word_color, stroke_width=sw, stroke_fill=preset.outline.color
                         )
                         curr_x += word_w + space_w
                         word_counter += 1
@@ -296,7 +445,7 @@ class SubtitleProcessor:
                 sub_clip = ImageClip(np.array(img)).set_duration(w_dur).set_start(w_start)
                 sub_clips.append(sub_clip)
 
-        final_video = CompositeVideoClip([video] + sub_clips)
+        final_video = CompositeVideoClip([video] + sub_clips, size=(w, h))
         final_video.write_videofile(
             str(output_video_path),
             fps=video.fps or 30,

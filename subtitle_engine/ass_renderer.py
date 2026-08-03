@@ -51,7 +51,7 @@ PlayResY: {canvas.height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{preset.font.size},{primary_col},{active_col},{outline_col},{shadow_col},-1,0,0,0,100,100,0,0,1,{preset.outline.width},{preset.shadow.y},2,80,80,{preset.layout.safe_bottom},1
+Style: Default,{font_name},{preset.font.size},{active_col},{primary_col},{outline_col},{shadow_col},-1,0,0,0,100,100,0,0,1,{preset.outline.width},{preset.shadow.y},2,80,80,{preset.layout.safe_bottom},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -59,8 +59,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         dialogues = []
 
         for cap in scene.captions:
-            start_str = self.seconds_to_ass_time(cap.start)
-            end_str = self.seconds_to_ass_time(cap.end)
+            start_sec = max(0.0, cap.start)
+            end_sec = max(start_sec + 0.1, cap.end)
+            start_str = self.seconds_to_ass_time(start_sec)
+            end_str = self.seconds_to_ass_time(end_sec)
 
             if not cap.words:
                 # Fallback to simple line

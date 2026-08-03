@@ -38,7 +38,13 @@ class CaptionSegmenter:
                 # Build Caption object
                 c_start = current_chunk[0].start
                 c_end = current_chunk[-1].end
+                if c_end <= c_start:
+                    c_end = c_start + 0.2
                 
+                # Prevent overlapping with previous caption
+                if captions and c_start < captions[-1].end:
+                    captions[-1].end = max(captions[-1].start + 0.1, round(c_start - 0.05, 3))
+
                 # Wrap text into lines based on max_chars_per_line
                 lines = self._wrap_lines(current_chunk, self.rules.max_chars_per_line)
                 
