@@ -230,6 +230,14 @@ def _normalize_numbers(text: str) -> str:
 
     text = _RE_SO.sub(_replace_so, text)
 
+    # Decimals: "1,1" → "một phẩy một", "0,5" → "không phẩy năm"
+    def _replace_decimals(m):
+        int_part = int(m.group(1))
+        dec_part = int(m.group(2))
+        return f"{number_to_vietnamese(int_part)} phẩy {number_to_vietnamese(dec_part)}"
+
+    text = re.sub(r"(?<!\d)(\d+)[,.](\d{1,2})(?!\d)", _replace_decimals, text)
+
     # Standalone numbers (years, ages, etc.)
     def _replace_standalone(m):
         n = _parse_dotted_number(m.group(1))
@@ -260,7 +268,7 @@ _UNIT_EXPANSIONS = {
         "cm2": "xăng-ti-mét vuông",
         "m2": "mét vuông",
         "km2": "ki-lô-mét vuông",
-        "deg_c": "độ C",
+        "deg_c": "độ xê",
         "deg_f": "độ F",
         "deg": "độ",
         "hz": "Héc",
@@ -472,7 +480,12 @@ def normalize_units_for_tts(text: str, language: str = "vi") -> str:
 
     dict_units = _UNIT_EXPANSIONS.get(lang) or _UNIT_EXPANSIONS.get("en")
     num_pat = r"(\d+(?:[.,]\d+)?)"
-    boundary = r"(?![a-zA-Z0-9/²2])"
+    boundary = r"(?![a-zA-Z0-9àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ/²2])"
+
+    # Pre-process slash area units (e.g. tấn/cm² -> tấn trên xăng-ti-mét vuông)
+    text = re.sub(r'/cm²', ' trên ' + dict_units.get("cm2", "xăng-ti-mét vuông"), text, flags=re.IGNORECASE)
+    text = re.sub(r'/m²', ' trên ' + dict_units.get("m2", "mét vuông"), text, flags=re.IGNORECASE)
+    text = re.sub(r'/km²', ' trên ' + dict_units.get("km2", "ki-lô-mét vuông"), text, flags=re.IGNORECASE)
 
     # 1. Speed & Velocity (MUST run before km, m)
     kmh_word = dict_units.get("kmh", "kilometers per hour")
@@ -494,7 +507,9 @@ def normalize_units_for_tts(text: str, language: str = "vi") -> str:
     text = re.sub(num_pat + r'\s*(?:km²|km2)' + boundary, r'\g<1> ' + dict_units.get("km2", "square kilometers"), text, flags=re.IGNORECASE)
 
     # 3. Temperature & Angles (MUST run before C/F)
-    text = re.sub(num_pat + r'\s*(?:°C|ºC|oC)' + boundary, r'\g<1> ' + dict_units.get("deg_c", "degrees Celsius"), text)
+    text = re.sub(num_pat + r'\s*(?:°C|ºC|oC|độ C|độ c)' + boundary, r'\g<1> ' + dict_units.get("deg_c", "degrees Celsius"), text)
+    text = re.sub(r'\bđộ C\b', dict_units.get("deg_c", "độ xê"), text)
+    text = re.sub(r'\bđộ c\b', dict_units.get("deg_c", "độ xê"), text)
     text = re.sub(num_pat + r'\s*(?:°F|ºF|oF)' + boundary, r'\g<1> ' + dict_units.get("deg_f", "degrees Fahrenheit"), text)
     text = re.sub(num_pat + r'\s*°', r'\g<1> ' + dict_units.get("deg", "degrees"), text)
 

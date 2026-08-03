@@ -498,10 +498,10 @@ def generate_sd_payload(prompt: str, negative_prompt: str) -> Dict[str, Any]:
     }
 
 
-def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None) -> None:
+def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, force: bool = False) -> None:
     prompt_path = project_dir / f"text/image_prompts/image_prompt{idx}.txt"
     image_path = project_dir / f"images/image{idx}.jpg"
-    if image_path.exists():
+    if image_path.exists() and not force:
         return
 
     prompt_raw = _read_text(prompt_path)
@@ -605,13 +605,34 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None) -
                     "-s", f"{IMAGE_WIDTH}x{IMAGE_HEIGHT}",
                     "-o", str(image_path)
                 ]
-                res = subprocess.run(cmd, capture_output=True, text=True)
+                try:
+                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                except subprocess.TimeoutExpired:
+                    _log(f"[Agent] ima2-gen timed out after 120s for image {idx}. Retrying...")
+                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
                 if res.returncode != 0:
                     _log(f"[Agent] ima2-gen error: {res.stderr.strip()}. Tự động re-authenticate làm mới token...")
                     subprocess.run(["npx", "-y", "ima2-gen", "setup"], input="1\n", text=True, capture_output=True)
-                    res_retry = subprocess.run(cmd, capture_output=True, text=True)
+                    res_retry = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
                     if res_retry.returncode != 0:
                         raise RuntimeError(f"ima2-gen error sau khi re-auth: {res_retry.stderr}")
+                
+                # Post-process generated image to ensure clean 24-bit RGB JPEG
+                png_counterpart = image_path.with_suffix('.png')
+                webp_counterpart = image_path.with_suffix('.webp')
+                target_file = image_path if image_path.exists() else (png_counterpart if png_counterpart.exists() else (webp_counterpart if webp_counterpart.exists() else None))
+
+                if target_file and target_file.exists():
+                    try:
+                        with Image.open(target_file) as im:
+                            rgb_im = im.convert("RGB")
+                            rgb_im.save(image_path, "JPEG", quality=85, optimize=True)
+                        if png_counterpart.exists() and png_counterpart != image_path:
+                            png_counterpart.unlink()
+                        if webp_counterpart.exists() and webp_counterpart != image_path:
+                            webp_counterpart.unlink()
+                    except Exception as ex:
+                        _log(f"[Engine] Warning: Failed to convert {target_file} to JPEG: {ex}")
                 
             break
             

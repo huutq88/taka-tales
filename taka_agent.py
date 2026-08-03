@@ -480,8 +480,6 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
     if not clean_text:
         clean_text = text
 
-    clean_text = normalize_units_for_tts(clean_text, language)
-
     cmd = [
         sys.executable, str(script_path),
         "--model", "k2-fsa/OmniVoice",
@@ -726,27 +724,42 @@ def update_reels_content_json(category_dir: pathlib.Path) -> None:
         except Exception:
             old_items = []
 
-    # 3. Filter old items to keep only those that still exist on disk
+    # 3. Filter old items to keep only those that still exist on disk (matching slug or id)
     final_items = []
     seen_slugs = set()
     for item in old_items:
-        if isinstance(item, dict) and "slug" in item:
-            slug = item["slug"]
-            if slug in existing_subdirs and slug not in seen_slugs:
+        if isinstance(item, dict):
+            item_slug = item.get("slug") or item.get("id")
+            if item_slug and item_slug in existing_subdirs and item_slug not in seen_slugs:
                 final_items.append(item)
-                seen_slugs.add(slug)
+                seen_slugs.add(item_slug)
 
     # 4. Append newly created chapters to the END of the list
     for slug in sorted(existing_subdirs.keys()):
         if slug not in seen_slugs:
+            p = existing_subdirs[slug]
+            item_meta = {}
+            if (p / "item.json").exists():
+                try:
+                    with open(p / "item.json", "r", encoding="utf-8") as f:
+                        item_meta = json.load(f)
+                except Exception: pass
+            
             info = kien_thuc_map.get(slug, {})
-            title = info.get("title", slug.replace("-", " ").title())
-            short_title = info.get("short_title", title)
+            title = item_meta.get("title") or info.get("title", slug.replace("-", " ").title())
+            short_title = item_meta.get("short_title") or info.get("short_title", title)
+            
             item_data = {
+                "id": slug,
                 "slug": slug,
                 "title": title,
                 "short_title": short_title
             }
+            if "episode" in item_meta:
+                item_data["episode"] = item_meta["episode"]
+            if "episode_label" in item_meta:
+                item_data["episode_label"] = item_meta["episode_label"]
+                
             final_items.append(item_data)
             seen_slugs.add(slug)
 
@@ -904,31 +917,22 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             (project_dir / sub).mkdir(parents=True, exist_ok=True)
             
         if rerun_mode == "audio_only":
-            print(f"[Agent] rerun_mode='audio_only': Clearing audio/ and videos/")
-            for folder in ("audio", "videos"):
-                fpath = project_dir / folder
-                if fpath.exists():
-                    shutil.rmtree(fpath, ignore_errors=True)
-                fpath.mkdir(parents=True, exist_ok=True)
+            print(f"[Agent] rerun_mode='audio_only': Preserving existing images; updating audio and videos.")
+            (project_dir / "audio").mkdir(parents=True, exist_ok=True)
+            (project_dir / "videos").mkdir(parents=True, exist_ok=True)
         elif rerun_mode == "images_only":
-            print(f"[Agent] rerun_mode='images_only': Clearing text/image_prompts, images/ and videos/")
-            for folder in ("text/image_prompts", "images", "videos"):
-                fpath = project_dir / folder
-                if fpath.exists():
-                    shutil.rmtree(fpath, ignore_errors=True)
-                fpath.mkdir(parents=True, exist_ok=True)
+            print(f"[Agent] rerun_mode='images_only': Preserving existing audio & other images; updating target images.")
+            (project_dir / "text/image_prompts").mkdir(parents=True, exist_ok=True)
+            (project_dir / "images").mkdir(parents=True, exist_ok=True)
+            (project_dir / "videos").mkdir(parents=True, exist_ok=True)
         elif rerun_mode == "subtitles_only":
             print(f"[Agent] rerun_mode='subtitles_only': Clearing videos/")
-            for folder in ("videos",):
-                fpath = project_dir / folder
-                if fpath.exists():
-                    shutil.rmtree(fpath, ignore_errors=True)
-                fpath.mkdir(parents=True, exist_ok=True)
+            (project_dir / "videos").mkdir(parents=True, exist_ok=True)
         else: # "all"
             # Keep text/story_sentences and text/story_fragments if they exist unless force_rerun
-            folders_to_clear = ["text/image_prompts", "videos"]
+            folders_to_clear = ["videos"]
             if force_rerun:
-                folders_to_clear.extend(["text/story_sentences", "text/story_fragments"])
+                folders_to_clear.extend(["text/story_sentences", "text/story_fragments", "text/image_prompts"])
             for folder in folders_to_clear:
                 fpath = project_dir / folder
                 if fpath.exists():
@@ -1003,7 +1007,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             for idx in target_indices:
                 prompt_file = prompt_dir / f"image_prompt{idx}.txt"
                 frag_file = frag_dir / f"story_fragment{idx}.txt"
-                if frag_file.exists() and not prompt_file.exists():
+                if frag_file.exists() and (not prompt_file.exists() or rerun_mode == "images_only" or force_rerun):
                     prompt = await asyncio.to_thread(
                         video_engine.build_image_prompt,
                         video_engine._read_text(frag_file),
@@ -1035,12 +1039,14 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             saved_lang = saved_vc.get("language") if isinstance(saved_vc, dict) else None
 
             if force_rerun or rerun_mode == "audio_only" or (req_speed is not None and saved_speed is not None and float(req_speed) != float(saved_speed)) or (req_voice and saved_voice and req_voice != saved_voice) or (req_lang and saved_lang and req_lang != saved_lang):
-                print(f"[Agent] Invalidation triggered (rerun_mode={rerun_mode}). Clearing old audio cache...")
-                for f in audio_dir.glob("voiceover*"):
-                    try:
-                        f.unlink()
-                    except Exception:
-                        pass
+                print(f"[Agent] Invalidation triggered for target fragments (rerun_mode={rerun_mode}). Clearing audio cache for target indices...")
+                for idx in target_indices:
+                    for f in (audio_dir / f"voiceover{idx}.wav", audio_dir / f"voiceover{idx}.mp3", audio_dir / f"processed_voiceover{idx}.wav"):
+                        if f.exists():
+                            try:
+                                f.unlink()
+                            except Exception:
+                                pass
 
             for idx in target_indices:
                 await websocket.send(json.dumps({
@@ -1085,12 +1091,13 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             video_engine.USE_SD_API = img_gen
 
             try:
-                sem = asyncio.Semaphore(3)
+                sem = asyncio.Semaphore(1 if img_gen == "ima2" else 3)
+                force_img_gen = (rerun_mode == "images_only" or force_rerun)
 
                 async def gen_single(idx):
                     async with sem:
                         img = project_dir / f"images/image{idx}.jpg"
-                        if not img.exists():
+                        if force_img_gen or not img.exists():
                             await websocket.send(json.dumps({
                                 "type": "pipeline_progress",
                                 "project_name": project_name,
@@ -1099,7 +1106,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
                                 "total_fragments": total_frags,
                                 "fragment_status": {"idx": idx, "step": "image"}
                             }))
-                            await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style)
+                            await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style, force_img_gen)
 
                 tasks = [gen_single(idx) for idx in target_indices]
                 await asyncio.gather(*tasks)
@@ -1120,6 +1127,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             return
 
         # 6. Render clips (MoviePy)
+        force_clip_render = (rerun_mode in ("subtitles_only", "video_only", "render_only") or force_rerun)
         for idx in target_indices:
             await websocket.send(json.dumps({
                 "type": "pipeline_progress",
@@ -1131,7 +1139,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             }))
             
             out_clip = project_dir / f"videos/video{idx}.mp4"
-            if not out_clip.exists():
+            if force_clip_render or not out_clip.exists():
                 await asyncio.to_thread(video_engine.create_video_clip, idx, project_dir)
 
         # 7. Final Concatenation and music assembly

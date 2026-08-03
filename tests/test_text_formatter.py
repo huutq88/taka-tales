@@ -11,7 +11,7 @@ class TestTextFormatterUnits(unittest.TestCase):
         self.assertIn("một trăm đô-la", result)
         self.assertIn("năm trăm nghìn đồng", result)
         self.assertIn("một trăm hai mươi ki-lô-mét trên giờ", result)
-        self.assertIn("ba mươi bảy độ C", result)
+        self.assertIn("ba mươi bảy độ xê", result)
 
     def test_english_units(self):
         text = "Growth is 50% this year. Price is $100. Speed is 120km/h at 37°C."

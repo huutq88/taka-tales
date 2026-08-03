@@ -1604,10 +1604,18 @@ async def add_project_item(story_id: str, body: AddItemRequest):
     if "items" not in content_data or not isinstance(content_data["items"], list):
         content_data["items"] = []
         
-    existing = next((it for it in content_data["items"] if it.get("id") == item_slug), None)
+    if "project_name" not in content_data:
+        content_data["project_name"] = story_id
+    if "project_type" not in content_data or not content_data["project_type"]:
+        content_data["project_type"] = parent_type or ("long" if "videos" in story_id or "longform" in story_id or "sketch" in story_id else ("reels" if "reels" in story_id else "story"))
+    if "aspect_ratio" not in content_data:
+        content_data["aspect_ratio"] = final_ar
+        
+    existing = next((it for it in content_data["items"] if (it.get("id") == item_slug or it.get("slug") == item_slug)), None)
     if not existing:
         new_item = {
             "id": item_slug,
+            "slug": item_slug,
             "title": display_title,
             "status": "idle"
         }
@@ -1902,6 +1910,49 @@ async def get_project_fragments(story_id: str, chapter_id: str):
             if not fragments_list:
                 fragments_list = lines
 
+        # Determine configured aspect ratio for chapter_dir
+        configured_aspect_ratio = None
+        if (chapter_dir / "aspect_ratio.txt").exists():
+            try:
+                configured_aspect_ratio = (chapter_dir / "aspect_ratio.txt").read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+
+        if not configured_aspect_ratio and (chapter_dir / "project_config.json").exists():
+            try:
+                with open(chapter_dir / "project_config.json", "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    configured_aspect_ratio = cfg.get("aspect_ratio")
+            except Exception:
+                pass
+
+        if not configured_aspect_ratio and (PROJECTS_DIR / story_id / "content.json").exists():
+            try:
+                with open(PROJECTS_DIR / story_id / "content.json", "r", encoding="utf-8") as f:
+                    cdata = json.load(f)
+                    items = cdata.get("items", [])
+                    for it in items:
+                        if isinstance(it, dict) and (it.get("slug") == chapter_id or it.get("id") == chapter_id):
+                            configured_aspect_ratio = it.get("aspect_ratio")
+                            break
+                    if not configured_aspect_ratio and isinstance(cdata, dict):
+                        configured_aspect_ratio = cdata.get("aspect_ratio")
+            except Exception:
+                pass
+
+        if not configured_aspect_ratio:
+            p_type = "long"
+            if (PROJECTS_DIR / story_id / "content.json").exists():
+                try:
+                    with open(PROJECTS_DIR / story_id / "content.json", "r", encoding="utf-8") as f:
+                        cd = json.load(f)
+                        if isinstance(cd, dict):
+                            p_type = cd.get("project_type", "long")
+                except Exception:
+                    pass
+            configured_aspect_ratio = "16:9" if p_type in ("long", "sketch") else "9:16"
+
+        from PIL import Image
         result = []
         img_dir = chapter_dir / "images"
         aud_dir = chapter_dir / "audio"
@@ -1911,11 +1962,41 @@ async def get_project_fragments(story_id: str, chapter_id: str):
             item = {"index": i, "text": frag}
             
             img_url = None
+            img_width, img_height = None, None
+            aspect_mismatch = False
+
             if img_dir.exists() and img_dir.is_dir():
                 img_stems = {f"image{i}", f"image_{i}", f"frame{i}", f"frame_{i}", str(i)}
                 for f in img_dir.iterdir():
                     if f.is_file() and not f.name.startswith(".") and f.stem.lower() in img_stems:
                         img_url = f"/v1/media/{story_id}/{chapter_id}/images/{f.name}"
+                        try:
+                            with Image.open(f) as img:
+                                img_width, img_height = img.size
+                            if img_width and img_height:
+                                actual_ratio = img_width / img_height
+                                target_ratio = 16.0 / 9.0
+                                if configured_aspect_ratio == "9:16":
+                                    target_ratio = 9.0 / 16.0
+                                elif configured_aspect_ratio == "1:1":
+                                    target_ratio = 1.0
+                                elif configured_aspect_ratio == "4:3":
+                                    target_ratio = 4.0 / 3.0
+                                elif configured_aspect_ratio == "3:4":
+                                    target_ratio = 3.0 / 4.0
+                                elif configured_aspect_ratio == "4:5":
+                                    target_ratio = 4.0 / 5.0
+                                elif configured_aspect_ratio == "21:9":
+                                    target_ratio = 21.0 / 9.0
+
+                                if target_ratio > 1.05 and actual_ratio < 0.95:
+                                    aspect_mismatch = True
+                                elif target_ratio < 0.95 and actual_ratio > 1.05:
+                                    aspect_mismatch = True
+                                elif 0.95 <= target_ratio <= 1.05 and (actual_ratio < 0.85 or actual_ratio > 1.15):
+                                    aspect_mismatch = True
+                        except Exception:
+                            pass
                         break
                         
             aud_url = None
@@ -1935,6 +2016,10 @@ async def get_project_fragments(story_id: str, chapter_id: str):
                         break
 
             item["image_url"] = img_url
+            item["image_width"] = img_width
+            item["image_height"] = img_height
+            item["aspect_mismatch"] = aspect_mismatch
+            item["configured_aspect_ratio"] = configured_aspect_ratio
             item["audio_url"] = aud_url
             item["video_url"] = vid_url
             result.append(item)
@@ -3696,8 +3781,24 @@ async def dashboard():
                 frags.forEach(f => {
                     let itemNum = f.index + 1;
                     
+                    let isMismatch = !!f.aspect_mismatch;
+                    let warningBadge = isMismatch 
+                        ? `<span style="position: absolute; top: -6px; right: -6px; background: #eab308; color: #000; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.6); z-index: 2;" title="⚠️ Cảnh báo: Kích thước ảnh (${f.image_width || ''}x${f.image_height || ''}) không khớp với tỉ lệ ${f.configured_aspect_ratio || ''} đã cấu hình!">⚠️</span>` 
+                        : ``;
+
+                    let borderStyle = isMismatch 
+                        ? `border: 2px solid #eab308; box-shadow: 0 0 8px rgba(234, 179, 8, 0.5);` 
+                        : `border: 1.5px solid var(--primary);`;
+
+                    let imgTitle = isMismatch 
+                        ? `⚠️ Cảnh báo: Ảnh (${f.image_width || ''}x${f.image_height || ''}) không đúng tỉ lệ ${f.configured_aspect_ratio || ''} đã chọn!` 
+                        : `Click to view image (${f.image_width || ''}x${f.image_height || ''})`;
+
                     let imgHtml = f.image_url 
-                        ? `<img src="${f.image_url}" onclick="openMediaPreviewModal('${f.image_url}', 'image', 'Fragment #${itemNum} Image')" style="width: 36px; height: 36px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1.5px solid var(--primary); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'" title="Click to view image" />` 
+                        ? `<div style="position: relative; display: inline-block;">
+                             <img src="${f.image_url}" onclick="openMediaPreviewModal('${f.image_url}', 'image', 'Fragment #${itemNum} Image', ${isMismatch}, '${f.image_width || ''}', '${f.image_height || ''}', '${f.configured_aspect_ratio || ''}')" style="width: 36px; height: 36px; object-fit: cover; border-radius: 6px; cursor: pointer; ${borderStyle} transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'" title="${imgTitle}" />
+                             ${warningBadge}
+                           </div>` 
                         : `<span style="font-size: 0.7rem; color: rgba(255,255,255,0.25); padding: 0.25rem 0.4rem; border-radius: 4px; border: 1px dashed rgba(255,255,255,0.15);" title="No image generated">🎨 No Image</span>`;
 
                     let audHtml = f.audio_url 
@@ -3754,7 +3855,7 @@ async def dashboard():
             };
         }
 
-        function openMediaPreviewModal(url, type, title) {
+        function openMediaPreviewModal(url, type, title, isMismatch, w, h, targetRatio) {
             let modal = document.getElementById("media-preview-modal");
             if (!modal) {
                 modal = document.createElement("div");
@@ -3763,14 +3864,22 @@ async def dashboard():
                 document.body.appendChild(modal);
             }
             
+            let warningHeader = (type === "image" && isMismatch)
+                ? `<div style="background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fde047; padding: 0.65rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.83rem; font-weight: 600; display: flex; align-items: center; gap: 0.6rem; width: 100%; box-sizing: border-box;">
+                        <span style="font-size: 1.2rem;">⚠️</span>
+                        <span>Cảnh báo tỉ lệ ảnh: Kích thước hiện tại (<strong>${w}x${h}</strong>) không khớp với tỉ lệ <strong>${targetRatio}</strong> đã cấu hình cho project item này!</span>
+                   </div>`
+                : ``;
+
             let contentHtml = type === "image"
-                ? `<img src="${url}" style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.8);" />`
+                ? `<img src="${url}" style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid ${isMismatch ? '#f59e0b' : 'var(--border)'}; box-shadow: 0 10px 40px rgba(0,0,0,0.8);" />`
                 : `<video src="${url}" controls autoplay style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.8);"></video>`;
                 
             modal.innerHTML = `
-                <div style="background: rgba(20,20,30,0.95); border: 1px solid var(--border); border-radius: 16px; padding: 1.5rem; max-width: 95vw; display: flex; flex-direction: column; align-items: center; position: relative;">
+                <div style="background: rgba(20,20,30,0.95); border: 1px solid ${isMismatch ? '#f59e0b' : 'var(--border)'}; border-radius: 16px; padding: 1.5rem; max-width: 95vw; display: flex; flex-direction: column; align-items: center; position: relative;">
                     <button onclick="closeMediaPreviewModal()" style="position: absolute; top: 1rem; right: 1rem; background: rgba(255,255,255,0.1); border: none; color: #fff; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 1.1rem; display: flex; justify-content: center; align-items: center;">✕</button>
-                    <h3 style="font-size: 1rem; font-weight: 700; color: var(--primary); margin-bottom: 1rem;">${title || 'Media Preview'}</h3>
+                    <h3 style="font-size: 1rem; font-weight: 700; color: ${isMismatch ? '#f59e0b' : 'var(--primary)'}; margin-bottom: 1rem;">${title || 'Media Preview'}</h3>
+                    ${warningHeader}
                     ${contentHtml}
                 </div>
             `;
