@@ -422,6 +422,9 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
                 start = int(ranges[0]) if ranges[0] else 0
                 end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else file_size - 1
                 if start < file_size:
+                    max_chunk = 2 * 1024 * 1024
+                    if end - start + 1 > max_chunk:
+                        end = start + max_chunk - 1
                     end = min(end, file_size - 1)
                     length = end - start + 1
                     with open(found_local, "rb") as f:
@@ -4209,7 +4212,8 @@ async def dashboard():
 
         function openFinalVideoPreview() {
             if (!activeStoryId || !activeChapterId) return;
-            let wsParam = (typeof activeWsId !== 'undefined' && activeWsId) ? `&ws=${encodeURIComponent(activeWsId)}` : (wsId ? `&ws=${encodeURIComponent(wsId)}` : '');
+            let currentWs = (typeof activeWsId !== 'undefined' && activeWsId) ? activeWsId : (typeof wsId !== 'undefined' && wsId ? wsId : '');
+            let wsParam = currentWs ? `&ws=${encodeURIComponent(currentWs)}` : '';
             let videoUrl = `/v1/media/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/final.mp4?t=${Date.now()}${wsParam}`;
             openMediaPreviewModal(videoUrl, 'video', `🎬 Final Video - ${activeStoryId} / ${activeChapterId}`);
         }
