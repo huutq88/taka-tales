@@ -621,13 +621,14 @@ pkill -f "taka_agent.py" || true
 sleep 1
 nohup python -u taka_agent.py > agent.log 2>&1 &
 
-echo "Installing PyTorch and AI rendering packages (in background)..."
+echo "Installing PyTorch, Whisper & AI rendering packages (in background)..."
 if [[ "$OSTYPE" == "darwin"* ]]; then
     pip3 install torch torchvision torchaudio
 else
     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 fi
 pip install -r requirements.txt
+pip install faster-whisper whisperx || true
 
 # 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
 echo "[6/6] Pre-installing OmniVoice tool..."
@@ -803,9 +804,10 @@ Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
 Start-Process -FilePath "$ENV_PYTHON" -ArgumentList "-u", "taka_agent.py" -WorkingDirectory "$HOME/.taka-agent" -WindowStyle Hidden
 Start-Process "$SERVER_URL/?ws=$WORKSPACE_ID"
 
-Write-Host "Installing PyTorch and AI rendering packages (in background)..." -ForegroundColor Yellow
+Write-Host "Installing PyTorch, Whisper & AI rendering packages (in background)..." -ForegroundColor Yellow
 & $ENV_PIP install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 & $ENV_PIP install -r requirements.txt
+& $ENV_PIP install faster-whisper whisperx
 
 # 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
 Write-Host "[6/6] Pre-installing OmniVoice tool..." -ForegroundColor Green
