@@ -2176,7 +2176,7 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             except Exception as e:
                 print(f"[Server] Warning: Lore-Keeper fetch failed: {e}")
 
-        if not story_file.exists():
+        if not story_file.exists() and not agent_ws:
             raise HTTPException(status_code=404, detail="story.txt not found. Failed to write chapter content.")
 
     # Process voice_config if present
