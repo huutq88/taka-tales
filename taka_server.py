@@ -1414,9 +1414,9 @@ async def get_project_status(request: Request, story_id: str, chapter_id: str):
         try:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                if cfg.get("art_style"): job_state["art_style"] = cfg.get("art_style")
-                if cfg.get("subtitle_preset"): job_state["subtitle_preset"] = cfg.get("subtitle_preset")
-                if cfg.get("aspect_ratio"): job_state["aspect_ratio"] = cfg.get("aspect_ratio")
+                for k in ["art_style", "subtitle_preset", "aspect_ratio", "use_watermark", "use_subtitles", "use_waveform", "effect_type", "voice_id", "tts_provider", "image_generator", "short_title"]:
+                    if k in cfg and cfg[k] is not None:
+                        job_state[k] = cfg[k]
         except Exception:
             pass
 
