@@ -1554,7 +1554,8 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
             story_text = story_file.read_text(encoding="utf-8") if story_file.exists() else None
             sp = SubtitleProcessor(preset_path_or_id=preset_id)
             temp_out = project_dir / f"{project_name}_subtitled.mp4"
-            sp.burn_subtitles_to_video(input_video_path=out, output_video_path=temp_out, transcript=story_text)
+            frag_rng = (start_idx, end_idx) if (start_idx is not None and end_idx is not None) else None
+            sp.burn_subtitles_to_video(input_video_path=out, output_video_path=temp_out, transcript=story_text, fragment_range=frag_rng)
             if temp_out.exists():
                 shutil.move(str(temp_out), str(out))
         except Exception as err:

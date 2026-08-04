@@ -125,7 +125,9 @@ class SubtitleProcessor:
         canvas_width: int = 1080,
         canvas_height: int = 1920,
         fps: int = 30,
-        language: str = "vi"
+        language: str = "vi",
+        single_fragment_index: Optional[int] = None,
+        fragment_range: Optional[Tuple[int, int]] = None
     ) -> RenderScene:
         """Builds RenderScene by accurately calculating per-fragment timestamps (accounting for 0.5s silence padding per fragment)."""
         import glob
@@ -154,6 +156,11 @@ class SubtitleProcessor:
             glob.glob(str(project_dir / "text/story_fragments/story_fragment*.txt")),
             key=get_frag_num
         )
+        if single_fragment_index is not None:
+            frag_files = [ff for ff in frag_files if get_frag_num(ff) == single_fragment_index]
+        elif fragment_range is not None:
+            st, et = fragment_range
+            frag_files = [ff for ff in frag_files if st <= get_frag_num(ff) <= et]
 
         all_words: List[TimedWord] = []
         clip_offset = 0.0
@@ -285,7 +292,8 @@ class SubtitleProcessor:
         input_video_path: pathlib.Path,
         output_video_path: pathlib.Path,
         transcript: Optional[str] = None,
-        preset_name: Optional[str] = None
+        preset_name: Optional[str] = None,
+        fragment_range: Optional[Tuple[int, int]] = None
     ) -> pathlib.Path:
         """Burns subtitles directly onto the output video using FFmpeg (or MoviePy fallback)."""
         input_video_path = pathlib.Path(input_video_path).resolve()
@@ -321,8 +329,25 @@ class SubtitleProcessor:
         if is_horiz:
             canvas_w, canvas_h = 1920, 1080
 
-        if (project_dir / "text/story_fragments").exists():
-            scene = self.build_render_scene_from_fragments(project_dir=project_dir, transcript=transcript, canvas_width=canvas_w, canvas_height=canvas_h)
+        import re
+        match_frag = re.search(r"video(\d+)\.mp4$", input_video_path.name)
+        if match_frag and (project_dir / "text/story_fragments").exists():
+            frag_idx = int(match_frag.group(1))
+            scene = self.build_render_scene_from_fragments(
+                project_dir=project_dir,
+                transcript=transcript,
+                canvas_width=canvas_w,
+                canvas_height=canvas_h,
+                single_fragment_index=frag_idx
+            )
+        elif (project_dir / "text/story_fragments").exists():
+            scene = self.build_render_scene_from_fragments(
+                project_dir=project_dir,
+                transcript=transcript,
+                canvas_width=canvas_w,
+                canvas_height=canvas_h,
+                fragment_range=fragment_range
+            )
         else:
             scene = self.build_render_scene(
                 audio_or_video_path=input_video_path,
