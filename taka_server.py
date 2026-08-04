@@ -1622,7 +1622,7 @@ class AddItemRequest(BaseModel):
     content: Optional[str] = None
 
 @app.post("/v1/projects/{story_id}/items/add")
-async def add_project_item(story_id: str, body: AddItemRequest):
+async def add_project_item(request: Request, story_id: str, body: AddItemRequest):
     proj_dir = PROJECTS_DIR / story_id
     if not proj_dir.exists():
         proj_dir.mkdir(parents=True, exist_ok=True)
