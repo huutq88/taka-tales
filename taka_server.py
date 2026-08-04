@@ -1299,16 +1299,8 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
         }
         stories_map[s_id].append(item_data)
 
-    def natural_ep_key(x):
-        ch_id = x.get("id", "")
-        t = x.get("title", "")
-        m = re.search(r"^(\d+)", ch_id) or re.search(r"^#?(\d+)", t) or re.search(r"(\d+)", ch_id)
-        if m:
-            return (0, int(m.group(1)), ch_id)
-        return (1, 0, ch_id)
-
     for s_id in sorted(list(stories_map.keys())):
-        chaps = sorted(stories_map[s_id], key=natural_ep_key)
+        chaps = stories_map[s_id]
         meta = projects_metadata.get(s_id, {})
         if not isinstance(meta, dict):
             meta = {}
@@ -1328,8 +1320,11 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
 
         for idx, item in enumerate(chaps, 1):
             ch_id = item["id"]
-            item_json = PROJECTS_DIR / s_id / ch_id / "item.json"
             meta_item = {}
+            item_json = PROJECTS_DIR / s_id / ch_id / "item.json"
+            if not item_json.exists() and AGENT_PROJECTS_DIR:
+                item_json = AGENT_PROJECTS_DIR / s_id / ch_id / "item.json"
+
             if item_json.exists():
                 try:
                     with open(item_json, "r", encoding="utf-8") as f:
@@ -1339,7 +1334,7 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
 
             ep_n = meta_item.get("episode")
             if ep_n is None:
-                m = re.search(r"^(\d+)", ch_id) or re.search(r"^#?(\d+)", item["title"])
+                m = re.search(r"^(?:ep|tap|episode)?[-_\s]*(\d+)", ch_id, re.IGNORECASE) or re.search(r"^(?:Tập|Episode|#)?\s*(\d+)", item.get("title", ""), re.IGNORECASE)
                 ep_n = int(m.group(1)) if m else idx
             item["episode_num"] = ep_n
 
@@ -1348,8 +1343,10 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
             if short_t:
                 item["title"] = f"{ep_label} - {short_t}"
             else:
-                clean_t = re.sub(r"^#\d+\s*", "", item["title"])
+                clean_t = re.sub(r"^#?\d+[\s-]*", "", item["title"])
                 item["title"] = f"{ep_label} - {clean_t}"
+
+        chaps = sorted(chaps, key=lambda x: (x.get("episode_num", 999), x.get("id", "")))
 
         if not p_type:
             cfg_file = PROJECTS_DIR / s_id / "project_config.json"
