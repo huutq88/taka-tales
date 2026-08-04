@@ -688,7 +688,25 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                     try:
                         with Image.open(target_file) as im:
                             rgb_im = im.convert("RGB")
-                            rgb_im.save(image_path, "JPEG", quality=85, optimize=True)
+                            target_w, target_h = IMAGE_WIDTH, IMAGE_HEIGHT
+                            orig_w, orig_h = rgb_im.size
+                            target_ratio = target_w / target_h
+                            orig_ratio = orig_w / orig_h
+
+                            if orig_ratio > target_ratio:
+                                crop_w = int(orig_h * target_ratio)
+                                crop_h = orig_h
+                                left = (orig_w - crop_w) // 2
+                                top = 0
+                            else:
+                                crop_w = orig_w
+                                crop_h = int(orig_w / target_ratio)
+                                left = 0
+                                top = (orig_h - crop_h) // 2
+
+                            cropped_im = rgb_im.crop((left, top, left + crop_w, top + crop_h))
+                            final_im = cropped_im.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                            final_im.save(image_path, "JPEG", quality=95, optimize=True)
                         if png_counterpart.exists() and png_counterpart != image_path:
                             png_counterpart.unlink()
                         if webp_counterpart.exists() and webp_counterpart != image_path:
@@ -1252,8 +1270,26 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
 
     img = Image.open(str(img_path))
     if img.size != (IMAGE_WIDTH, IMAGE_HEIGHT):
-        img_resized = img.resize((IMAGE_WIDTH, IMAGE_HEIGHT), Image.Resampling.LANCZOS)
-        img_resized.save(str(img_path))
+        rgb_im = img.convert("RGB")
+        target_w, target_h = IMAGE_WIDTH, IMAGE_HEIGHT
+        orig_w, orig_h = rgb_im.size
+        target_ratio = target_w / target_h
+        orig_ratio = orig_w / orig_h
+
+        if orig_ratio > target_ratio:
+            crop_w = int(orig_h * target_ratio)
+            crop_h = orig_h
+            left = (orig_w - crop_w) // 2
+            top = 0
+        else:
+            crop_w = orig_w
+            crop_h = int(orig_w / target_ratio)
+            left = 0
+            top = (orig_h - crop_h) // 2
+
+        cropped_im = rgb_im.crop((left, top, left + crop_w, top + crop_h))
+        final_im = cropped_im.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        final_im.save(str(img_path), "JPEG", quality=95, optimize=True)
 
     image_clip = ImageClip(str(img_path)).set_duration(audio_clip.duration)
     image_clip = apply_ken_burns_effect(image_clip, idx, is_music=True, audio_path=audio_path, effect_override=effect_override, show_waveform=use_waveform)
