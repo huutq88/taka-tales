@@ -882,6 +882,19 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
         story_id = path_obj.parent.name
         chapter_id = path_obj.name
         project_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
+        if not project_dir.exists():
+            for cdir in [
+                AGENT_PROJECTS_DIR / "reels" / chapter_id,
+                AGENT_PROJECTS_DIR / "dao-ly" / chapter_id,
+                AGENT_PROJECTS_DIR / "longform" / chapter_id,
+                AGENT_DIR / "_projects" / "longform" / chapter_id,
+                AGENT_DIR / "_projects" / "reels" / chapter_id,
+                AGENT_DIR / "_projects" / "dao-ly" / chapter_id,
+                AGENT_PROJECTS_DIR / chapter_id
+            ]:
+                if cdir.exists():
+                    project_dir = cdir
+                    break
 
         req_aspect = aspect_ratio
         if not req_aspect and voice_config:
