@@ -1414,7 +1414,7 @@ async def get_project_status(request: Request, story_id: str, chapter_id: str):
         try:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                for k in ["art_style", "subtitle_preset", "aspect_ratio", "use_watermark", "use_subtitles", "use_waveform", "effect_type", "voice_id", "tts_provider", "image_generator", "short_title"]:
+                for k in ["art_style", "subtitle_preset", "aspect_ratio", "use_watermark", "use_subtitles", "use_waveform", "effect_type", "voice_id", "tts_provider", "image_generator", "short_title", "start_fragment", "end_fragment"]:
                     if k in cfg and cfg[k] is not None:
                         job_state[k] = cfg[k]
         except Exception:
@@ -2458,7 +2458,7 @@ async def save_project_config_endpoint(request: Request, story_id: str, chapter_
         except Exception:
             pass
 
-    for k in ["art_style", "subtitle_preset", "aspect_ratio", "use_watermark", "use_subtitles", "use_waveform", "image_generator", "effect_type", "voice_id", "tts_provider", "voice_speed"]:
+    for k in ["art_style", "subtitle_preset", "aspect_ratio", "use_watermark", "use_subtitles", "use_waveform", "image_generator", "effect_type", "voice_id", "tts_provider", "voice_speed", "start_fragment", "end_fragment"]:
         if k in body and body[k] is not None:
             config_data[k] = body[k]
 
@@ -3264,11 +3264,11 @@ async def dashboard():
                             </div>
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🔢 From Fragment</label>
-                                <input type="number" id="frag-start-input" min="1" value="1" oninput="updateFragmentHighlights()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
+                                <input type="number" id="frag-start-input" min="1" value="1" oninput="updateFragmentHighlights(); saveCurrentChapterConfig();" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
                             </div>
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🔢 To Fragment</label>
-                                <input type="number" id="frag-end-input" min="1" value="5" oninput="updateFragmentHighlights()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
+                                <input type="number" id="frag-end-input" min="1" value="5" oninput="updateFragmentHighlights(); saveCurrentChapterConfig();" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;" />
                             </div>
                             <div style="grid-column: span 4; display: flex; gap: 1.8rem; align-items: center; background: rgba(255,255,255,0.03); padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border); margin-top: 0.3rem;">
                                 <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 700; cursor: pointer; color: #fff;">
@@ -3759,6 +3759,11 @@ async def dashboard():
             let useSubtitles = document.getElementById("toggle-subtitles") ? document.getElementById("toggle-subtitles").checked : undefined;
             let useWaveform = document.getElementById("toggle-waveform") ? document.getElementById("toggle-waveform").checked : undefined;
 
+            let fragStartEl = document.getElementById("frag-start-input");
+            let fragEndEl = document.getElementById("frag-end-input");
+            let startFrag = fragStartEl ? (parseInt(fragStartEl.value) || 1) : 1;
+            let endFrag = fragEndEl ? (parseInt(fragEndEl.value) || 1) : 1;
+
             let payload = {
                 art_style: artStyle,
                 aspect_ratio: aspectRatio,
@@ -3768,7 +3773,9 @@ async def dashboard():
                 tts_provider: ttsProvider,
                 use_watermark: useWatermark,
                 use_subtitles: useSubtitles,
-                use_waveform: useWaveform
+                use_waveform: useWaveform,
+                start_fragment: startFrag,
+                end_fragment: endFrag
             };
 
             try {
@@ -3798,6 +3805,7 @@ async def dashboard():
 
                 let currentKey = activeStoryId + "/" + activeChapterId;
                 if (loadedChapterConfigKey !== currentKey) {
+                    window.activeItemConfig = stData;
                     if (stData.art_style && document.getElementById("art-style-select")) {
                         document.getElementById("art-style-select").value = stData.art_style;
                     }
@@ -3816,6 +3824,21 @@ async def dashboard():
                     if (stData.use_waveform !== undefined && document.getElementById("toggle-waveform")) {
                         document.getElementById("toggle-waveform").checked = !!stData.use_waveform;
                     }
+
+                    let sEl = document.getElementById("frag-start-input");
+                    let eEl = document.getElementById("frag-end-input");
+                    let fragItems = document.querySelectorAll("#fragments-list-container .frag-item");
+                    let totalFrags = fragItems.length;
+                    if (sEl && eEl && totalFrags > 0) {
+                        let sVal = stData.start_fragment !== undefined ? parseInt(stData.start_fragment) : 1;
+                        let eVal = stData.end_fragment !== undefined ? parseInt(stData.end_fragment) : totalFrags;
+                        sEl.setAttribute("max", totalFrags);
+                        eEl.setAttribute("max", totalFrags);
+                        sEl.value = Math.max(1, Math.min(sVal, totalFrags));
+                        eEl.value = Math.max(sEl.value, Math.min(eVal, totalFrags));
+                        updateFragmentHighlights();
+                    }
+
                     loadedChapterConfigKey = currentKey;
                     isConfigLoading = false;
                 }
@@ -4238,8 +4261,16 @@ async def dashboard():
             let eEl = document.getElementById("frag-end-input");
             if (!sEl || !eEl) return;
             
-            let startNum = parseInt(sEl.value) || 1;
-            let endNum = parseInt(eEl.value) || 5;
+            let fragItems = document.querySelectorAll("#fragments-list-container .frag-item");
+            let totalFrags = fragItems.length || 999;
+
+            let startNum = Math.max(1, Math.min(parseInt(sEl.value) || 1, totalFrags));
+            let endNum = Math.max(startNum, Math.min(parseInt(eEl.value) || totalFrags, totalFrags));
+
+            sEl.value = startNum;
+            eEl.value = endNum;
+            sEl.setAttribute("max", totalFrags);
+            eEl.setAttribute("max", totalFrags);
             
             let subtitleEl = document.getElementById("fragments-subtitle-info");
             if (subtitleEl) {
