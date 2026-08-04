@@ -1322,8 +1322,10 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
             ch_id = item["id"]
             meta_item = {}
             item_json = PROJECTS_DIR / s_id / ch_id / "item.json"
-            if not item_json.exists() and AGENT_PROJECTS_DIR:
-                item_json = AGENT_PROJECTS_DIR / s_id / ch_id / "item.json"
+            if not item_json.exists():
+                alt_json = pathlib.Path.home() / ".taka-agent" / "projects" / s_id / ch_id / "item.json"
+                if alt_json.exists():
+                    item_json = alt_json
 
             if item_json.exists():
                 try:
