@@ -47,8 +47,7 @@ class WhisperAlignmentProvider(AlignmentProvider):
 
             fw_model = WhisperAlignmentProvider._fw_model
             print(f"[WhisperAlignmentProvider] Running local faster_whisper alignment on {audio_path.name}...")
-            initial_prompt = transcript.strip()[:150] if transcript else None
-            segments, info = fw_model.transcribe(str(audio_path), word_timestamps=True, initial_prompt=initial_prompt, language=language)
+            segments, info = fw_model.transcribe(str(audio_path), word_timestamps=True, language=language)
             
             w_idx = 0
             for segment in segments:
