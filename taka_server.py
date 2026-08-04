@@ -4043,7 +4043,7 @@ async def dashboard():
         initLocalWsClient();
 
         async function fetchMediaViaLocalWs(url) {
-            if (!localWsReady || !localWsClient || !url || (!url.includes('/v1/media/') && !url.includes('/media/'))) return null;
+            if (!localWsReady || !localWsClient || !url || (!url.includes('/v1/media/') && !url.includes('/media/')) || url.includes('.mp4')) return null;
             let clean = url.replace(/^https?:\/\/[^\/]+/, '').replace('/v1/media/', '').replace('/media/', '').split('?')[0];
             let parts = clean.split('/');
             if (parts.length < 3) return null;
