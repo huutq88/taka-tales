@@ -89,7 +89,7 @@ pending_file_selects: Dict[str, dict] = {}
 pending_agent_requests: Dict[str, dict] = {}
 
 def get_workspace_id_from_request(request: Request) -> str:
-    ws_id = request.headers.get("x-workspace-id") or request.query_params.get("workspace_id")
+    ws_id = request.headers.get("x-workspace-id") or request.query_params.get("workspace_id") or request.query_params.get("ws")
     if not ws_id or ws_id == "null" or ws_id == "undefined":
         ws_id = ""
     else:
@@ -108,7 +108,7 @@ def get_workspace_id_from_request(request: Request) -> str:
             if matched_ws and matched_ws in agents_by_workspace:
                 ws_id = matched_ws
 
-        if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) == 1:
+        if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) >= 1:
             ws_id = list(agents_by_workspace.keys())[0]
 
     return ws_id
@@ -3818,7 +3818,8 @@ async def dashboard():
             let container = document.getElementById("workspace-content");
             container.innerHTML = `<p style="color: var(--text-muted);">Loading fragments...</p>`;
             try {
-                let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/fragments`);
+                let wsParam = activeWorkspaceId ? `?ws=${encodeURIComponent(activeWorkspaceId)}` : "";
+                let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/fragments${wsParam}`);
                 let frags = await res.json();
                 if (!Array.isArray(frags) || frags.length === 0) {
                     container.innerHTML = `<p style="color: var(--text-muted);">No fragments found for this chapter.</p>`;

@@ -1953,11 +1953,12 @@ async def main():
                                 else:
                                     for i, ff in enumerate(frag_files):
                                         text = ff.read_text(encoding="utf-8").strip() if ff.exists() else ""
-                                        item = {"index": i, "text": text}
+                                        frag_idx = int(re.search(r'\d+', ff.stem).group()) if re.search(r'\d+', ff.stem) else i
+                                        item = {"index": frag_idx, "text": text}
                                         
                                         img_url = None
                                         if img_dir.exists() and img_dir.is_dir():
-                                            for img_stem in [f"image{i}", f"image_{i}", f"frame{i}", f"frame_{i}", str(i)]:
+                                            for img_stem in [f"image{frag_idx}", f"image_{frag_idx}", f"frame{frag_idx}", f"frame_{frag_idx}", str(frag_idx)]:
                                                 for ext in [".jpg", ".jpeg", ".png", ".webp"]:
                                                     if (img_dir / f"{img_stem}{ext}").exists():
                                                         img_url = f"/v1/media/{story_id}/{chapter_id}/images/{img_stem}{ext}"
@@ -1966,7 +1967,7 @@ async def main():
                                         
                                         aud_url = None
                                         if aud_dir.exists() and aud_dir.is_dir():
-                                            for aud_stem in [f"voiceover{i}", f"voiceover_{i}", f"voice{i}", f"voice_{i}", f"audio{i}", f"audio_{i}", str(i)]:
+                                            for aud_stem in [f"processed_voiceover{frag_idx}", f"processed_voiceover_{frag_idx}", f"voiceover{frag_idx}", f"voiceover_{frag_idx}", f"voice{frag_idx}", f"voice_{frag_idx}", f"audio{frag_idx}", f"audio_{frag_idx}", str(frag_idx)]:
                                                 for ext in [".mp3", ".wav", ".m4a"]:
                                                     if (aud_dir / f"{aud_stem}{ext}").exists():
                                                         aud_url = f"/v1/media/{story_id}/{chapter_id}/audio/{aud_stem}{ext}"
@@ -1975,7 +1976,7 @@ async def main():
                                                 
                                         vid_url = None
                                         if vid_dir.exists() and vid_dir.is_dir():
-                                            for vid_stem in [f"clip{i}", f"clip_{i}", f"video{i}", f"video_{i}", str(i)]:
+                                            for vid_stem in [f"clip{frag_idx}", f"clip_{frag_idx}", f"video{frag_idx}", f"video_{frag_idx}", str(frag_idx)]:
                                                 for ext in [".mp4", ".mov", ".webm"]:
                                                     if (vid_dir / f"{vid_stem}{ext}").exists():
                                                         vid_url = f"/v1/media/{story_id}/{chapter_id}/videos/{vid_stem}{ext}"
@@ -1986,6 +1987,8 @@ async def main():
                                         item["audio_url"] = aud_url
                                         item["video_url"] = vid_url
                                         frags_result.append(item)
+                                        
+                                    frags_result.sort(key=lambda x: x["index"])
                                         
                             await websocket.send(json.dumps({
                                 "type": "get_fragments_response",
