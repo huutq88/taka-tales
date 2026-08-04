@@ -285,7 +285,7 @@ async def dashboard():
                 <div id="agent-dropdown" class="agent-dropdown-menu" style="display: none;" onclick="event.stopPropagation()">
                     <div class="dropdown-header">
                         <span id="dropdown-status-title">🔴 Agent Offline</span>
-                        <span style="font-size: 0.75rem; color: var(--primary); background: rgba(139,92,246,0.15); padding: 0.1rem 0.4rem; border-radius: 4px;">AGY v0.4.3</span>
+                        <span style="font-size: 0.75rem; color: var(--primary); background: rgba(139,92,246,0.15); padding: 0.1rem 0.4rem; border-radius: 4px;">AGY v0.4.4</span>
                     </div>
                     <div class="dropdown-item">
                         <span class="dropdown-label">Workspace:</span>
@@ -293,7 +293,7 @@ async def dashboard():
                     </div>
                     <div class="dropdown-item">
                         <span class="dropdown-label">Agent Version:</span>
-                        <span id="dropdown-agent-version" class="dropdown-val">v0.4.3</span>
+                        <span id="dropdown-agent-version" class="dropdown-val">v0.4.4</span>
                     </div>
                     <div class="dropdown-item">
                         <span class="dropdown-label">Hardware Acceleration:</span>
@@ -541,7 +541,7 @@ async def dashboard():
                     
                     let agentMeta = data.agents ? data.agents[data.workspace_id] : null;
                     if (wsName) wsName.innerText = data.workspace_id || "huutq_d23b05";
-                    if (agentVer) agentVer.innerText = "v" + (data.agent_version || "0.4.3");
+                    if (agentVer) agentVer.innerText = "v" + (data.agent_version || "0.4.4");
                     
                     if (agentMeta) {
                         if (hwInfo) hwInfo.innerText = agentMeta.mps_available ? "MPS (Apple Silicon)" : agentMeta.cuda_available ? "CUDA GPU" : "CPU";
@@ -552,7 +552,7 @@ async def dashboard():
                     status.innerText = "Agent Offline";
                     if (dropTitle) dropTitle.innerHTML = `<span style="color: var(--text-muted);">🔴 Agent Offline</span>`;
                     if (wsName) wsName.innerText = "--";
-                    if (agentVer) agentVer.innerText = "v" + (data.agent_version || "0.4.3");
+                    if (agentVer) agentVer.innerText = "v" + (data.agent_version || "0.4.4");
                 }
             } catch(e) {}
         }
