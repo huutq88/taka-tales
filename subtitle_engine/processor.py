@@ -389,6 +389,7 @@ class SubtitleProcessor:
             pil_font_active = pil_font
 
         margin_x_min = int(w * 0.10)
+        captions = scene.captions
 
         def apply_transform(txt: str) -> str:
             if getattr(preset.text, "transform", "none") == "uppercase":
