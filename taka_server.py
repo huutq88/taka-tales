@@ -1597,6 +1597,16 @@ async def create_project(request: Request, body: CreateProjectRequest):
     with open(proj_dir / "content.json", "w", encoding="utf-8") as f:
         json.dump(content_data, f, ensure_ascii=False, indent=2)
 
+    await tunnel_request_to_agent("create_project_request", {
+        "project_name": p_name,
+        "story_id": p_name,
+        "project_type": p_type,
+        "title": title,
+        "aspect_ratio": aspect_ratio,
+        "language": body.language or "vi",
+        "items": items
+    }, workspace_id=ws_id, timeout=10.0)
+
     return {"status": "ok", "project_name": p_name, "project_type": p_type, "content": content_data}
 
 class AddItemRequest(BaseModel):
@@ -1718,7 +1728,22 @@ async def add_project_item(story_id: str, body: AddItemRequest):
 
     with open(content_file, "w", encoding="utf-8") as f:
         json.dump(content_data, f, ensure_ascii=False, indent=2)
-            
+
+    ws_id = get_workspace_id_from_request(request)
+    await tunnel_request_to_agent("add_project_item_request", {
+        "story_id": story_id,
+        "item_id": item_slug,
+        "title": display_title,
+        "short_title": display_title,
+        "slug": item_slug,
+        "episode": ep_num,
+        "episode_label": ep_label,
+        "aspect_ratio": final_ar,
+        "language": body.language or "vi",
+        "channel": body.channel or "@playnet.zone-vi",
+        "content": body.content or ""
+    }, workspace_id=ws_id, timeout=10.0)
+
     return {"ok": True, "item_id": item_slug, "title": display_title}
 
 @app.get("/v1/voice/defaults")

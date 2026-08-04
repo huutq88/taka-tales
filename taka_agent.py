@@ -2698,22 +2698,121 @@ async def main():
 
                         elif msg_type == "create_project_request":
                             request_id = message.get("request_id")
-                            story_id = payload.get("story_id")
-                            chapters = payload.get("chapters", [])
-                            if not chapters:
-                                chapters = [f"{story_id}-chuong-1"]
+                            story_id = payload.get("story_id") or payload.get("project_name")
+                            p_type = payload.get("project_type", "reels")
+                            aspect_ratio = payload.get("aspect_ratio", "16:9")
+                            language = payload.get("language", "vi")
+                            items = payload.get("items", [])
 
-                            projects_base = AGENT_PROJECTS_DIR
-                            story_dir = projects_base / story_id
+                            story_dir = AGENT_PROJECTS_DIR / story_id
                             story_dir.mkdir(parents=True, exist_ok=True)
-                            for ch in chapters:
-                                ch_id = ch if isinstance(ch, str) else ch.get("id")
-                                (story_dir / ch_id).mkdir(parents=True, exist_ok=True)
+
+                            from core import video_engine
+                            for it in items:
+                                ch_id = it.get("id") if isinstance(it, dict) else it
+                                ch_title = it.get("title") if isinstance(it, dict) else ch_id
+                                if ch_id:
+                                    ch_dir = story_dir / ch_id
+                                    ch_dir.mkdir(parents=True, exist_ok=True)
+                                    video_engine.prepare_chapter_structure(story_id, ch_id, "", chapter_dir=ch_dir)
+                                    cfg = {"aspect_ratio": aspect_ratio, "language": language}
+                                    with open(ch_dir / "project_config.json", "w", encoding="utf-8") as f:
+                                        json.dump(cfg, f, ensure_ascii=False, indent=2)
+                                    with open(ch_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
+                                        f.write(aspect_ratio)
+
+                            c_file = story_dir / "content.json"
+                            c_data = {
+                                "project_name": story_id,
+                                "project_type": p_type,
+                                "title": payload.get("title") or story_id,
+                                "aspect_ratio": aspect_ratio,
+                                "language": language,
+                                "items": items
+                            }
+                            with open(c_file, "w", encoding="utf-8") as f:
+                                json.dump(c_data, f, ensure_ascii=False, indent=2)
 
                             await websocket.send(json.dumps({
                                 "type": "create_project_response",
                                 "request_id": request_id,
                                 "payload": {"ok": True}
+                            }))
+
+                        elif msg_type == "add_project_item_request":
+                            request_id = message.get("request_id")
+                            story_id = payload.get("story_id")
+                            item_id = payload.get("item_id") or payload.get("slug")
+                            title = payload.get("title") or item_id
+                            content = payload.get("content", "")
+                            aspect_ratio = payload.get("aspect_ratio", "16:9")
+                            language = payload.get("language", "vi")
+                            channel = payload.get("channel", "@playnet.zone-vi")
+                            episode = payload.get("episode", 1)
+                            episode_label = payload.get("episode_label", "Tập 01")
+
+                            story_dir = AGENT_PROJECTS_DIR / story_id
+                            story_dir.mkdir(parents=True, exist_ok=True)
+
+                            item_dir = story_dir / item_id
+                            item_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            from core import video_engine
+                            video_engine.prepare_chapter_structure(story_id, item_id, content, chapter_dir=item_dir)
+
+                            if content and content.strip():
+                                (item_dir / "story.txt").write_text(content.strip(), encoding="utf-8")
+                                video_engine.prepare_chapter_structure(story_id, item_id, content.strip(), chapter_dir=item_dir)
+
+                            meta = {
+                                "episode": episode,
+                                "episode_label": episode_label,
+                                "title": title,
+                                "short_title": title,
+                                "slug": item_id,
+                                "aspect_ratio": aspect_ratio,
+                                "language": language,
+                                "channel": channel,
+                                "content": content
+                            }
+                            with open(item_dir / "item.json", "w", encoding="utf-8") as f:
+                                json.dump(meta, f, ensure_ascii=False, indent=2)
+
+                            cfg = {"aspect_ratio": aspect_ratio, "language": language}
+                            with open(item_dir / "project_config.json", "w", encoding="utf-8") as f:
+                                json.dump(cfg, f, ensure_ascii=False, indent=2)
+                            with open(item_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
+                                f.write(aspect_ratio)
+
+                            # Update content.json at story level
+                            c_file = story_dir / "content.json"
+                            c_data = {}
+                            if c_file.exists():
+                                try:
+                                    with open(c_file, "r", encoding="utf-8") as f:
+                                        c_data = json.load(f)
+                                except Exception:
+                                    pass
+                            if not isinstance(c_data, dict):
+                                c_data = {"items": []}
+                            if "items" not in c_data or not isinstance(c_data["items"], list):
+                                c_data["items"] = []
+                            c_data["project_name"] = story_id
+                            c_data["aspect_ratio"] = aspect_ratio
+                            
+                            existing = next((it for it in c_data["items"] if (isinstance(it, dict) and (it.get("id") == item_id or it.get("slug") == item_id))), None)
+                            if not existing:
+                                c_data["items"].append({"id": item_id, "slug": item_id, "title": title, "status": "idle"})
+                            else:
+                                existing["title"] = title
+
+                            with open(c_file, "w", encoding="utf-8") as f:
+                                json.dump(c_data, f, ensure_ascii=False, indent=2)
+
+                            await websocket.send(json.dumps({
+                                "type": "add_project_item_response",
+                                "request_id": request_id,
+                                "payload": {"ok": True, "item_id": item_id}
                             }))
 
                         elif msg_type == "create_music_project_request":
