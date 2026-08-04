@@ -4150,12 +4150,6 @@ async def dashboard():
         }
 
         async function openMediaPreviewModal(url, type, title, isMismatch, w, h, targetRatio) {
-            let finalUrl = url;
-            let blobUrl = await fetchMediaViaLocalWs(url);
-            if (blobUrl) {
-                finalUrl = blobUrl;
-            }
-
             let modal = document.getElementById("media-preview-modal");
             if (!modal) {
                 modal = document.createElement("div");
@@ -4163,7 +4157,7 @@ async def dashboard():
                 modal.style.cssText = "position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10000; padding: 2rem;";
                 document.body.appendChild(modal);
             }
-            
+
             let warningHeader = (type === "image" && isMismatch)
                 ? `<div style="background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fde047; padding: 0.65rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.83rem; font-weight: 600; display: flex; align-items: center; gap: 0.6rem; width: 100%; box-sizing: border-box;">
                         <span style="font-size: 1.2rem;">⚠️</span>
@@ -4171,22 +4165,37 @@ async def dashboard():
                    </div>`
                 : ``;
 
-            let contentHtml = type === "image"
-                ? `<img src="${finalUrl}" style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid ${isMismatch ? '#f59e0b' : 'var(--border)'}; box-shadow: 0 10px 40px rgba(0,0,0,0.8);" />`
-                : `<video src="${finalUrl}" controls autoplay style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.8);"></video>`;
-                
             modal.innerHTML = `
                 <div style="background: rgba(20,20,30,0.95); border: 1px solid ${isMismatch ? '#f59e0b' : 'var(--border)'}; border-radius: 16px; padding: 1.5rem; max-width: 95vw; display: flex; flex-direction: column; align-items: center; position: relative;">
                     <button onclick="closeMediaPreviewModal()" style="position: absolute; top: 1rem; right: 1rem; background: rgba(255,255,255,0.1); border: none; color: #fff; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 1.1rem; display: flex; justify-content: center; align-items: center;">✕</button>
                     <h3 style="font-size: 1rem; font-weight: 700; color: ${isMismatch ? '#f59e0b' : 'var(--primary)'}; margin-bottom: 1rem;">${title || 'Media Preview'}</h3>
                     ${warningHeader}
-                    ${contentHtml}
+                    <div id="media-modal-container" style="min-width: 320px; min-height: 180px; display: flex; justify-content: center; align-items: center;">
+                        <p style="color: var(--text-muted); font-size: 0.9rem;">⚡ Loading local media...</p>
+                    </div>
                 </div>
             `;
             modal.style.display = "flex";
             modal.onclick = (e) => {
                 if (e.target === modal) closeMediaPreviewModal();
             };
+
+            let mediaContainer = document.getElementById("media-modal-container");
+            let finalUrl = url;
+            try {
+                let blobUrl = await fetchMediaViaLocalWs(url);
+                if (blobUrl) {
+                    finalUrl = blobUrl;
+                }
+            } catch(e) {}
+
+            if (mediaContainer) {
+                if (type === "image") {
+                    mediaContainer.innerHTML = `<img src="${finalUrl}" style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid ${isMismatch ? '#f59e0b' : 'var(--border)'}; box-shadow: 0 10px 40px rgba(0,0,0,0.8);" />`;
+                } else {
+                    mediaContainer.innerHTML = `<video src="${finalUrl}" controls autoplay style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.8);"></video>`;
+                }
+            }
         }
 
         function closeMediaPreviewModal() {
