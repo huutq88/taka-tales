@@ -2139,30 +2139,35 @@ async def main():
                         elif msg_type == "get_media_file_request":
                             request_id = message.get("request_id")
                             payload = message.get("payload", {})
-                            story_id = payload.get("story_id", "")
-                            chapter_id = payload.get("chapter_id", "")
-                            file_path = payload.get("file_path", "")
-                            
-                            projects_dir = AGENT_PROJECTS_DIR
-                            base_dir = (projects_dir / story_id / chapter_id).resolve()
-                            target_file = (base_dir / file_path).resolve()
+                            story_id = (payload.get("story_id") or "").strip()
+                            chapter_id = (payload.get("chapter_id") or "").strip()
+                            file_path = (payload.get("file_path") or "").strip()
                             
                             found_file = None
-                            if target_file.exists() and target_file.is_file():
-                                found_file = target_file
-                            else:
-                                p = pathlib.Path(file_path)
-                                if p.parent.name == "images" or "images/" in file_path:
-                                    stem = p.stem
-                                    parent = base_dir / p.parent
-                                    for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-                                        alt_img = parent / f"{stem}{ext}"
-                                        if alt_img.exists() and alt_img.is_file():
-                                            found_file = alt_img
+                            if AGENT_PROJECTS_DIR and AGENT_PROJECTS_DIR.exists():
+                                cands = [
+                                    AGENT_PROJECTS_DIR / story_id / chapter_id,
+                                    AGENT_PROJECTS_DIR / "reels" / chapter_id,
+                                    AGENT_PROJECTS_DIR / "dao-ly" / chapter_id,
+                                    AGENT_PROJECTS_DIR / chapter_id,
+                                    AGENT_PROJECTS_DIR / story_id
+                                ]
+                                for bdir in cands:
+                                    if bdir.exists():
+                                        tf = (bdir / file_path).resolve()
+                                        if tf.exists() and tf.is_file():
+                                            found_file = tf
                                             break
-                                if not found_file and (file_path == "final.mp4" or file_path.endswith(".mp4")):
-                                    for bdir in [base_dir, AGENT_PROJECTS_DIR / "dao-ly" / chapter_id, AGENT_PROJECTS_DIR / "dao_ly" / chapter_id, AGENT_PROJECTS_DIR / chapter_id]:
-                                        if bdir.exists():
+                                        p = pathlib.Path(file_path)
+                                        if p.parent.name == "images" or "images/" in file_path:
+                                            stem = p.stem
+                                            parent = bdir / p.parent
+                                            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                                                alt_img = parent / f"{stem}{ext}"
+                                                if alt_img.exists() and alt_img.is_file():
+                                                    found_file = alt_img
+                                                    break
+                                        if not found_file and (file_path == "final.mp4" or file_path.endswith(".mp4")):
                                             for cand_name in ["final.mp4", f"{story_id}_{chapter_id}.mp4", f"{chapter_id}.mp4"]:
                                                 cand = bdir / cand_name
                                                 if cand.exists() and cand.is_file():
@@ -2174,6 +2179,14 @@ async def main():
                                                     found_file = mp4_files[0]
                                         if found_file:
                                             break
+
+                                if not found_file and chapter_id:
+                                    matches = list(AGENT_PROJECTS_DIR.glob(f"**/{chapter_id}"))
+                                    if matches:
+                                        bdir = matches[0]
+                                        tf = (bdir / file_path).resolve()
+                                        if tf.exists() and tf.is_file():
+                                            found_file = tf
 
                             if found_file:
                                 import base64
