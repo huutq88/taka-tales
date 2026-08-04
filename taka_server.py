@@ -637,7 +637,7 @@ else
     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 fi
 pip install -r requirements.txt
-pip install faster-whisper whisperx || true
+pip install faster-whisper whisperx imageio-ffmpeg || true
 
 # 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
 echo "[6/6] Pre-installing OmniVoice tool..."
@@ -816,7 +816,7 @@ Start-Process "$SERVER_URL/?ws=$WORKSPACE_ID"
 Write-Host "Installing PyTorch, Whisper & AI rendering packages (in background)..." -ForegroundColor Yellow
 & $ENV_PIP install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 & $ENV_PIP install -r requirements.txt
-& $ENV_PIP install faster-whisper whisperx
+& $ENV_PIP install faster-whisper whisperx imageio-ffmpeg
 
 # 6. Setup OmniVoice (Vietnamese Voice Cloning Tool)
 Write-Host "[6/6] Pre-installing OmniVoice tool..." -ForegroundColor Green

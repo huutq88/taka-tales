@@ -21,6 +21,21 @@ import re
 import shutil
 import time
 
+def ensure_ffmpeg_on_path():
+    if not shutil.which("ffmpeg"):
+        try:
+            import imageio_ffmpeg
+            ff_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if ff_exe and os.path.exists(ff_exe):
+                ff_dir = os.path.dirname(ff_exe)
+                os.environ["PATH"] = ff_dir + os.path.pathsep + os.environ.get("PATH", "")
+                os.environ["FFMPEG_BINARY"] = ff_exe
+                print(f"[FFmpeg Setup] Automatically configured imageio-ffmpeg binary: {ff_exe}")
+        except Exception as e:
+            print(f"[FFmpeg Warning] Could not auto-load imageio-ffmpeg: {e}")
+
+ensure_ffmpeg_on_path()
+
 # Configure ImageMagick path for MoviePy
 os.environ["IMAGEMAGICK_BINARY"] = "/opt/homebrew/bin/convert"
 from datetime import datetime
