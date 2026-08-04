@@ -694,19 +694,8 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                             target_ratio = target_w / target_h
                             orig_ratio = orig_w / orig_h
 
-                            if orig_ratio > target_ratio:
-                                crop_w = int(orig_h * target_ratio)
-                                crop_h = orig_h
-                                left = (orig_w - crop_w) // 2
-                                top = 0
-                            else:
-                                crop_w = orig_w
-                                crop_h = int(orig_w / target_ratio)
-                                left = 0
-                                top = (orig_h - crop_h) // 2
-
-                            cropped_im = rgb_im.crop((left, top, left + crop_w, top + crop_h))
-                            final_im = cropped_im.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                            # No cropping - preserve 100% of the generated ima2 image
+                            final_im = rgb_im.resize((target_w, target_h), Image.Resampling.LANCZOS)
                             final_im.save(image_path, "JPEG", quality=95, optimize=True)
                         if png_counterpart.exists() and png_counterpart != image_path:
                             png_counterpart.unlink()
