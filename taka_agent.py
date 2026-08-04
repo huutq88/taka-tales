@@ -2000,7 +2000,38 @@ async def main():
                                 img_dir = target_dir / "images"
                                 aud_dir = target_dir / "audio"
                                 vid_dir = target_dir / "videos"
-                                
+                                configured_aspect_ratio = None
+                                if (target_dir / "aspect_ratio.txt").exists():
+                                    try:
+                                        configured_aspect_ratio = (target_dir / "aspect_ratio.txt").read_text(encoding="utf-8").strip()
+                                    except Exception:
+                                        pass
+
+                                if not configured_aspect_ratio and (target_dir / "project_config.json").exists():
+                                    try:
+                                        with open(target_dir / "project_config.json", "r", encoding="utf-8") as f:
+                                            cfg = json.load(f)
+                                            configured_aspect_ratio = cfg.get("aspect_ratio")
+                                    except Exception:
+                                        pass
+
+                                if not configured_aspect_ratio and (AGENT_PROJECTS_DIR / story_id / "content.json").exists():
+                                    try:
+                                        with open(AGENT_PROJECTS_DIR / story_id / "content.json", "r", encoding="utf-8") as f:
+                                            cdata = json.load(f)
+                                            items = cdata.get("items", [])
+                                            for it in items:
+                                                if isinstance(it, dict) and (it.get("slug") == chapter_id or it.get("id") == chapter_id):
+                                                    configured_aspect_ratio = it.get("aspect_ratio")
+                                                    break
+                                            if not configured_aspect_ratio and isinstance(cdata, dict):
+                                                configured_aspect_ratio = cdata.get("aspect_ratio")
+                                    except Exception:
+                                        pass
+
+                                if not configured_aspect_ratio:
+                                    configured_aspect_ratio = "16:9"
+
                                 if not frag_files:
                                     story_txt = target_dir / "story.txt"
                                     if story_txt.exists():
@@ -2009,6 +2040,7 @@ async def main():
                                         for i, l in enumerate(lines):
                                             frags_result.append({"index": i, "text": l})
                                 else:
+                                    from PIL import Image
                                     ws_suffix = f"?ws={WORKSPACE_ID}" if WORKSPACE_ID else ""
                                     for i, ff in enumerate(frag_files):
                                         text = ff.read_text(encoding="utf-8").strip() if ff.exists() else ""
@@ -2016,11 +2048,54 @@ async def main():
                                         item = {"index": frag_idx, "text": text}
                                         
                                         img_url = None
+                                        img_width, img_height = None, None
+                                        aspect_mismatch = False
+
                                         if img_dir.exists() and img_dir.is_dir():
                                             for img_stem in [f"image{frag_idx}", f"image_{frag_idx}", f"frame{frag_idx}", f"frame_{frag_idx}", str(frag_idx)]:
                                                 for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-                                                    if (img_dir / f"{img_stem}{ext}").exists():
+                                                    found_img_path = img_dir / f"{img_stem}{ext}"
+                                                    if found_img_path.exists():
                                                         img_url = f"/v1/media/{story_id}/{chapter_id}/images/{img_stem}{ext}{ws_suffix}"
+                                                        try:
+                                                            with Image.open(found_img_path) as img:
+                                                                img_width, img_height = img.size
+                                                            if img_width and img_height:
+                                                                actual_ratio = img_width / img_height
+                                                                target_ratio = 16.0 / 9.0
+                                                                if configured_aspect_ratio == "9:16":
+                                                                    target_ratio = 9.0 / 16.0
+                                                                elif configured_aspect_ratio == "1:1":
+                                                                    target_ratio = 1.0
+                                                                elif configured_aspect_ratio == "4:3":
+                                                                    target_ratio = 4.0 / 3.0
+                                                                elif configured_aspect_ratio == "3:4":
+                                                                    target_ratio = 3.0 / 4.0
+                                                                elif configured_aspect_ratio == "4:5":
+                                                                    target_ratio = 4.0 / 5.0
+                                                                elif configured_aspect_ratio == "21:9":
+                                                                    target_ratio = 21.0 / 9.0
+
+                                                                if configured_aspect_ratio == "16:9":
+                                                                    if actual_ratio < 1.25:
+                                                                        aspect_mismatch = True
+                                                                elif configured_aspect_ratio == "9:16":
+                                                                    if actual_ratio > 0.80:
+                                                                        aspect_mismatch = True
+                                                                elif configured_aspect_ratio == "1:1":
+                                                                    if actual_ratio < 0.85 or actual_ratio > 1.15:
+                                                                        aspect_mismatch = True
+                                                                elif configured_aspect_ratio in ("4:3", "21:9"):
+                                                                    if actual_ratio < 1.15:
+                                                                        aspect_mismatch = True
+                                                                elif configured_aspect_ratio in ("3:4", "4:5"):
+                                                                    if actual_ratio > 0.90:
+                                                                        aspect_mismatch = True
+                                                                else:
+                                                                    if abs(actual_ratio - target_ratio) / target_ratio > 0.15:
+                                                                        aspect_mismatch = True
+                                                        except Exception:
+                                                            pass
                                                         break
                                                 if img_url: break
                                         
@@ -2043,6 +2118,10 @@ async def main():
                                                 if vid_url: break
 
                                         item["image_url"] = img_url
+                                        item["image_width"] = img_width
+                                        item["image_height"] = img_height
+                                        item["aspect_mismatch"] = aspect_mismatch
+                                        item["configured_aspect_ratio"] = configured_aspect_ratio
                                         item["audio_url"] = aud_url
                                         item["video_url"] = vid_url
                                         frags_result.append(item)
