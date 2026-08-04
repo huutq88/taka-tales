@@ -196,12 +196,12 @@ def configure_project_resolution(project_dir: pathlib.Path = None, aspect_ratio:
         is_horizontal = True
 
     if is_horizontal:
-        IMAGE_WIDTH = 1920
-        IMAGE_HEIGHT = 1080
+        IMAGE_WIDTH = 1824
+        IMAGE_HEIGHT = 1024
         _log(f"[VideoEngine] Resolution set to 16:9 Horizontal (Long-Form): {IMAGE_WIDTH}x{IMAGE_HEIGHT}")
     else:
-        IMAGE_WIDTH = 1080
-        IMAGE_HEIGHT = 1920
+        IMAGE_WIDTH = 1024
+        IMAGE_HEIGHT = 1824
         _log(f"[VideoEngine] Resolution set to 9:16 Vertical (Reels): {IMAGE_WIDTH}x{IMAGE_HEIGHT}")
 
 USE_CHAR_DESC: bool = config["STABLE_DIFFUSION"].getboolean("USE_CHARACTERS_DESCRIPTIONS")
