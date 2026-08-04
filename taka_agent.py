@@ -1723,9 +1723,73 @@ def start_local_media_server():
     t.start()
 
 
+async def start_local_websocket_server():
+    """Start local WebSocket server on port 8767 for direct zero-cloud media streaming."""
+    async def handle_client(ws):
+        try:
+            async for message in ws:
+                try:
+                    data = json.loads(message)
+                    mtype = data.get("type")
+                    req_id = data.get("request_id")
+                    if mtype == "get_local_media":
+                        story_id = data.get("story_id", "")
+                        chapter_id = data.get("chapter_id", "")
+                        file_path = data.get("file_path", "")
+                        found_file = None
+                        if AGENT_PROJECTS_DIR and AGENT_PROJECTS_DIR.exists():
+                            for bdir in [AGENT_PROJECTS_DIR / story_id / chapter_id, AGENT_PROJECTS_DIR / chapter_id, AGENT_PROJECTS_DIR / story_id]:
+                                found_file = resolve_local_media_file(bdir, file_path)
+                                if found_file:
+                                    break
+                            if not found_file and chapter_id:
+                                matches = list(AGENT_PROJECTS_DIR.glob(f"**/{chapter_id}"))
+                                if matches:
+                                    found_file = resolve_local_media_file(matches[0], file_path)
+
+                        if found_file and found_file.exists():
+                            import base64, mimetypes
+                            ctype, _ = mimetypes.guess_type(str(found_file))
+                            if not ctype:
+                                if str(found_file).endswith(".mp4"):
+                                    ctype = "video/mp4"
+                                elif str(found_file).endswith(".jpg") or str(found_file).endswith(".jpeg"):
+                                    ctype = "image/jpeg"
+                                elif str(found_file).endswith(".png"):
+                                    ctype = "image/png"
+                                elif str(found_file).endswith(".wav"):
+                                    ctype = "audio/wav"
+                                elif str(found_file).endswith(".mp3"):
+                                    ctype = "audio/mpeg"
+                                else:
+                                    ctype = "application/octet-stream"
+
+                            with open(found_file, "rb") as f:
+                                content_b64 = base64.b64encode(f.read()).decode("utf-8")
+                            await ws.send(json.dumps({
+                                "request_id": req_id,
+                                "exists": True,
+                                "content_b64": content_b64,
+                                "content_type": ctype
+                            }))
+                        else:
+                            await ws.send(json.dumps({"request_id": req_id, "exists": False}))
+                except Exception as ex:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        server = await websockets.serve(handle_client, "127.0.0.1", 8767, max_size=100 * 1024 * 1024)
+        print("[Agent] Direct Local WebSocket Media Server started on ws://127.0.0.1:8767")
+    except Exception as e:
+        print(f"[Agent] Local WS Port 8767 error: {e}")
+
+
 async def main():
     global active_websocket
     start_local_media_server()
+    asyncio.create_task(start_local_websocket_server())
     
     ws_base = SERVER_URL.replace("http://", "ws://").replace("https://", "wss://")
     if "localhost" in SERVER_URL or "127.0.0.1" in SERVER_URL:

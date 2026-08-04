@@ -4015,10 +4015,82 @@ async def dashboard():
             }
         }
 
-        let localMediaPort8766Available = false;
-        async function checkLocalMediaPort8766() {
+        let localWsClient = null;
+        let localWsReady = false;
+        let localWsPending = {};
+
+        function initLocalWsClient() {
+            try {
+                let ws = new WebSocket("ws://127.0.0.1:8767");
+                ws.onopen = () => { localWsReady = true; };
+                ws.onmessage = (e) => {
+                    try {
+                        let data = JSON.parse(e.data);
+                        let cb = localWsPending[data.request_id];
+                        if (cb) {
+                            delete localWsPending[data.request_id];
+                            cb(data);
+                        }
+                    } catch(err) {}
+                };
+                ws.onerror = ws.onclose = () => {
+                    localWsReady = false;
+                    setTimeout(initLocalWsClient, 3000);
+                };
+                localWsClient = ws;
+            } catch(e) {}
+        }
+        initLocalWsClient();
+
+        async function fetchMediaViaLocalWs(url) {
+            if (!localWsReady || !localWsClient || !url || (!url.includes('/v1/media/') && !url.includes('/media/'))) return null;
+            let clean = url.replace(/^https?:\/\/[^\/]+/, '').replace('/v1/media/', '').replace('/media/', '').split('?')[0];
+            let parts = clean.split('/');
+            if (parts.length < 3) return null;
+            let storyId = parts[0];
+            let chapterId = parts[1];
+            let filePath = parts.slice(2).join('/');
+            
+            return new Promise((resolve) => {
+                let reqId = 'req_' + Math.random().toString(36).substring(2);
+                localWsPending[reqId] = resolve;
+                try {
+                    localWsClient.send(JSON.stringify({
+                        type: "get_local_media",
+                        request_id: reqId,
+                        story_id: storyId,
+                        chapter_id: chapterId,
+                        file_path: filePath
+                    }));
+                } catch(e) {
+                    delete localWsPending[reqId];
+                    resolve(null);
+                    return;
+                }
+                setTimeout(() => {
+                    if (localWsPending[reqId]) {
+                        delete localWsPending[reqId];
+                        resolve(null);
+                    }
+                }, 5000);
+            });
+        }
+
         let currentAudioPlayer = null;
-        function playFragmentAudio(url, btn) {
+        async function playFragmentAudio(url, btn) {
+            let finalUrl = url;
+            let localMedia = await fetchMediaViaLocalWs(url);
+            if (localMedia && localMedia.exists && localMedia.content_b64) {
+                let byteChars = atob(localMedia.content_b64);
+                let byteNumbers = new Array(byteChars.length);
+                for (let i = 0; i < byteChars.length; i++) {
+                    byteNumbers[i] = byteChars.charCodeAt(i);
+                }
+                let byteArray = new Uint8Array(byteNumbers);
+                let blob = new Blob([byteArray], { type: localMedia.content_type || "audio/wav" });
+                finalUrl = URL.createObjectURL(blob);
+            }
+
             if (currentAudioPlayer) {
                 currentAudioPlayer.pause();
                 currentAudioPlayer = null;
@@ -4026,7 +4098,7 @@ async def dashboard():
                     if (b.innerText.includes("Playing...")) b.innerHTML = "▶️ Audio";
                 });
             }
-            let audio = new Audio(url);
+            let audio = new Audio(finalUrl);
             currentAudioPlayer = audio;
             btn.innerHTML = "⏸️ Playing...";
             audio.play();
@@ -4041,7 +4113,20 @@ async def dashboard():
             };
         }
 
-        function openMediaPreviewModal(url, type, title, isMismatch, w, h, targetRatio) {
+        async function openMediaPreviewModal(url, type, title, isMismatch, w, h, targetRatio) {
+            let finalUrl = url;
+            let localMedia = await fetchMediaViaLocalWs(url);
+            if (localMedia && localMedia.exists && localMedia.content_b64) {
+                let byteChars = atob(localMedia.content_b64);
+                let byteNumbers = new Array(byteChars.length);
+                for (let i = 0; i < byteChars.length; i++) {
+                    byteNumbers[i] = byteChars.charCodeAt(i);
+                }
+                let byteArray = new Uint8Array(byteNumbers);
+                let blob = new Blob([byteArray], { type: localMedia.content_type || (type === "image" ? "image/jpeg" : "video/mp4") });
+                finalUrl = URL.createObjectURL(blob);
+            }
+
             let modal = document.getElementById("media-preview-modal");
             if (!modal) {
                 modal = document.createElement("div");
@@ -4058,8 +4143,8 @@ async def dashboard():
                 : ``;
 
             let contentHtml = type === "image"
-                ? `<img src="${url}" style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid ${isMismatch ? '#f59e0b' : 'var(--border)'}; box-shadow: 0 10px 40px rgba(0,0,0,0.8);" />`
-                : `<video src="${url}" controls autoplay style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.8);"></video>`;
+                ? `<img src="${finalUrl}" style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid ${isMismatch ? '#f59e0b' : 'var(--border)'}; box-shadow: 0 10px 40px rgba(0,0,0,0.8);" />`
+                : `<video src="${finalUrl}" controls autoplay style="max-width: 85vw; max-height: 75vh; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.8);"></video>`;
                 
             modal.innerHTML = `
                 <div style="background: rgba(20,20,30,0.95); border: 1px solid ${isMismatch ? '#f59e0b' : 'var(--border)'}; border-radius: 16px; padding: 1.5rem; max-width: 95vw; display: flex; flex-direction: column; align-items: center; position: relative;">
