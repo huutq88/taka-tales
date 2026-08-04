@@ -4087,9 +4087,22 @@ async def dashboard():
             }
         }
 
-        function openFinalVideoPreview() {
+        async function openFinalVideoPreview() {
             if (!activeStoryId || !activeChapterId) return;
-            let videoUrl = `/v1/media/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/final.mp4?t=${Date.now()}`;
+            let wsParam = (typeof activeWsId !== 'undefined' && activeWsId) ? `&ws=${encodeURIComponent(activeWsId)}` : (wsId ? `&ws=${encodeURIComponent(wsId)}` : '');
+            let videoUrl = `/v1/media/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/final.mp4?t=${Date.now()}${wsParam}`;
+            
+            // Check if localhost 8766 is reachable for instant 0ms latency preview
+            try {
+                let localTestUrl = `http://127.0.0.1:8766/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/final.mp4`;
+                let checkResp = await fetch(localTestUrl, { method: 'HEAD' });
+                if (checkResp.ok || checkResp.status === 200) {
+                    videoUrl = localTestUrl + `?t=${Date.now()}`;
+                }
+            } catch (e) {
+                // Fall back to server tunnel media URL
+            }
+
             openMediaPreviewModal(videoUrl, 'video', `🎬 Final Video - ${activeStoryId} / ${activeChapterId}`);
         }
 
