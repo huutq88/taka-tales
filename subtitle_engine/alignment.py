@@ -12,6 +12,8 @@ class AlignmentProvider:
 
 
 class WhisperAlignmentProvider(AlignmentProvider):
+    _fw_model = None
+
     def align(self, audio_path: pathlib.Path, transcript: Optional[str] = None, language: str = "vi") -> List[TimedWord]:
         """Aligns audio with text using Whisper API or local audio duration fallback."""
         audio_path = pathlib.Path(audio_path)
@@ -33,15 +35,18 @@ class WhisperAlignmentProvider(AlignmentProvider):
         
         # 1. Try local faster_whisper model
         try:
-            os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-            os.environ["OMP_NUM_THREADS"] = "1"
-            from faster_whisper import WhisperModel
-            import torch
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            compute_type = "float16" if device == "cuda" else "int8"
-            
+            if WhisperAlignmentProvider._fw_model is None:
+                os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+                os.environ["OMP_NUM_THREADS"] = "1"
+                from faster_whisper import WhisperModel
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                compute_type = "float16" if device == "cuda" else "int8"
+                print(f"[WhisperAlignmentProvider] Initializing cached faster_whisper model ({device}/{compute_type})...")
+                WhisperAlignmentProvider._fw_model = WhisperModel("small", device=device, compute_type=compute_type, cpu_threads=2)
+
+            fw_model = WhisperAlignmentProvider._fw_model
             print(f"[WhisperAlignmentProvider] Running local faster_whisper alignment on {audio_path.name}...")
-            fw_model = WhisperModel("small", device=device, compute_type=compute_type, cpu_threads=2)
             initial_prompt = transcript.strip()[:150] if transcript else None
             segments, info = fw_model.transcribe(str(audio_path), word_timestamps=True, initial_prompt=initial_prompt, language=language)
             
