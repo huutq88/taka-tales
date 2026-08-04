@@ -675,7 +675,7 @@ echo "============================================="
 async def get_install_script_ps1(request: Request, workspace_id: str = "default_workspace"):
     server_url = str(request.base_url).rstrip('/')
     
-    script_content = f"""
+    script_content = fr"""
 $SERVER_URL = "{server_url}"
 $uName = $env:USERNAME.ToLower() -replace '[^a-zA-Z0-9_-]', ''
 if (-not $uName) {{ $uName = "user" }}
@@ -2714,7 +2714,7 @@ async def welcome_page():
 # HTML Dashboard using rich dark glassmorphism styling
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    html_content = """<!DOCTYPE html>
+    html_content = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
