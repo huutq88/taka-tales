@@ -2274,6 +2274,48 @@ async def main():
                             elif job_info and job_info.get("status") not in ("completed", "failed", "idle", None):
                                 current_status = job_info.get("status")
 
+                            art_style = None
+                            subtitle_preset = None
+                            aspect_ratio = None
+                            use_watermark = True
+                            use_subtitles = True
+                            use_waveform = True
+                            image_generator = "ima2"
+
+                            cfg_file = ch_dir / "project_config.json"
+                            if cfg_file.exists():
+                                try:
+                                    with open(cfg_file, "r", encoding="utf-8") as f:
+                                        cfg = json.load(f)
+                                        art_style = cfg.get("art_style")
+                                        subtitle_preset = cfg.get("subtitle_preset")
+                                        aspect_ratio = cfg.get("aspect_ratio")
+                                        if "use_watermark" in cfg: use_watermark = cfg.get("use_watermark")
+                                        if "use_subtitles" in cfg: use_subtitles = cfg.get("use_subtitles")
+                                        if "use_waveform" in cfg: use_waveform = cfg.get("use_waveform")
+                                        if "image_generator" in cfg: image_generator = cfg.get("image_generator")
+                                except Exception:
+                                    pass
+
+                            if not aspect_ratio and (ch_dir / "aspect_ratio.txt").exists():
+                                try:
+                                    aspect_ratio = (ch_dir / "aspect_ratio.txt").read_text(encoding="utf-8").strip()
+                                except Exception:
+                                    pass
+
+                            if not aspect_ratio and (projects_dir / story_id / "content.json").exists():
+                                try:
+                                    with open(projects_dir / story_id / "content.json", "r", encoding="utf-8") as f:
+                                        cdata = json.load(f)
+                                        items = cdata.get("items", [])
+                                        for it in items:
+                                            if isinstance(it, dict) and (it.get("slug") == chapter_id or it.get("id") == chapter_id):
+                                                aspect_ratio = it.get("aspect_ratio")
+                                                if not art_style and it.get("art_style"): art_style = it.get("art_style")
+                                                break
+                                except Exception:
+                                    pass
+
                             status_res = {
                                 "status": current_status,
                                 "queue_position": queue_pos,
@@ -2282,7 +2324,14 @@ async def main():
                                 "current_fragment": job_info.get("current_fragment", max_frags if has_video else 0) if job_info else (max_frags if has_video else 0),
                                 "has_video": has_video,
                                 "has_images": has_images,
-                                "has_audio": has_audio
+                                "has_audio": has_audio,
+                                "art_style": art_style,
+                                "subtitle_preset": subtitle_preset,
+                                "aspect_ratio": aspect_ratio,
+                                "use_watermark": use_watermark,
+                                "use_subtitles": use_subtitles,
+                                "use_waveform": use_waveform,
+                                "image_generator": image_generator
                             }
                             
                             await websocket.send(json.dumps({
