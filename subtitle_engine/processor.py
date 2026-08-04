@@ -388,115 +388,78 @@ class SubtitleProcessor:
         except Exception:
             pil_font_active = pil_font
 
-        sub_clips = []
-        max_allowed_w = int(w * preset.layout.max_width_ratio)  # 80% screen width limit
-        margin_x_min = int(w * 0.10)  # 10% margin on left/right
+        captions = scene.captions
 
-        def apply_transform(txt: str) -> str:
-            if getattr(preset.text, "transform", "none") == "uppercase":
-                return txt.upper()
-            elif getattr(preset.text, "transform", "none") == "lowercase":
-                return txt.lower()
-            return txt
+        def make_frame(t):
+            img = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
+            active_cap = None
+            for cap in captions:
+                if cap.start <= t <= cap.end:
+                    active_cap = cap
+                    break
+            
+            if not active_cap:
+                return np.array(img)
 
-        for cap in scene.captions:
-            cap_words = cap.words or []
+            draw = ImageDraw.Draw(img)
+            cap_words = active_cap.words or []
+
             if not cap_words:
-                # Static line rendering
-                img = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
-                draw = ImageDraw.Draw(img)
-                full_text = apply_transform(cap.text)
+                full_text = apply_transform(active_cap.text)
                 bbox = draw.textbbox((0, 0), full_text, font=pil_font)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                 pos_x = max(margin_x_min, (w - tw) // 2)
                 pos_y = h - safe_bottom_px - th
+                draw.text((pos_x + 2, pos_y + 4), full_text, font=pil_font, fill=preset.shadow.color, stroke_width=stroke_w, stroke_fill="#000000")
+                draw.text((pos_x, pos_y), full_text, font=pil_font, fill=preset.text.color, stroke_width=stroke_w, stroke_fill=preset.outline.color)
+                return np.array(img)
 
-                draw.text(
-                    (pos_x, pos_y), full_text, font=pil_font,
-                    fill=preset.text.color, stroke_width=stroke_w, stroke_fill=preset.outline.color
-                )
-                sub_clip = ImageClip(np.array(img)).set_duration(max(0.2, cap.end - cap.start)).set_start(cap.start)
-                sub_clips.append(sub_clip)
-                continue
+            active_word_idx = -1
+            for idx_w, w_obj in enumerate(cap_words):
+                if w_obj.start <= t <= (w_obj.end + 0.1):
+                    active_word_idx = idx_w
+                    break
+            if active_word_idx == -1 and t >= cap_words[0].start:
+                for idx_w in range(len(cap_words) - 1, -1, -1):
+                    if t >= cap_words[idx_w].start:
+                        active_word_idx = idx_w
+                        break
 
-            # 1. Silence lead-in before first word if gap exists
-            first_word_st = cap_words[0].start
-            if first_word_st > cap.start + 0.05:
-                img_bg = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
-                draw_bg = ImageDraw.Draw(img_bg)
-                lines_words = [cap_words[:len(cap_words)//2], cap_words[len(cap_words)//2:]] if len(cap.lines) > 1 and len(cap_words) >= 4 else [cap_words]
-                line_y = h - safe_bottom_px - (len(lines_words) * (font_size + 14))
-                for line_idx, l_words in enumerate(lines_words):
-                    full_line_text = " ".join([apply_transform(word.text) for word in l_words])
-                    bbox = draw_bg.textbbox((0, 0), full_line_text, font=pil_font)
-                    tw = bbox[2] - bbox[0]
-                    start_x = max(margin_x_min, (w - tw) // 2)
-                    draw_bg.text((start_x, line_y + line_idx * (font_size + 14)), full_line_text, font=pil_font, fill=preset.text.color, stroke_width=stroke_w, stroke_fill=preset.outline.color)
-                sub_clips.append(ImageClip(np.array(img_bg)).set_duration(first_word_st - cap.start).set_start(cap.start))
+            lines_words = [cap_words[:len(cap_words)//2], cap_words[len(cap_words)//2:]] if len(active_cap.lines) > 1 and len(cap_words) >= 4 else [cap_words]
+            line_y = h - safe_bottom_px - (len(lines_words) * (font_size + 14))
 
-            # 2. Render Word-by-Word active highlight clips cleanly without flicker or layout shift
-            for active_idx, active_word in enumerate(cap_words):
-                w_start = active_word.start
-                if active_idx < len(cap_words) - 1:
-                    w_end = max(active_word.end, min(cap_words[active_idx + 1].start, active_word.end + 0.3))
-                else:
-                    w_end = max(active_word.end, cap.end)
+            word_counter = 0
+            for line_idx, l_words in enumerate(lines_words):
+                full_line_text = " ".join([apply_transform(word.text) for word in l_words])
+                bbox = draw.textbbox((0, 0), full_line_text, font=pil_font)
+                tw = bbox[2] - bbox[0]
+                start_x = max(margin_x_min, (w - tw) // 2)
 
-                w_dur = max(0.08, w_end - w_start)
+                curr_x = start_x
+                space_w = draw.textbbox((0, 0), " ", font=pil_font)[2]
 
-                img = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
-                draw = ImageDraw.Draw(img)
+                for word_obj in l_words:
+                    is_active = (word_counter == active_word_idx)
+                    word_str = apply_transform(word_obj.text)
+                    base_bbox = draw.textbbox((0, 0), word_str, font=pil_font)
+                    word_w = base_bbox[2] - base_bbox[0]
 
-                # Split cap_words into 2 balanced lines if line count > 1
-                lines_words = []
-                if len(cap.lines) > 1 and len(cap_words) >= 4:
-                    mid = len(cap_words) // 2
-                    lines_words = [cap_words[:mid], cap_words[mid:]]
-                else:
-                    lines_words = [cap_words]
+                    word_color = preset.text.active_color if is_active else preset.text.color
+                    sw = stroke_w + 1 if is_active else stroke_w
 
-                line_y = h - safe_bottom_px - (len(lines_words) * (font_size + 14))
+                    draw.text((curr_x + 2, line_y + 4), word_str, font=pil_font, fill=preset.shadow.color, stroke_width=sw, stroke_fill="#000000")
+                    draw.text((curr_x, line_y), word_str, font=pil_font, fill=word_color, stroke_width=sw, stroke_fill=preset.outline.color)
 
-                word_counter = 0
-                for line_idx, l_words in enumerate(lines_words):
-                    full_line_text = " ".join([apply_transform(word.text) for word in l_words])
-                    bbox = draw.textbbox((0, 0), full_line_text, font=pil_font)
-                    tw = bbox[2] - bbox[0]
-                    start_x = max(margin_x_min, (w - tw) // 2)
+                    curr_x += word_w + space_w
+                    word_counter += 1
 
-                    curr_x = start_x
-                    space_w = draw.textbbox((0, 0), " ", font=pil_font)[2]
+                line_y += font_size + 14
 
-                    for word_obj in l_words:
-                        is_active = (word_counter == active_idx)
-                        word_str = apply_transform(word_obj.text)
-                        
-                        # Use base font for width calculation so word positions stay 100% fixed
-                        base_bbox = draw.textbbox((0, 0), word_str, font=pil_font)
-                        word_w = base_bbox[2] - base_bbox[0]
+            return np.array(img)
 
-                        word_color = preset.text.active_color if is_active else preset.text.color
-                        sw = stroke_w + 1 if is_active else stroke_w
-
-                        # Draw subtle drop shadow
-                        draw.text(
-                            (curr_x + 2, line_y + 4), word_str, font=pil_font,
-                            fill=preset.shadow.color, stroke_width=sw, stroke_fill="#000000"
-                        )
-                        # Draw main text with outline
-                        draw.text(
-                            (curr_x, line_y), word_str, font=pil_font,
-                            fill=word_color, stroke_width=sw, stroke_fill=preset.outline.color
-                        )
-                        curr_x += word_w + space_w
-                        word_counter += 1
-
-                    line_y += font_size + 14
-
-                sub_clip = ImageClip(np.array(img)).set_duration(w_dur).set_start(w_start)
-                sub_clips.append(sub_clip)
-
-        final_video = CompositeVideoClip([video] + sub_clips, size=(w, h))
+        from moviepy.editor import VideoClip
+        sub_overlay_clip = VideoClip(make_frame, duration=video.duration).set_ismask(False)
+        final_video = CompositeVideoClip([video, sub_overlay_clip], size=(w, h))
         final_video.write_videofile(
             str(output_video_path),
             fps=video.fps or 30,
