@@ -4021,8 +4021,29 @@ async def dashboard():
             }
         }
 
+        let localMediaPort8766Available = false;
+        async function checkLocalMediaPort8766() {
+            try {
+                await fetch('http://127.0.0.1:8766/', { method: 'HEAD', mode: 'no-cors' });
+                localMediaPort8766Available = true;
+            } catch (e) {
+                localMediaPort8766Available = false;
+            }
+        }
+        checkLocalMediaPort8766();
+
+        function resolveLocalMediaUrl(url) {
+            if (!url) return url;
+            if (localMediaPort8766Available && (url.includes('/v1/media/') || url.includes('/media/'))) {
+                let pathPart = url.replace(/^https?:\/\/[^\/]+/, '').replace('/v1/media/', '').replace('/media/', '');
+                return `http://127.0.0.1:8766/${pathPart}`;
+            }
+            return url;
+        }
+
         let currentAudioPlayer = null;
         function playFragmentAudio(url, btn) {
+            url = resolveLocalMediaUrl(url);
             if (currentAudioPlayer) {
                 currentAudioPlayer.pause();
                 currentAudioPlayer = null;
@@ -4046,6 +4067,7 @@ async def dashboard():
         }
 
         function openMediaPreviewModal(url, type, title, isMismatch, w, h, targetRatio) {
+            url = resolveLocalMediaUrl(url);
             let modal = document.getElementById("media-preview-modal");
             if (!modal) {
                 modal = document.createElement("div");
