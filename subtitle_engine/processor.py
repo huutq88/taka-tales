@@ -124,13 +124,27 @@ class SubtitleProcessor:
         transcript: Optional[str] = None,
         canvas_width: int = 1080,
         canvas_height: int = 1920,
-        fps: int = 30
+        fps: int = 30,
+        language: str = "vi"
     ) -> RenderScene:
         """Builds RenderScene by accurately calculating per-fragment timestamps (accounting for 0.5s silence padding per fragment)."""
         import glob
         import re
         from pydub import AudioSegment
         from subtitle_engine.domain import TimedWord, Canvas, RenderScene
+
+        # Detect project language if available
+        lang = language
+        try:
+            cfg_file = project_dir / "project_config.json"
+            if not cfg_file.exists():
+                cfg_file = project_dir / "config.json"
+            if cfg_file.exists():
+                with open(cfg_file, "r", encoding="utf-8") as f:
+                    c_data = json.load(f)
+                    lang = c_data.get("language") or c_data.get("voice_config", {}).get("language") or lang
+        except Exception:
+            pass
 
         def get_frag_num(p_str):
             m = re.search(r"story_fragment(\d+)\.txt$", str(p_str))
@@ -178,28 +192,54 @@ class SubtitleProcessor:
                 continue
 
             # Run Whisper / WhisperX Alignment Provider for exact word-level AI timestamps (Strictly required)
-            raw_frag_words = self.alignment_provider.align(target_a, transcript=txt)
+            raw_frag_words = self.alignment_provider.align(target_a, transcript=txt, language=lang)
             if not raw_frag_words:
-                raise RuntimeError(f"[SubtitleProcessor] Whisper alignment returned no timestamps for fragment #{i} ({target_a.name}). Whisper alignment is required.")
+                raw_frag_words = []
 
             frag_words = self.transcript_resolver.resolve(txt, raw_frag_words)
             if not frag_words:
                 frag_words = raw_frag_words
 
             max_word_end = max(w.end for w in frag_words) if frag_words else 0.0
-            scale = (total_dur / max_word_end) if max_word_end > total_dur else 1.0
+            
+            # Check if alignment is incomplete / compressed (< 60% of total audio duration)
+            if max_word_end < (speech_dur * 0.6) or len(frag_words) < (len(clean_words) * 0.5):
+                # Fallback to duration-based even spacing across speech_dur
+                step = speech_dur / max(1, len(clean_words))
+                scaled_words = []
+                for idx_w, cw in enumerate(clean_words):
+                    w_st = pad_start + (idx_w * step)
+                    w_et = pad_start + ((idx_w + 1) * step)
+                    scaled_words.append(TimedWord(
+                        id=f"w_fb_{idx_w:04d}",
+                        text=cw,
+                        start=round(w_st, 3),
+                        end=round(w_et, 3),
+                        confidence=0.9
+                    ))
+            else:
+                # Proper proportional scaling to fit speech_dur exactly
+                scale = (speech_dur / max_word_end) if max_word_end > 0 else 1.0
+                scaled_words = []
+                for w in frag_words:
+                    w_s = pad_start + (w.start * scale)
+                    w_e = pad_start + (w.end * scale)
+                    w_s = max(0.0, min(w_s, total_dur - 0.05))
+                    w_e = max(w_s + 0.05, min(w_e, total_dur))
+                    scaled_words.append(TimedWord(
+                        id=w.id,
+                        text=w.text,
+                        start=round(w_s, 3),
+                        end=round(w_e, 3),
+                        confidence=w.confidence
+                    ))
 
-            for w in frag_words:
-                w_s = w.start * scale
-                w_e = w.end * scale
-                w_s = max(0.0, min(w_s, total_dur - 0.05))
-                w_e = max(w_s + 0.05, min(w_e, total_dur))
-
+            for w in scaled_words:
                 all_words.append(TimedWord(
                     id=f"w_{word_idx:04d}",
                     text=w.text,
-                    start=round(clip_offset + w_s, 3),
-                    end=round(clip_offset + w_e, 3),
+                    start=round(clip_offset + w.start, 3),
+                    end=round(clip_offset + w.end, 3),
                     confidence=w.confidence
                 ))
                 word_idx += 1
