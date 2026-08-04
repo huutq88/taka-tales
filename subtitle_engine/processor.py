@@ -2,7 +2,7 @@ import os
 import pathlib
 import json
 import subprocess
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, List, Tuple
 
 from subtitle_engine.domain import (
     RenderScene, StylePreset, Canvas, Caption

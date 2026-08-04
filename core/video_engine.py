@@ -1470,7 +1470,7 @@ def create_video_clip(idx: int, project_dir: pathlib.Path) -> None:
 def concat_clips(project_dir: pathlib.Path, start_idx: int = None, end_idx: int = None) -> List[VideoFileClip]:
     files = sorted(project_dir.glob("videos/video*.mp4"), key=lambda p: int(p.stem[5:]))
     if start_idx is not None and end_idx is not None:
-        files = [f for f in files if start_idx <= int(f.stem[5:]) < end_idx]
+        files = [f for f in files if start_idx <= int(f.stem[5:]) <= end_idx]
     return [VideoFileClip(str(f)) for f in files]
 
 
