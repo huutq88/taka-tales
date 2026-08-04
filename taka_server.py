@@ -1006,6 +1006,18 @@ async def open_project_folder(request: Request, story_id: str, chapter_id: Optio
     if not clean_story or ".." in clean_story:
         raise HTTPException(status_code=400, detail="Invalid story_id format")
 
+    ws_id = get_workspace_id_from_request(request)
+    if ws_id and ws_id in agents_by_workspace:
+        res = await tunnel_request_to_agent("open_folder_request", {
+            "story_id": clean_story,
+            "chapter_id": chapter_id
+        }, workspace_id=ws_id, timeout=10.0)
+        if res and isinstance(res, dict):
+            if res.get("status") == "ok":
+                return res
+            elif res.get("error"):
+                raise HTTPException(status_code=400, detail=f"Agent failed to open folder: {res['error']}")
+
     base_dir = PROJECTS_DIR
     target_dir = None
     if chapter_id and chapter_id != "story":
@@ -1037,16 +1049,22 @@ async def open_project_folder(request: Request, story_id: str, chapter_id: Optio
             target_dir = base_dir / clean_story
             target_dir.mkdir(parents=True, exist_ok=True)
 
-    import subprocess, platform
+    import subprocess, platform, shutil
+    system = platform.system()
     try:
-        if platform.system() == "Darwin":
+        if system == "Darwin":
             subprocess.Popen(["open", str(target_dir)])
-        elif platform.system() == "Windows":
+        elif system == "Windows":
             subprocess.Popen(["explorer", str(target_dir)])
         else:
-            subprocess.Popen(["xdg-open", str(target_dir)])
+            if shutil.which("xdg-open"):
+                subprocess.Popen(["xdg-open", str(target_dir)])
+            else:
+                raise HTTPException(status_code=400, detail="Môi trường Cloud Server không có giao diện hiển thị. Vui lòng kết nối Taka Agent để mở thư mục trên máy cá nhân.")
         return {"status": "ok", "message": f"Opened folder: {target_dir}", "path": str(target_dir)}
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=f"Failed to open folder: {e}")
 
 @app.delete("/v1/projects/{story_id}")

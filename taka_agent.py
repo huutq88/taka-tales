@@ -1911,6 +1911,66 @@ async def main():
                                     "projects_metadata": projects_metadata
                                 }
                             }))
+                        elif msg_type == "open_folder_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            story_id = (payload.get("story_id") or "").strip()
+                            chapter_id = payload.get("chapter_id")
+                            
+                            target_dir = None
+                            if AGENT_PROJECTS_DIR and AGENT_PROJECTS_DIR.exists():
+                                if chapter_id and chapter_id != "story":
+                                    cands = [
+                                        AGENT_PROJECTS_DIR / story_id / chapter_id,
+                                        AGENT_PROJECTS_DIR / "reels" / chapter_id,
+                                        AGENT_PROJECTS_DIR / "dao-ly" / chapter_id,
+                                        AGENT_PROJECTS_DIR / story_id
+                                    ]
+                                else:
+                                    cands = [
+                                        AGENT_PROJECTS_DIR / story_id,
+                                        AGENT_PROJECTS_DIR / "reels" / story_id,
+                                        AGENT_PROJECTS_DIR / "dao-ly" / story_id
+                                    ]
+                                for cand in cands:
+                                    if cand.exists():
+                                        target_dir = cand
+                                        break
+                                if not target_dir:
+                                    query = chapter_id if (chapter_id and chapter_id != "story") else story_id
+                                    matches = list(AGENT_PROJECTS_DIR.glob(f"**/{query}"))
+                                    if matches:
+                                        target_dir = matches[0]
+                                    else:
+                                        target_dir = AGENT_PROJECTS_DIR / story_id
+                                        target_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            if target_dir and target_dir.exists():
+                                try:
+                                    if sys.platform == "darwin":
+                                        subprocess.Popen(["open", str(target_dir)])
+                                    elif sys.platform == "win32":
+                                        subprocess.Popen(["explorer", str(target_dir)])
+                                    else:
+                                        if shutil.which("xdg-open"):
+                                            subprocess.Popen(["xdg-open", str(target_dir)])
+                                    await websocket.send(json.dumps({
+                                        "type": "open_folder_response",
+                                        "request_id": request_id,
+                                        "payload": {"status": "ok", "message": f"Opened folder: {target_dir}", "path": str(target_dir)}
+                                    }))
+                                except Exception as ex:
+                                    await websocket.send(json.dumps({
+                                        "type": "open_folder_response",
+                                        "request_id": request_id,
+                                        "payload": {"status": "error", "error": str(ex)}
+                                    }))
+                            else:
+                                await websocket.send(json.dumps({
+                                    "type": "open_folder_response",
+                                    "request_id": request_id,
+                                    "payload": {"status": "error", "error": "Folder not found"}
+                                }))
 
                         elif msg_type == "delete_project_request":
                             request_id = message.get("request_id")
