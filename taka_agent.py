@@ -186,6 +186,43 @@ def remove_from_queue_and_active(story_id: str, chapter_id: str = None):
     if not agent_active_tasks:
         asyncio.create_task(process_next_queued_job())
 
+def agent_prepare_chapter_structure(story_id: str, chapter_id: str, content: str = "", chapter_dir: pathlib.Path = None) -> pathlib.Path:
+    if chapter_dir is None:
+        chapter_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+
+    text_dir = chapter_dir / "text"
+    frag_dir = text_dir / "story_fragments"
+    sent_dir = text_dir / "story_sentences"
+    prompts_dir = text_dir / "image_prompts"
+
+    frag_dir.mkdir(parents=True, exist_ok=True)
+    sent_dir.mkdir(parents=True, exist_ok=True)
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+
+    story_file = chapter_dir / "story.txt"
+    
+    if not content and story_file.exists():
+        try:
+            content = story_file.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+    if content and content.strip():
+        story_file.write_text(content.strip(), encoding="utf-8")
+        
+        frag_dir = text_dir / "story_fragments"
+        existing_frags = list(frag_dir.glob("story_fragment*.txt")) if frag_dir.exists() else []
+        if not existing_frags:
+            try:
+                from core import video_engine
+                num_sentences = video_engine.load_and_split_to_sentences(story_file)
+                video_engine.sentences_to_fragments(num_sentences, chapter_dir)
+            except Exception as err:
+                print(f"[Agent] Failed to tokenize via video_engine: {err}")
+
+    return chapter_dir
+
 async def enqueue_or_run_job(
     project_name: str,
     project_path_str: str,
@@ -2714,7 +2751,7 @@ async def main():
                                 if ch_id:
                                     ch_dir = story_dir / ch_id
                                     ch_dir.mkdir(parents=True, exist_ok=True)
-                                    video_engine.prepare_chapter_structure(story_id, ch_id, "", chapter_dir=ch_dir)
+                                    agent_prepare_chapter_structure(story_id, ch_id, "", chapter_dir=ch_dir)
                                     cfg = {"aspect_ratio": aspect_ratio, "language": language}
                                     with open(ch_dir / "project_config.json", "w", encoding="utf-8") as f:
                                         json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -2757,12 +2794,11 @@ async def main():
                             item_dir = story_dir / item_id
                             item_dir.mkdir(parents=True, exist_ok=True)
                             
-                            from core import video_engine
-                            video_engine.prepare_chapter_structure(story_id, item_id, content, chapter_dir=item_dir)
+                            agent_prepare_chapter_structure(story_id, item_id, content, chapter_dir=item_dir)
 
                             if content and content.strip():
                                 (item_dir / "story.txt").write_text(content.strip(), encoding="utf-8")
-                                video_engine.prepare_chapter_structure(story_id, item_id, content.strip(), chapter_dir=item_dir)
+                                agent_prepare_chapter_structure(story_id, item_id, content.strip(), chapter_dir=item_dir)
 
                             meta = {
                                 "episode": episode,
