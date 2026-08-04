@@ -3384,7 +3384,14 @@ async def dashboard():
         let allProjectsList = [];
         let activeStoryId = null;
         let activeChapterId = null;
+        let activeWorkspaceId = null;
         let loadedChapterConfigKey = null;
+
+        function getWorkspaceParam() {
+            let urlParams = new URLSearchParams(window.location.search);
+            let ws = urlParams.get("ws") || urlParams.get("workspace_id") || activeWorkspaceId;
+            return ws ? `?ws=${encodeURIComponent(ws)}` : "";
+        }
 
         function toggleAgentDropdown(e) {
             if (e) e.stopPropagation();
@@ -3439,6 +3446,7 @@ async def dashboard():
                 let omniStatus = document.getElementById("dropdown-omnivoice-status");
                 let dropTitle = document.getElementById("dropdown-status-title");
 
+                if (data.workspace_id) activeWorkspaceId = data.workspace_id;
                 if (data.connected) {
                     badge.className = "agent-badge connected";
                     status.innerText = "Agent Online";
@@ -3818,7 +3826,7 @@ async def dashboard():
             let container = document.getElementById("workspace-content");
             container.innerHTML = `<p style="color: var(--text-muted);">Loading fragments...</p>`;
             try {
-                let wsParam = activeWorkspaceId ? `?ws=${encodeURIComponent(activeWorkspaceId)}` : "";
+                let wsParam = getWorkspaceParam();
                 let res = await fetch(`/v1/projects/${encodeURIComponent(storyId)}/${encodeURIComponent(chapterId)}/fragments${wsParam}`);
                 let frags = await res.json();
                 if (!Array.isArray(frags) || frags.length === 0) {
