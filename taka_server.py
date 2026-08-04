@@ -2342,6 +2342,8 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             pass
 
     config_data.update({
+        "art_style": art_style,
+        "subtitle_preset": subtitle_preset,
         "use_watermark": use_watermark,
         "use_waveform": use_waveform,
         "use_subtitles": use_subtitles,
@@ -2441,6 +2443,48 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
     }
     await agent_ws.send_text(json.dumps(trigger_message))
     return {"message": "Pipeline run triggered on Taka-Agent", "story_id": story_id, "chapter_id": chapter_id}
+
+@app.post("/v1/projects/{story_id}/{chapter_id}/config")
+async def save_project_config_endpoint(request: Request, story_id: str, chapter_id: str):
+    ws_id = get_workspace_id_from_request(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    project_dir = PROJECTS_DIR / story_id / chapter_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = project_dir / "project_config.json"
+    
+    config_data = {}
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+        except Exception:
+            pass
+
+    for k in ["art_style", "subtitle_preset", "aspect_ratio", "use_watermark", "use_subtitles", "use_waveform", "image_generator", "effect_type"]:
+        if k in body and body[k] is not None:
+            config_data[k] = body[k]
+
+    try:
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, ensure_ascii=False, indent=2)
+        if "aspect_ratio" in config_data:
+            with open(project_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
+                f.write(str(config_data["aspect_ratio"]))
+    except Exception as err:
+        print(f"[Server] Error writing project_config.json: {err}")
+
+    # Tunnel config update to active workspace agent if connected
+    await tunnel_request_to_agent("save_project_config_request", {
+        "story_id": story_id,
+        "chapter_id": chapter_id,
+        "config": config_data
+    }, workspace_id=ws_id, timeout=3.0)
+
+    return {"status": "ok", "config": config_data}
 
 @app.post("/v1/projects/{story_id}/{chapter_id}/cancel")
 async def cancel_project_pipeline(request: Request, story_id: str, chapter_id: str):
@@ -3181,18 +3225,18 @@ async def dashboard():
                         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.2rem;">
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🎙️ Voice Profile</label>
-                                <select id="voice-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;"></select>
+                                <select id="voice-select" onchange="saveCurrentChapterConfig()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;"></select>
                             </div>
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">📢 TTS Provider</label>
-                                <select id="tts-provider-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                <select id="tts-provider-select" onchange="saveCurrentChapterConfig()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
                                     <option value="omnivoice">OmniVoice (Local GPU Voice Clone)</option>
                                     <option value="edge">EdgeTTS (Microsoft Cloud Voice)</option>
                                 </select>
                             </div>
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🎨 Art Style</label>
-                                <select id="art-style-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                <select id="art-style-select" onchange="saveCurrentChapterConfig()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
                                     <option value="watercolor">🎨 Watercolor Painting</option>
                                     <option value="thuy_mac_blackwhite">⚫ Thủy Mặc Black & White</option>
                                     <option value="2d-stick-figure-cartoon">🧸 2D Stick Figure Cartoon</option>
@@ -3201,7 +3245,7 @@ async def dashboard():
                             </div>
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">📐 Aspect Ratio</label>
-                                <select id="aspect-ratio-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                <select id="aspect-ratio-select" onchange="saveCurrentChapterConfig()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
                                     <option value="9:16">📱 Vertical 9:16 (Reels/Shorts)</option>
                                     <option value="16:9">🎬 Horizontal 16:9 (YouTube Long)</option>
                                     <option value="1:1">🔲 Square 1:1 (Post)</option>
@@ -3209,14 +3253,14 @@ async def dashboard():
                             </div>
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">💬 Subtitle Preset</label>
-                                <select id="subtitle-preset-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                <select id="subtitle-preset-select" onchange="saveCurrentChapterConfig()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
                                     <option value="viral-bold-yellow">💛 Viral Bold Yellow</option>
                                     <option value="storytelling-serif">📜 Storytelling Serif</option>
                                 </select>
                             </div>
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">✨ Visual Effect</label>
-                                <select id="effect-type-select" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                <select id="effect-type-select" onchange="saveCurrentChapterConfig()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
                                     <option value="none" selected>🚫 No Effect</option>
                                     <option value="leaves">🍃 Falling Leaves</option>
                                     <option value="snow">❄️ Falling Snow</option>
@@ -3234,15 +3278,15 @@ async def dashboard():
                             </div>
                             <div style="grid-column: span 4; display: flex; gap: 1.8rem; align-items: center; background: rgba(255,255,255,0.03); padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border); margin-top: 0.3rem;">
                                 <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 700; cursor: pointer; color: #fff;">
-                                    <input type="checkbox" id="toggle-subtitles" checked style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
+                                    <input type="checkbox" id="toggle-subtitles" onchange="saveCurrentChapterConfig()" checked style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
                                     💬 Burn Subtitles
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 700; cursor: pointer; color: #fff;">
-                                    <input type="checkbox" id="toggle-watermark" style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
+                                    <input type="checkbox" id="toggle-watermark" onchange="saveCurrentChapterConfig()" style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
                                     💧 Watermark Logo
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 700; cursor: pointer; color: #fff;">
-                                    <input type="checkbox" id="toggle-waveform" style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
+                                    <input type="checkbox" id="toggle-waveform" onchange="saveCurrentChapterConfig()" style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" />
                                     🎵 Audio Waveform
                                 </label>
                             </div>
@@ -3704,6 +3748,37 @@ async def dashboard():
             updateCurrentChapterStatusBanner();
             loadVoicesSelect();
             loadFragments(storyId, chapterId);
+        }
+
+        async function saveCurrentChapterConfig() {
+            if (!activeStoryId || !activeChapterId) return;
+            let artStyle = document.getElementById("art-style-select") ? document.getElementById("art-style-select").value : null;
+            let aspectRatio = document.getElementById("aspect-ratio-select") ? document.getElementById("aspect-ratio-select").value : null;
+            let subtitlePreset = document.getElementById("subtitle-preset-select") ? document.getElementById("subtitle-preset-select").value : null;
+            let effectType = document.getElementById("effect-type-select") ? document.getElementById("effect-type-select").value : null;
+            let useWatermark = document.getElementById("toggle-watermark") ? document.getElementById("toggle-watermark").checked : undefined;
+            let useSubtitles = document.getElementById("toggle-subtitles") ? document.getElementById("toggle-subtitles").checked : undefined;
+            let useWaveform = document.getElementById("toggle-waveform") ? document.getElementById("toggle-waveform").checked : undefined;
+
+            let payload = {
+                art_style: artStyle,
+                aspect_ratio: aspectRatio,
+                subtitle_preset: subtitlePreset,
+                effect_type: effectType,
+                use_watermark: useWatermark,
+                use_subtitles: useSubtitles,
+                use_waveform: useWaveform
+            };
+
+            try {
+                await fetch(`/v1/projects/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(activeChapterId)}/config`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+            } catch(e) {
+                console.error("Failed to save chapter config:", e);
+            }
         }
 
         async function updateCurrentChapterStatusBanner() {

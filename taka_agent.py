@@ -2340,6 +2340,40 @@ async def main():
                                 "payload": status_res
                             }))
 
+                        elif msg_type == "save_project_config_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            story_id = payload.get("story_id", "")
+                            chapter_id = payload.get("chapter_id", "")
+                            cfg_data = payload.get("config", {})
+
+                            ch_dir = AGENT_PROJECTS_DIR / story_id / chapter_id
+                            ch_dir.mkdir(parents=True, exist_ok=True)
+
+                            cfg_path = ch_dir / "project_config.json"
+                            existing_cfg = {}
+                            if cfg_path.exists():
+                                try:
+                                    with open(cfg_path, "r", encoding="utf-8") as f:
+                                        existing_cfg = json.load(f)
+                                except Exception:
+                                    pass
+                            existing_cfg.update(cfg_data)
+                            try:
+                                with open(cfg_path, "w", encoding="utf-8") as f:
+                                    json.dump(existing_cfg, f, ensure_ascii=False, indent=2)
+                                if "aspect_ratio" in existing_cfg:
+                                    with open(ch_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
+                                        f.write(str(existing_cfg["aspect_ratio"]))
+                            except Exception as ex:
+                                print(f"[Agent] Error saving project_config.json: {ex}")
+
+                            await websocket.send(json.dumps({
+                                "type": "save_project_config_response",
+                                "request_id": request_id,
+                                "payload": {"status": "ok"}
+                            }))
+
                         elif msg_type == "get_media_file_request":
                             request_id = message.get("request_id")
                             payload = message.get("payload", {})
