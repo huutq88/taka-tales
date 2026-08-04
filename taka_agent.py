@@ -41,17 +41,13 @@ def migrate_projects_structure(projects_dir: pathlib.Path):
             sub_story = item / "story"
             target_dir = dao_ly_dir / item.name
             if sub_story.exists() and sub_story.is_dir():
-                if target_dir.exists():
-                    shutil.rmtree(target_dir, ignore_errors=True)
-                shutil.move(str(sub_story), str(target_dir))
-                shutil.rmtree(item, ignore_errors=True)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                for f in sub_story.iterdir():
+                    shutil.move(str(f), str(target_dir / f.name))
                 print(f"[Agent Migration] Moved legacy sub_story {item / 'story'} -> {target_dir}")
-            else:
-                if target_dir.exists() and target_dir != item:
-                    shutil.rmtree(target_dir, ignore_errors=True)
-                if item != target_dir:
-                    shutil.move(str(item), str(target_dir))
-                    print(f"[Agent Migration] Moved legacy project {item} -> {target_dir}")
+            elif item != target_dir and not target_dir.exists():
+                shutil.move(str(item), str(target_dir))
+                print(f"[Agent Migration] Moved legacy project {item} -> {target_dir}")
 
     # Remove empty dao-ly directory if created previously with no items
     if dao_ly_dir.exists() and not any(p for p in dao_ly_dir.iterdir() if not p.name.startswith(".")):
@@ -936,9 +932,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
                 pass
 
         if force_rerun:
-            print(f"[Agent] force_rerun enabled: Deleting entire project folder {project_dir}")
-            if project_dir.exists():
-                shutil.rmtree(project_dir, ignore_errors=True)
+            print(f"[Agent] force_rerun enabled: Clearing generated cache files only for {project_dir}")
 
         project_dir.mkdir(parents=True, exist_ok=True)
         
