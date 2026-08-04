@@ -388,10 +388,19 @@ class SubtitleProcessor:
         except Exception:
             pil_font_active = pil_font
 
-        captions = scene.captions
+        margin_x_min = int(w * 0.10)
+
+        def apply_transform(txt: str) -> str:
+            if getattr(preset.text, "transform", "none") == "uppercase":
+                return txt.upper()
+            elif getattr(preset.text, "transform", "none") == "lowercase":
+                return txt.lower()
+            return txt
 
         def make_frame(t):
-            img = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
+            base_np = video.get_frame(t)
+            img = PILImage.fromarray(base_np).convert("RGBA")
+
             active_cap = None
             for cap in captions:
                 if cap.start <= t <= cap.end:
@@ -399,7 +408,7 @@ class SubtitleProcessor:
                     break
             
             if not active_cap:
-                return np.array(img)
+                return np.array(img.convert("RGB"))
 
             draw = ImageDraw.Draw(img)
             cap_words = active_cap.words or []
@@ -412,7 +421,7 @@ class SubtitleProcessor:
                 pos_y = h - safe_bottom_px - th
                 draw.text((pos_x + 2, pos_y + 4), full_text, font=pil_font, fill=preset.shadow.color, stroke_width=stroke_w, stroke_fill="#000000")
                 draw.text((pos_x, pos_y), full_text, font=pil_font, fill=preset.text.color, stroke_width=stroke_w, stroke_fill=preset.outline.color)
-                return np.array(img)
+                return np.array(img.convert("RGB"))
 
             active_word_idx = -1
             for idx_w, w_obj in enumerate(cap_words):
@@ -455,11 +464,12 @@ class SubtitleProcessor:
 
                 line_y += font_size + 14
 
-            return np.array(img)
+            return np.array(img.convert("RGB"))
 
         from moviepy.editor import VideoClip
-        sub_overlay_clip = VideoClip(make_frame, duration=video.duration).set_ismask(False)
-        final_video = CompositeVideoClip([video, sub_overlay_clip], size=(w, h))
+        final_video = VideoClip(make_frame, duration=video.duration)
+        if video.audio:
+            final_video = final_video.set_audio(video.audio)
         final_video.write_videofile(
             str(output_video_path),
             fps=video.fps or 30,
