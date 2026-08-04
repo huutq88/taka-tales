@@ -2009,7 +2009,7 @@ async def main():
                                         for i, l in enumerate(lines):
                                             frags_result.append({"index": i, "text": l})
                                 else:
-                                    ws_suffix = f"?ws={AGENT_WORKSPACE_ID}" if AGENT_WORKSPACE_ID else ""
+                                    ws_suffix = f"?ws={WORKSPACE_ID}" if WORKSPACE_ID else ""
                                     for i, ff in enumerate(frag_files):
                                         text = ff.read_text(encoding="utf-8").strip() if ff.exists() else ""
                                         frag_idx = int(re.search(r'\d+', ff.stem).group()) if re.search(r'\d+', ff.stem) else i
