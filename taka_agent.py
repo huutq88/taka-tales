@@ -1911,6 +1911,53 @@ async def main():
                                     "projects_metadata": projects_metadata
                                 }
                             }))
+                        elif msg_type == "get_fragments_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            story_id = (payload.get("story_id") or "").strip()
+                            chapter_id = (payload.get("chapter_id") or "").strip()
+                            
+                            chapter_dir = AGENT_PROJECTS_DIR / story_id / chapter_id if AGENT_PROJECTS_DIR else None
+                            frags_result = []
+                            if chapter_dir and chapter_dir.exists():
+                                frag_dir = chapter_dir / "text" / "story_fragments"
+                                frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999) if (frag_dir.exists() and frag_dir.is_dir()) else []
+                                img_dir = chapter_dir / "images"
+                                aud_dir = chapter_dir / "audio"
+                                vid_dir = chapter_dir / "videos"
+                                
+                                for i, ff in enumerate(frag_files):
+                                    text = ff.read_text(encoding="utf-8").strip() if ff.exists() else ""
+                                    item = {"index": i, "text": text}
+                                    
+                                    img_url = None
+                                    if img_dir.exists():
+                                        for img_stem in [f"image{i}", f"image_{i}", f"frame{i}", str(i)]:
+                                            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                                                if (img_dir / f"{img_stem}{ext}").exists():
+                                                    img_url = f"/v1/media/{story_id}/{chapter_id}/images/{img_stem}{ext}"
+                                                    break
+                                            if img_url: break
+                                    
+                                    aud_url = None
+                                    if aud_dir.exists():
+                                        for aud_stem in [f"voiceover{i}", f"voiceover_{i}", f"voice{i}", f"audio{i}", str(i)]:
+                                            for ext in [".mp3", ".wav", ".m4a"]:
+                                                if (aud_dir / f"{aud_stem}{ext}").exists():
+                                                    aud_url = f"/v1/media/{story_id}/{chapter_id}/audio/{aud_stem}{ext}"
+                                                    break
+                                            if aud_url: break
+                                            
+                                    item["image_url"] = img_url
+                                    item["audio_url"] = aud_url
+                                    frags_result.append(item)
+                                    
+                            await websocket.send(json.dumps({
+                                "type": "get_fragments_response",
+                                "request_id": request_id,
+                                "payload": {"fragments": frags_result}
+                            }))
+
                         elif msg_type == "open_folder_request":
                             request_id = message.get("request_id")
                             payload = message.get("payload", {})
