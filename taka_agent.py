@@ -15,6 +15,15 @@ from websockets.exceptions import ConnectionClosed
 
 from typing import Dict, Optional, List
 
+import resource
+try:
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target_limit = min(10240, hard) if hard != resource.RLIM_INFINITY else 10240
+    resource.setrlimit(resource.RLIMIT_NOFILE, (target_limit, hard))
+    print(f"[Agent] Raised file descriptor limit: {resource.getrlimit(resource.RLIMIT_NOFILE)}")
+except Exception as e:
+    print(f"[Agent] Warning: Could not raise ulimit: {e}")
+
 os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 
 # Resolve base directory (where taka_agent.py is located)

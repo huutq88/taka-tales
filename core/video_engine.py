@@ -21,6 +21,14 @@ import re
 import shutil
 import time
 
+import resource
+try:
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target_limit = min(10240, hard) if hard != resource.RLIM_INFINITY else 10240
+    resource.setrlimit(resource.RLIMIT_NOFILE, (target_limit, hard))
+except Exception:
+    pass
+
 def ensure_ffmpeg_on_path():
     if not shutil.which("ffmpeg"):
         try:
@@ -1488,7 +1496,7 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
             from pydub import AudioSegment
             files = sorted(project_dir.glob("videos/video*.mp4"), key=lambda p: int(p.stem[5:]))
             if start_idx is not None and end_idx is not None:
-                files = [f for f in files if start_idx <= int(f.stem[5:]) < end_idx]
+                files = [f for f in files if start_idx <= int(f.stem[5:]) <= end_idx]
             
             clean_voice_seg = AudioSegment.empty()
             for f in files:
@@ -1533,6 +1541,12 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
         str(out), fps=FPS, codec="libx264", audio_codec="aac",
         audio_bitrate="192k", temp_audiofile=str(temp_audio), remove_temp=True
     )
+    try:
+        final.close()
+        for c in clips:
+            c.close()
+    except Exception:
+        pass
 
     # Check if subtitle engine burn is enabled in project_config.json
     config_file = project_dir / "project_config.json"
