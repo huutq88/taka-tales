@@ -352,11 +352,13 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
 
     if not found_local:
         is_head = (request.method == "HEAD")
+        range_header = request.headers.get("range")
         res = await tunnel_request_to_agent("get_media_file_request", {
             "story_id": story_id,
             "chapter_id": chapter_id,
             "file_path": file_path,
-            "head_only": is_head
+            "head_only": is_head,
+            "range": range_header
         }, workspace_id=ws_id, timeout=10.0 if is_head else 30.0)
 
         if res and isinstance(res, dict) and res.get("exists"):
@@ -369,33 +371,25 @@ async def get_project_media(request: Request, story_id: str, chapter_id: str, fi
                     "Accept-Ranges": "bytes"
                 })
 
+            content_bytes = b""
             if res.get("content_b64"):
                 import base64
                 content_bytes = base64.b64decode(res["content_b64"])
-                file_size = len(content_bytes)
 
-            range_header = request.headers.get("range")
-            if range_header and range_header.startswith("bytes="):
-                try:
-                    ranges = range_header.split("=")[1].split("-")
-                    start = int(ranges[0]) if ranges[0] else 0
-                    end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else file_size - 1
-                    if start < file_size:
-                        end = min(end, file_size - 1)
-                        length = end - start + 1
-                        chunk = content_bytes[start:start+length]
-                        return Response(
-                            content=chunk,
-                            status_code=206,
-                            headers={
-                                "Content-Type": content_type,
-                                "Content-Range": f"bytes {start}-{end}/{file_size}",
-                                "Content-Length": str(length),
-                                "Accept-Ranges": "bytes"
-                            }
-                        )
-                except Exception:
-                    pass
+            if res.get("partial"):
+                start = res.get("start", 0)
+                end = res.get("end", len(content_bytes) - 1)
+                length = len(content_bytes)
+                return Response(
+                    content=content_bytes,
+                    status_code=206,
+                    headers={
+                        "Content-Type": content_type,
+                        "Content-Range": f"bytes {start}-{end}/{file_size}",
+                        "Content-Length": str(length),
+                        "Accept-Ranges": "bytes"
+                    }
+                )
 
             return Response(content=content_bytes, media_type=content_type, headers={"Accept-Ranges": "bytes"})
 

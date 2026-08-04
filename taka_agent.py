@@ -2426,6 +2426,7 @@ async def main():
                                         content_type = "application/octet-stream"
 
                                 file_size = found_file.stat().st_size
+                                range_hdr = payload.get("range")
                                 if payload.get("head_only"):
                                     res_payload = {
                                         "exists": True,
@@ -2437,14 +2438,46 @@ async def main():
                                     import base64
                                     try:
                                         with open(found_file, "rb") as f:
-                                            data_b64 = base64.b64encode(f.read()).decode("utf-8")
-                                        res_payload = {
-                                            "exists": True,
-                                            "content_b64": data_b64,
-                                            "content_type": content_type,
-                                            "size": file_size,
-                                            "filename": found_file.name
-                                        }
+                                            if range_hdr and range_hdr.startswith("bytes="):
+                                                try:
+                                                    r_parts = range_hdr.split("=")[1].split("-")
+                                                    start = int(r_parts[0]) if r_parts[0] else 0
+                                                    max_chunk = 2 * 1024 * 1024
+                                                    end = int(r_parts[1]) if len(r_parts) > 1 and r_parts[1] else min(start + max_chunk - 1, file_size - 1)
+                                                    start = max(0, min(start, file_size - 1))
+                                                    end = max(start, min(end, file_size - 1))
+                                                    f.seek(start)
+                                                    chunk_data = f.read(end - start + 1)
+                                                    data_b64 = base64.b64encode(chunk_data).decode("utf-8")
+                                                    res_payload = {
+                                                        "exists": True,
+                                                        "content_b64": data_b64,
+                                                        "content_type": content_type,
+                                                        "size": file_size,
+                                                        "start": start,
+                                                        "end": start + len(chunk_data) - 1,
+                                                        "partial": True,
+                                                        "filename": found_file.name
+                                                    }
+                                                except Exception:
+                                                    f.seek(0)
+                                                    data_b64 = base64.b64encode(f.read()).decode("utf-8")
+                                                    res_payload = {
+                                                        "exists": True,
+                                                        "content_b64": data_b64,
+                                                        "content_type": content_type,
+                                                        "size": file_size,
+                                                        "filename": found_file.name
+                                                    }
+                                            else:
+                                                data_b64 = base64.b64encode(f.read()).decode("utf-8")
+                                                res_payload = {
+                                                    "exists": True,
+                                                    "content_b64": data_b64,
+                                                    "content_type": content_type,
+                                                    "size": file_size,
+                                                    "filename": found_file.name
+                                                }
                                     except Exception as read_err:
                                         res_payload = {"exists": False, "error": str(read_err)}
                             else:
