@@ -4071,6 +4071,7 @@ async def dashboard():
         initLocalWsClient();
 
         async function fetchMediaViaLocalWs(url) {
+            if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") return null;
             if (!localWsReady || !localWsClient || !url || (!url.includes('/v1/media/') && !url.includes('/media/'))) return null;
             let clean = url.replace(/^https?:\/\/[^\/]+/, '').replace('/v1/media/', '').replace('/media/', '').split('?')[0];
             let parts = clean.split('/');
