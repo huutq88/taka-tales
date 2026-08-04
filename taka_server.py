@@ -575,7 +575,16 @@ curl -fsSL "$SERVER_URL/v1/system/agent/files/config.ini" -o config.ini
 mkdir -p core
 curl -fsSL "$SERVER_URL/v1/system/agent/files/core/__init__.py" -o core/__init__.py
 curl -fsSL "$SERVER_URL/v1/system/agent/files/core/video_engine.py" -o core/video_engine.py
+curl -fsSL "$SERVER_URL/v1/system/agent/files/core/text_formatter.py" -o core/text_formatter.py
 curl -fsSL "$SERVER_URL/v1/system/agent/files/core/characters_descriptions.ini" -o core/characters_descriptions.ini
+
+mkdir -p subtitle_engine
+for sfile in __init__.py alignment.py ass_renderer.py cache.py caption_segmenter.py cli.py domain.py emoji_engine.py font_manager.py layout_engine.py processor.py quality_analyzer.py speaker_manager.py svg_renderer.py transcript_resolver.py; do
+    curl -fsSL "$SERVER_URL/v1/system/agent/files/subtitle_engine/$sfile" -o "subtitle_engine/$sfile" || true
+done
+
+mkdir -p presets
+curl -fsSL "$SERVER_URL/v1/system/agent/files/presets/2d-stick-figure-cartoon.json" -o presets/2d-stick-figure-cartoon.json || true
 
 # 3. Configure config.ini with SERVER_URL and WORKSPACE_ID
 echo "[3/6] Configuring config.ini..."
@@ -849,15 +858,19 @@ Write-Host "=============================================" -ForegroundColor Cyan
 
 @app.get("/v1/system/agent/files/{filepath:path}")
 async def get_agent_file(filepath: str):
-    allowed_files = [
+    allowed_exact = [
         "taka_agent.py",
         "config.ini",
         "requirements-agent.txt",
-        "core/__init__.py",
-        "core/video_engine.py",
-        "core/characters_descriptions.ini"
+        "requirements.txt",
     ]
-    if filepath not in allowed_files:
+    is_allowed = (
+        filepath in allowed_exact
+        or filepath.startswith("core/")
+        or filepath.startswith("subtitle_engine/")
+        or filepath.startswith("presets/")
+    )
+    if not is_allowed or ".." in filepath:
         raise HTTPException(status_code=403, detail="Access denied")
     
     file_path = BASE_DIR / filepath
