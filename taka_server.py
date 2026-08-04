@@ -275,46 +275,81 @@ def fetch_lore_keeper_stories() -> list:
         {"id": "het-buon-het-dien-het-say", "title": "Hết Buồn Hết Điên Hết Sảy"}
     ]
 
+def resolve_local_media_file(bdir: pathlib.Path, file_path: str) -> Optional[pathlib.Path]:
+    if not bdir or not bdir.exists():
+        return None
+    
+    tf = (bdir / file_path).resolve()
+    if tf.exists() and tf.is_file():
+        return tf
+    
+    p = pathlib.Path(file_path)
+    parent = (bdir / p.parent).resolve() if p.parent else bdir
+    stem = p.stem
+    
+    for ext in [".jpg", ".jpeg", ".png", ".webp", ".wav", ".mp3", ".m4a", ".mp4", ".mov", ".webm"]:
+        alt = parent / f"{stem}{ext}"
+        if alt.exists() and alt.is_file():
+            return alt
+            
+    import re
+    m = re.search(r'\d+', stem)
+    if m and parent.exists() and parent.is_dir():
+        num = m.group()
+        num_int = int(num)
+        
+        if "audio" in str(p).lower():
+            for astem in [f"processed_voiceover{num_int}", f"processed_voiceover_{num_int}", f"voiceover{num_int}", f"voiceover_{num_int}", f"voice{num_int}", f"voice_{num_int}", f"audio{num_int}", f"audio_{num_int}", str(num_int)]:
+                for ext in [".wav", ".mp3", ".m4a"]:
+                    alt = parent / f"{astem}{ext}"
+                    if alt.exists() and alt.is_file():
+                        return alt
+                        
+        elif "image" in str(p).lower() or "frame" in str(p).lower():
+            for istem in [f"image{num_int}", f"image_{num_int}", f"frame{num_int}", f"frame_{num_int}", f"img{num_int}", f"img_{num_int}", str(num_int)]:
+                for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                    alt = parent / f"{istem}{ext}"
+                    if alt.exists() and alt.is_file():
+                        return alt
+                        
+        elif "video" in str(p).lower() or "clip" in str(p).lower() or p.suffix == ".mp4":
+            for vstem in [f"clip{num_int}", f"clip_{num_int}", f"video{num_int}", f"video_{num_int}", f"final", str(num_int)]:
+                for ext in [".mp4", ".mov", ".webm"]:
+                    alt = parent / f"{vstem}{ext}"
+                    if alt.exists() and alt.is_file():
+                        return alt
+                        
+        matches = [f for f in parent.iterdir() if f.is_file() and not f.name.startswith(".") and re.search(r'\b' + num + r'\b', f.name)]
+        if matches:
+            return matches[0]
+
+    if file_path == "final.mp4" or file_path.endswith(".mp4"):
+        for cand_name in ["final.mp4", f"{bdir.name}.mp4"]:
+            cand = bdir / cand_name
+            if cand.exists() and cand.is_file():
+                return cand
+        mp4s = [f for f in bdir.glob("*.mp4") if not f.name.startswith(".")]
+        if mp4s:
+            return mp4s[0]
+            
+    return None
+
 # Serve output videos and media
 @app.api_route("/v1/media/{story_id}/{chapter_id}/{file_path:path}", methods=["GET", "HEAD"])
 @app.api_route("/media/{story_id}/{chapter_id}/{file_path:path}", methods=["GET", "HEAD"])
 async def get_project_media(request: Request, story_id: str, chapter_id: str, file_path: str):
-    base_dir = (PROJECTS_DIR / story_id / chapter_id).resolve()
-    target_file = (base_dir / file_path).resolve()
-    
-    try:
-        target_file.relative_to(base_dir)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
-        
     found_local = None
-    if target_file.exists() and target_file.is_file():
-        found_local = target_file
-    else:
-        # Check local disk fallbacks for image extensions & final video
-        p = pathlib.Path(file_path)
-        if p.parent.name == "images" or "images/" in file_path:
-            stem = p.stem
-            parent = base_dir / p.parent
-            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-                alt_img = parent / f"{stem}{ext}"
-                if alt_img.exists() and alt_img.is_file():
-                    found_local = alt_img
-                    break
-        if not found_local and (file_path == "final.mp4" or file_path.endswith(".mp4")):
-            for bdir in [base_dir, PROJECTS_DIR / "dao-ly" / chapter_id, PROJECTS_DIR / "dao_ly" / chapter_id, PROJECTS_DIR / chapter_id]:
-                if bdir.exists():
-                    for cand_name in ["final.mp4", f"{story_id}_{chapter_id}.mp4", f"{chapter_id}.mp4"]:
-                        cand = bdir / cand_name
-                        if cand.exists() and cand.is_file():
-                            found_local = cand
-                            break
-                    if not found_local:
-                        mp4_files = [f for f in bdir.glob("*.mp4") if not f.name.startswith(".")]
-                        if mp4_files:
-                            found_local = mp4_files[0]
-                if found_local:
-                    break
+    cands = [
+        PROJECTS_DIR / story_id / chapter_id,
+        PROJECTS_DIR / "reels" / chapter_id,
+        PROJECTS_DIR / "dao-ly" / chapter_id,
+        PROJECTS_DIR / chapter_id,
+        PROJECTS_DIR / story_id
+    ]
+    for bdir in cands:
+        found_local = resolve_local_media_file(bdir, file_path)
+        if found_local:
+            break
 
     # If file not found on server disk, tunnel request to connected WebSocket agent
     ws_id = get_workspace_id_from_request(request)

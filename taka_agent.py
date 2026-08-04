@@ -58,6 +58,64 @@ def migrate_projects_structure(projects_dir: pathlib.Path):
         except Exception:
             pass
 
+def resolve_local_media_file(bdir: pathlib.Path, file_path: str) -> Optional[pathlib.Path]:
+    if not bdir or not bdir.exists():
+        return None
+    
+    tf = (bdir / file_path).resolve()
+    if tf.exists() and tf.is_file():
+        return tf
+    
+    p = pathlib.Path(file_path)
+    parent = (bdir / p.parent).resolve() if p.parent else bdir
+    stem = p.stem
+    
+    for ext in [".jpg", ".jpeg", ".png", ".webp", ".wav", ".mp3", ".m4a", ".mp4", ".mov", ".webm"]:
+        alt = parent / f"{stem}{ext}"
+        if alt.exists() and alt.is_file():
+            return alt
+            
+    m = re.search(r'\d+', stem)
+    if m and parent.exists() and parent.is_dir():
+        num = m.group()
+        num_int = int(num)
+        
+        if "audio" in str(p).lower():
+            for astem in [f"processed_voiceover{num_int}", f"processed_voiceover_{num_int}", f"voiceover{num_int}", f"voiceover_{num_int}", f"voice{num_int}", f"voice_{num_int}", f"audio{num_int}", f"audio_{num_int}", str(num_int)]:
+                for ext in [".wav", ".mp3", ".m4a"]:
+                    alt = parent / f"{astem}{ext}"
+                    if alt.exists() and alt.is_file():
+                        return alt
+                        
+        elif "image" in str(p).lower() or "frame" in str(p).lower():
+            for istem in [f"image{num_int}", f"image_{num_int}", f"frame{num_int}", f"frame_{num_int}", f"img{num_int}", f"img_{num_int}", str(num_int)]:
+                for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                    alt = parent / f"{istem}{ext}"
+                    if alt.exists() and alt.is_file():
+                        return alt
+                        
+        elif "video" in str(p).lower() or "clip" in str(p).lower() or p.suffix == ".mp4":
+            for vstem in [f"clip{num_int}", f"clip_{num_int}", f"video{num_int}", f"video_{num_int}", f"final", str(num_int)]:
+                for ext in [".mp4", ".mov", ".webm"]:
+                    alt = parent / f"{vstem}{ext}"
+                    if alt.exists() and alt.is_file():
+                        return alt
+                        
+        matches = [f for f in parent.iterdir() if f.is_file() and not f.name.startswith(".") and re.search(r'\b' + num + r'\b', f.name)]
+        if matches:
+            return matches[0]
+
+    if file_path == "final.mp4" or file_path.endswith(".mp4"):
+        for cand_name in ["final.mp4", f"{bdir.name}.mp4"]:
+            cand = bdir / cand_name
+            if cand.exists() and cand.is_file():
+                return cand
+        mp4s = [f for f in bdir.glob("*.mp4") if not f.name.startswith(".")]
+        if mp4s:
+            return mp4s[0]
+            
+    return None
+
 migrate_projects_structure(AGENT_PROJECTS_DIR)
 
 agent_active_tasks: Dict[str, asyncio.Task] = {}
@@ -2153,40 +2211,14 @@ async def main():
                                     AGENT_PROJECTS_DIR / story_id
                                 ]
                                 for bdir in cands:
-                                    if bdir.exists():
-                                        tf = (bdir / file_path).resolve()
-                                        if tf.exists() and tf.is_file():
-                                            found_file = tf
-                                            break
-                                        p = pathlib.Path(file_path)
-                                        if p.parent.name == "images" or "images/" in file_path:
-                                            stem = p.stem
-                                            parent = bdir / p.parent
-                                            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-                                                alt_img = parent / f"{stem}{ext}"
-                                                if alt_img.exists() and alt_img.is_file():
-                                                    found_file = alt_img
-                                                    break
-                                        if not found_file and (file_path == "final.mp4" or file_path.endswith(".mp4")):
-                                            for cand_name in ["final.mp4", f"{story_id}_{chapter_id}.mp4", f"{chapter_id}.mp4"]:
-                                                cand = bdir / cand_name
-                                                if cand.exists() and cand.is_file():
-                                                    found_file = cand
-                                                    break
-                                            if not found_file:
-                                                mp4_files = [f for f in bdir.glob("*.mp4") if not f.name.startswith(".")]
-                                                if mp4_files:
-                                                    found_file = mp4_files[0]
-                                        if found_file:
-                                            break
+                                    found_file = resolve_local_media_file(bdir, file_path)
+                                    if found_file:
+                                        break
 
                                 if not found_file and chapter_id:
                                     matches = list(AGENT_PROJECTS_DIR.glob(f"**/{chapter_id}"))
                                     if matches:
-                                        bdir = matches[0]
-                                        tf = (bdir / file_path).resolve()
-                                        if tf.exists() and tf.is_file():
-                                            found_file = tf
+                                        found_file = resolve_local_media_file(matches[0], file_path)
 
                             if found_file:
                                 import base64
