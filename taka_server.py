@@ -1605,11 +1605,12 @@ async def add_project_item(story_id: str, body: AddItemRequest):
 
     item_dir = prepare_chapter_structure(story_id, item_slug)
 
-    # Save script content into story.txt
+    # Save script content into story.txt and create fragments immediately
     if body.content and body.content.strip():
         story_file = item_dir / "story.txt"
         with open(story_file, "w", encoding="utf-8") as f:
             f.write(body.content.strip())
+        prepare_chapter_structure(story_id, item_slug, body.content.strip())
 
     # Save item.json metadata matching longform / reels format
     display_title = body.short_title or body.title
@@ -3720,7 +3721,10 @@ async def dashboard():
             loadProjects();
         }
 
+        let isConfigLoading = false;
+
         async function selectChapterInWorkspace(storyId, chapterId, title) {
+            isConfigLoading = true;
             activeStoryId = storyId;
             activeChapterId = chapterId;
             loadedChapterConfigKey = null;
@@ -3744,7 +3748,7 @@ async def dashboard():
         }
 
         async function saveCurrentChapterConfig() {
-            if (!activeStoryId || !activeChapterId) return;
+            if (!activeStoryId || !activeChapterId || isConfigLoading) return;
             let artStyle = document.getElementById("art-style-select") ? document.getElementById("art-style-select").value : null;
             let aspectRatio = document.getElementById("aspect-ratio-select") ? document.getElementById("aspect-ratio-select").value : null;
             let subtitlePreset = document.getElementById("subtitle-preset-select") ? document.getElementById("subtitle-preset-select").value : null;
@@ -3813,6 +3817,7 @@ async def dashboard():
                         document.getElementById("toggle-waveform").checked = !!stData.use_waveform;
                     }
                     loadedChapterConfigKey = currentKey;
+                    isConfigLoading = false;
                 }
 
                 let btnAll = document.getElementById("btn-run-all");

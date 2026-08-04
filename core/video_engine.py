@@ -1781,12 +1781,47 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
         thumb_img.save(thumb_jpg, "JPEG", quality=95)
         print(f"[VideoEngine] Saved thumbnail cover image at {thumb_jpg}")
 
-        # 4. Embed Metadata + Cover Art Image into MP4 via FFmpeg
-        meta_title = title_text
-        meta_artist = "@tramgactrithuc"
-        meta_comment = "#tramgactrithuc #trithuc #khampha #tuduy #cuocsong #khoahoc"
-        meta_copyright = "© 2026 Trạm Gác Tri Thức"
-        meta_encoder = "Media Engine v1.0"
+        # 4. Dynamic Metadata Extraction & Embedding + Cover Art Image into MP4 via FFmpeg
+        channel_name = ""
+        item_file = project_dir / "item.json"
+        
+        if item_file.exists():
+            try:
+                with open(item_file, "r", encoding="utf-8") as f:
+                    idata = json.load(f)
+                channel_name = idata.get("channel", "")
+                if not title_text or title_text == short_title:
+                    title_text = idata.get("title", title_text)
+            except Exception:
+                pass
+
+        if not channel_name and config_file.exists():
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                channel_name = cfg.get("channel", "")
+            except Exception:
+                pass
+
+        if not channel_name:
+            p_str = str(project_dir).lower()
+            if "playnet" in p_str or "en" in p_str or "knowledge" in p_str:
+                channel_name = "@playnet.zone-en"
+            else:
+                channel_name = "@tramgactrithuc"
+
+        meta_title = title_text or project_name
+        meta_artist = channel_name
+        
+        clean_slug = project_dir.name.replace("-", "").replace("_", "")
+        if "en" in channel_name or "playnet" in str(project_dir).lower():
+            meta_comment = f"#playnet #knowledge #{clean_slug} #educational #science"
+            meta_copyright = f"© 2026 {channel_name.lstrip('@')}"
+        else:
+            meta_comment = f"#tramgactrithuc #trithuc #{clean_slug} #khampha #tuduy #cuocsong #khoahoc"
+            meta_copyright = f"© 2026 {channel_name.lstrip('@')}"
+            
+        meta_encoder = "Taka Media Engine v1.0"
         
         tagged_mp4 = project_dir / f"{project_name}_tagged.mp4"
         cmd = [

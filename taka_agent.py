@@ -2149,6 +2149,20 @@ async def main():
                                     story_txt = target_dir / "story.txt"
                                     if story_txt.exists():
                                         txt_content = story_txt.read_text(encoding="utf-8").strip()
+                                        if txt_content:
+                                            try:
+                                                from core import video_engine
+                                                video_engine.prepare_chapter_structure(story_id, chapter_id, txt_content, chapter_dir=target_dir)
+                                                frag_dir = target_dir / "text" / "story_fragments"
+                                                if frag_dir.exists():
+                                                    frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999)
+                                            except Exception as ex:
+                                                print(f"[Agent] Failed auto-generating fragments: {ex}")
+
+                                if not frag_files:
+                                    story_txt = target_dir / "story.txt"
+                                    if story_txt.exists():
+                                        txt_content = story_txt.read_text(encoding="utf-8").strip()
                                         lines = [l.strip() for l in txt_content.split("\n") if l.strip()]
                                         for i, l in enumerate(lines):
                                             frags_result.append({"index": i, "text": l})
