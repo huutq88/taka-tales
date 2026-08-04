@@ -2457,7 +2457,7 @@ async def save_project_config_endpoint(request: Request, story_id: str, chapter_
         except Exception:
             pass
 
-    for k in ["art_style", "subtitle_preset", "aspect_ratio", "use_watermark", "use_subtitles", "use_waveform", "image_generator", "effect_type"]:
+    for k in ["art_style", "subtitle_preset", "aspect_ratio", "use_watermark", "use_subtitles", "use_waveform", "image_generator", "effect_type", "voice_id", "tts_provider", "voice_speed"]:
         if k in body and body[k] is not None:
             config_data[k] = body[k]
 
@@ -3749,6 +3749,8 @@ async def dashboard():
             let aspectRatio = document.getElementById("aspect-ratio-select") ? document.getElementById("aspect-ratio-select").value : null;
             let subtitlePreset = document.getElementById("subtitle-preset-select") ? document.getElementById("subtitle-preset-select").value : null;
             let effectType = document.getElementById("effect-type-select") ? document.getElementById("effect-type-select").value : null;
+            let voiceId = document.getElementById("voice-select") ? document.getElementById("voice-select").value : null;
+            let ttsProvider = document.getElementById("tts-provider-select") ? document.getElementById("tts-provider-select").value : null;
             let useWatermark = document.getElementById("toggle-watermark") ? document.getElementById("toggle-watermark").checked : undefined;
             let useSubtitles = document.getElementById("toggle-subtitles") ? document.getElementById("toggle-subtitles").checked : undefined;
             let useWaveform = document.getElementById("toggle-waveform") ? document.getElementById("toggle-waveform").checked : undefined;
@@ -3758,6 +3760,8 @@ async def dashboard():
                 aspect_ratio: aspectRatio,
                 subtitle_preset: subtitlePreset,
                 effect_type: effectType,
+                voice_id: voiceId,
+                tts_provider: ttsProvider,
                 use_watermark: useWatermark,
                 use_subtitles: useSubtitles,
                 use_waveform: useWaveform
