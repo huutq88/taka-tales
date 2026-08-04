@@ -4010,6 +4010,7 @@ async def dashboard():
                 html += `</div>`;
                 container.innerHTML = html;
                 updateFragmentHighlights();
+                setTimeout(convertFragmentThumbnailsToLocalBlobs, 50);
             } catch(e) {
                 container.innerHTML = `<p style="color: var(--danger);">Error loading fragments: ${e.message}</p>`;
             }
@@ -4018,20 +4019,47 @@ async def dashboard():
         let localWsClient = null;
         let localWsReady = false;
         let localWsPending = {};
+        let lastHeaderMap = {};
 
         function initLocalWsClient() {
             try {
                 let ws = new WebSocket("ws://127.0.0.1:8767");
+                ws.binaryType = "arraybuffer";
                 ws.onopen = () => { localWsReady = true; };
+                let pendingReqId = null;
                 ws.onmessage = (e) => {
-                    try {
-                        let data = JSON.parse(e.data);
-                        let cb = localWsPending[data.request_id];
-                        if (cb) {
-                            delete localWsPending[data.request_id];
-                            cb(data);
+                    if (typeof e.data === "string") {
+                        try {
+                            let data = JSON.parse(e.data);
+                            let reqId = data.request_id;
+                            if (data.exists === false) {
+                                let cb = localWsPending[reqId];
+                                if (cb) {
+                                    delete localWsPending[reqId];
+                                    cb(null);
+                                }
+                            } else if (data.exists === true) {
+                                pendingReqId = reqId;
+                                lastHeaderMap[reqId] = data;
+                            }
+                        } catch(err) {}
+                    } else if (e.data instanceof ArrayBuffer) {
+                        if (pendingReqId && localWsPending[pendingReqId]) {
+                            let header = lastHeaderMap[pendingReqId] || {};
+                            let reqId = pendingReqId;
+                            pendingReqId = null;
+                            delete lastHeaderMap[reqId];
+                            let cb = localWsPending[reqId];
+                            delete localWsPending[reqId];
+                            try {
+                                let blob = new Blob([e.data], { type: header.content_type || "application/octet-stream" });
+                                let blobUrl = URL.createObjectURL(blob);
+                                cb(blobUrl);
+                            } catch(err) {
+                                cb(null);
+                            }
                         }
-                    } catch(err) {}
+                    }
                 };
                 ws.onerror = ws.onclose = () => {
                     localWsReady = false;
@@ -4043,7 +4071,7 @@ async def dashboard():
         initLocalWsClient();
 
         async function fetchMediaViaLocalWs(url) {
-            if (!localWsReady || !localWsClient || !url || (!url.includes('/v1/media/') && !url.includes('/media/')) || url.includes('.mp4')) return null;
+            if (!localWsReady || !localWsClient || !url || (!url.includes('/v1/media/') && !url.includes('/media/'))) return null;
             let clean = url.replace(/^https?:\/\/[^\/]+/, '').replace('/v1/media/', '').replace('/media/', '').split('?')[0];
             let parts = clean.split('/');
             if (parts.length < 3) return null;
@@ -4072,23 +4100,31 @@ async def dashboard():
                         delete localWsPending[reqId];
                         resolve(null);
                     }
-                }, 5000);
+                }, 8000);
             });
+        }
+
+        async function convertFragmentThumbnailsToLocalBlobs() {
+            let images = document.querySelectorAll("#fragments-list-container img[src]");
+            for (let img of images) {
+                let originalUrl = img.getAttribute("src");
+                if (originalUrl && (originalUrl.includes("/v1/media/") || originalUrl.includes("/media/")) && !originalUrl.startsWith("blob:")) {
+                    try {
+                        let blobUrl = await fetchMediaViaLocalWs(originalUrl);
+                        if (blobUrl) {
+                            img.src = blobUrl;
+                        }
+                    } catch(err) {}
+                }
+            }
         }
 
         let currentAudioPlayer = null;
         async function playFragmentAudio(url, btn) {
             let finalUrl = url;
-            let localMedia = await fetchMediaViaLocalWs(url);
-            if (localMedia && localMedia.exists && localMedia.content_b64) {
-                let byteChars = atob(localMedia.content_b64);
-                let byteNumbers = new Array(byteChars.length);
-                for (let i = 0; i < byteChars.length; i++) {
-                    byteNumbers[i] = byteChars.charCodeAt(i);
-                }
-                let byteArray = new Uint8Array(byteNumbers);
-                let blob = new Blob([byteArray], { type: localMedia.content_type || "audio/wav" });
-                finalUrl = URL.createObjectURL(blob);
+            let blobUrl = await fetchMediaViaLocalWs(url);
+            if (blobUrl) {
+                finalUrl = blobUrl;
             }
 
             if (currentAudioPlayer) {
@@ -4115,16 +4151,9 @@ async def dashboard():
 
         async function openMediaPreviewModal(url, type, title, isMismatch, w, h, targetRatio) {
             let finalUrl = url;
-            let localMedia = await fetchMediaViaLocalWs(url);
-            if (localMedia && localMedia.exists && localMedia.content_b64) {
-                let byteChars = atob(localMedia.content_b64);
-                let byteNumbers = new Array(byteChars.length);
-                for (let i = 0; i < byteChars.length; i++) {
-                    byteNumbers[i] = byteChars.charCodeAt(i);
-                }
-                let byteArray = new Uint8Array(byteNumbers);
-                let blob = new Blob([byteArray], { type: localMedia.content_type || (type === "image" ? "image/jpeg" : "video/mp4") });
-                finalUrl = URL.createObjectURL(blob);
+            let blobUrl = await fetchMediaViaLocalWs(url);
+            if (blobUrl) {
+                finalUrl = blobUrl;
             }
 
             let modal = document.getElementById("media-preview-modal");

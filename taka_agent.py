@@ -1748,7 +1748,7 @@ async def start_local_websocket_server():
                                     found_file = resolve_local_media_file(matches[0], file_path)
 
                         if found_file and found_file.exists():
-                            import base64, mimetypes
+                            import mimetypes
                             ctype, _ = mimetypes.guess_type(str(found_file))
                             if not ctype:
                                 if str(found_file).endswith(".mp4"):
@@ -1765,13 +1765,15 @@ async def start_local_websocket_server():
                                     ctype = "application/octet-stream"
 
                             with open(found_file, "rb") as f:
-                                content_b64 = base64.b64encode(f.read()).decode("utf-8")
+                                file_bytes = f.read()
+
                             await ws.send(json.dumps({
                                 "request_id": req_id,
                                 "exists": True,
-                                "content_b64": content_b64,
+                                "size": len(file_bytes),
                                 "content_type": ctype
                             }))
+                            await ws.send(file_bytes)
                         else:
                             await ws.send(json.dumps({"request_id": req_id, "exists": False}))
                 except Exception as ex:
