@@ -33,13 +33,15 @@ class WhisperAlignmentProvider(AlignmentProvider):
         
         # 1. Try local faster_whisper model
         try:
+            os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+            os.environ["OMP_NUM_THREADS"] = "1"
             from faster_whisper import WhisperModel
             import torch
             device = "cuda" if torch.cuda.is_available() else "cpu"
             compute_type = "float16" if device == "cuda" else "int8"
             
             print(f"[WhisperAlignmentProvider] Running local faster_whisper alignment on {audio_path.name}...")
-            fw_model = WhisperModel("small", device=device, compute_type=compute_type)
+            fw_model = WhisperModel("small", device=device, compute_type=compute_type, cpu_threads=2)
             initial_prompt = transcript.strip() if transcript else None
             segments, info = fw_model.transcribe(str(audio_path), word_timestamps=True, initial_prompt=initial_prompt, language=language)
             
