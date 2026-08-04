@@ -1535,22 +1535,53 @@ async def create_project(request: Request, body: CreateProjectRequest):
             ch_dir = proj_dir / ch["id"]
             ch_dir.mkdir(parents=True, exist_ok=True)
     else:
+        item_id = p_name
+        item_title = title
+        short_t = body.short_title or title
+        item_content = ""
+        
         if body.template_slug:
             try:
                 tpl = await get_script_template(body.template_slug)
                 if tpl:
-                    title = tpl.get("title", title)
+                    item_title = tpl.get("title", title)
                     short_t = tpl.get("short_title", title)
-                    (proj_dir / "story.txt").write_text(tpl.get("content", ""), encoding="utf-8")
-                    items.append({
-                        "id": p_name,
-                        "title": title,
-                        "short_title": short_t,
-                        "status": "idle",
-                        "slug": body.template_slug
-                    })
+                    item_content = tpl.get("content", "")
             except Exception as e:
                 print(f"[Server] Template load error: {e}")
+
+        item_dir = prepare_chapter_structure(p_name, item_id)
+        if item_content:
+            (item_dir / "story.txt").write_text(item_content, encoding="utf-8")
+            prepare_chapter_structure(p_name, item_id, item_content)
+
+        meta = {
+            "episode": 1,
+            "episode_label": "Episode 01" if (body.language or "vi") != "vi" else "Tập 01",
+            "title": item_title,
+            "short_title": short_t,
+            "slug": item_id,
+            "aspect_ratio": aspect_ratio,
+            "language": body.language or "vi",
+            "channel": "@playnet.zone-en" if (body.language or "vi") == "en" else "@playnet.zone-vi",
+            "content": item_content
+        }
+        with open(item_dir / "item.json", "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        cfg = {"aspect_ratio": aspect_ratio, "language": body.language or "vi"}
+        with open(item_dir / "project_config.json", "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        with open(item_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
+            f.write(aspect_ratio)
+
+        items.append({
+            "id": item_id,
+            "title": item_title,
+            "short_title": short_t,
+            "status": "idle",
+            "slug": item_id
+        })
 
     content_data = {
         "project_name": p_name,
