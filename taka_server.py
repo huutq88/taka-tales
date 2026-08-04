@@ -4430,3 +4430,11 @@ async def dashboard():
         content=html_content,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
