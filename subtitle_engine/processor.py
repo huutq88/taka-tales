@@ -419,15 +419,26 @@ class SubtitleProcessor:
                 sub_clips.append(sub_clip)
                 continue
 
-            # Render Word-by-Word active highlight clips cleanly without flicker or layout shift
-            for active_idx, active_word in enumerate(cap_words):
-                if active_idx == 0:
-                    w_start = min(cap.start, active_word.start)
-                else:
-                    w_start = cap_words[active_idx - 1].end
+            # 1. Silence lead-in before first word if gap exists
+            first_word_st = cap_words[0].start
+            if first_word_st > cap.start + 0.05:
+                img_bg = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
+                draw_bg = ImageDraw.Draw(img_bg)
+                lines_words = [cap_words[:len(cap_words)//2], cap_words[len(cap_words)//2:]] if len(cap.lines) > 1 and len(cap_words) >= 4 else [cap_words]
+                line_y = h - safe_bottom_px - (len(lines_words) * (font_size + 14))
+                for line_idx, l_words in enumerate(lines_words):
+                    full_line_text = " ".join([apply_transform(word.text) for word in l_words])
+                    bbox = draw_bg.textbbox((0, 0), full_line_text, font=pil_font)
+                    tw = bbox[2] - bbox[0]
+                    start_x = max(margin_x_min, (w - tw) // 2)
+                    draw_bg.text((start_x, line_y + line_idx * (font_size + 14)), full_line_text, font=pil_font, fill=preset.text.color, stroke_width=stroke_w, stroke_fill=preset.outline.color)
+                sub_clips.append(ImageClip(np.array(img_bg)).set_duration(first_word_st - cap.start).set_start(cap.start))
 
+            # 2. Render Word-by-Word active highlight clips cleanly without flicker or layout shift
+            for active_idx, active_word in enumerate(cap_words):
+                w_start = active_word.start
                 if active_idx < len(cap_words) - 1:
-                    w_end = max(active_word.end, cap_words[active_idx + 1].start)
+                    w_end = max(active_word.end, min(cap_words[active_idx + 1].start, active_word.end + 0.3))
                 else:
                     w_end = max(active_word.end, cap.end)
 

@@ -735,6 +735,20 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         finally:
             video_engine.VOICE = orig_voice
 
+    # Apply audio speed post-processing if speed != 1.0
+    desired_speed = float(merged_config.get("speed", 1.0))
+    if abs(desired_speed - 1.0) > 0.01 and out.exists() and out.stat().st_size > 0:
+        print(f"[Agent] Applying TTS speed adjustment: {desired_speed}x to {out.name}")
+        tmp_speed_out = out.with_suffix(".speed.tmp" + out.suffix)
+        cmd = [
+            "ffmpeg", "-y", "-i", str(out),
+            "-filter:a", f"atempo={desired_speed}",
+            str(tmp_speed_out)
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode == 0 and tmp_speed_out.exists() and tmp_speed_out.stat().st_size > 0:
+            shutil.move(str(tmp_speed_out), str(out))
+
 def update_reels_content_json(category_dir: pathlib.Path) -> None:
     """Scan created chapter subdirectories in category_dir and update category-level content.json (appending new items to the end)."""
     if not category_dir or not category_dir.exists():

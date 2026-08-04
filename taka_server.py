@@ -3916,14 +3916,20 @@ async def dashboard():
                     banner.innerHTML = `<span style="color: #10b981; font-weight: bold;">✅ Completed</span>`;
                     banner.style.borderColor = "rgba(16, 185, 129, 0.4)";
                     banner.style.background = "rgba(16, 185, 129, 0.15)";
-                } else if (st === "failed") {
-                    banner.innerHTML = `<span style="color: #ef4444; font-weight: bold;">❌ Failed</span>`;
-                    banner.style.borderColor = "rgba(239, 68, 68, 0.4)";
-                    banner.style.background = "rgba(239, 68, 68, 0.15)";
                 } else {
                     banner.innerHTML = `<span style="color: var(--text-muted);">Ready</span>`;
                     banner.style.borderColor = "var(--border)";
                     banner.style.background = "rgba(255, 255, 255, 0.05)";
+                }
+
+                let currentFragIdx = stData.current_fragment || 0;
+                let fragStep = stData.fragment_status ? (stData.fragment_status.step || '') : '';
+                let fragStateKey = `${currentFragIdx}_${fragStep}_${st}`;
+                if (window.lastFragStateKey !== fragStateKey) {
+                    window.lastFragStateKey = fragStateKey;
+                    if (typeof loadFragments === "function" && activeStoryId && activeChapterId) {
+                        loadFragments(activeStoryId, activeChapterId);
+                    }
                 }
             } catch(e) {}
         }
