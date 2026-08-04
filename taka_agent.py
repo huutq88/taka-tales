@@ -1917,41 +1917,76 @@ async def main():
                             story_id = (payload.get("story_id") or "").strip()
                             chapter_id = (payload.get("chapter_id") or "").strip()
                             
-                            chapter_dir = AGENT_PROJECTS_DIR / story_id / chapter_id if AGENT_PROJECTS_DIR else None
+                            target_dir = None
+                            if AGENT_PROJECTS_DIR and AGENT_PROJECTS_DIR.exists():
+                                cands = [
+                                    AGENT_PROJECTS_DIR / story_id / chapter_id,
+                                    AGENT_PROJECTS_DIR / "reels" / chapter_id,
+                                    AGENT_PROJECTS_DIR / "dao-ly" / chapter_id,
+                                    AGENT_PROJECTS_DIR / chapter_id,
+                                    AGENT_PROJECTS_DIR / story_id
+                                ]
+                                for cand in cands:
+                                    if cand.exists() and cand.is_dir():
+                                        target_dir = cand
+                                        break
+                                if not target_dir and chapter_id:
+                                    matches = list(AGENT_PROJECTS_DIR.glob(f"**/{chapter_id}"))
+                                    if matches:
+                                        target_dir = matches[0]
+
                             frags_result = []
-                            if chapter_dir and chapter_dir.exists():
-                                frag_dir = chapter_dir / "text" / "story_fragments"
+                            if target_dir and target_dir.exists():
+                                frag_dir = target_dir / "text" / "story_fragments"
                                 frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999) if (frag_dir.exists() and frag_dir.is_dir()) else []
-                                img_dir = chapter_dir / "images"
-                                aud_dir = chapter_dir / "audio"
-                                vid_dir = chapter_dir / "videos"
+                                img_dir = target_dir / "images"
+                                aud_dir = target_dir / "audio"
+                                vid_dir = target_dir / "videos"
                                 
-                                for i, ff in enumerate(frag_files):
-                                    text = ff.read_text(encoding="utf-8").strip() if ff.exists() else ""
-                                    item = {"index": i, "text": text}
-                                    
-                                    img_url = None
-                                    if img_dir.exists():
-                                        for img_stem in [f"image{i}", f"image_{i}", f"frame{i}", str(i)]:
-                                            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-                                                if (img_dir / f"{img_stem}{ext}").exists():
-                                                    img_url = f"/v1/media/{story_id}/{chapter_id}/images/{img_stem}{ext}"
-                                                    break
-                                            if img_url: break
-                                    
-                                    aud_url = None
-                                    if aud_dir.exists():
-                                        for aud_stem in [f"voiceover{i}", f"voiceover_{i}", f"voice{i}", f"audio{i}", str(i)]:
-                                            for ext in [".mp3", ".wav", ".m4a"]:
-                                                if (aud_dir / f"{aud_stem}{ext}").exists():
-                                                    aud_url = f"/v1/media/{story_id}/{chapter_id}/audio/{aud_stem}{ext}"
-                                                    break
-                                            if aud_url: break
-                                            
-                                    item["image_url"] = img_url
-                                    item["audio_url"] = aud_url
-                                    frags_result.append(item)
-                                    
+                                if not frag_files:
+                                    story_txt = target_dir / "story.txt"
+                                    if story_txt.exists():
+                                        txt_content = story_txt.read_text(encoding="utf-8").strip()
+                                        lines = [l.strip() for l in txt_content.split("\n") if l.strip()]
+                                        for i, l in enumerate(lines):
+                                            frags_result.append({"index": i, "text": l})
+                                else:
+                                    for i, ff in enumerate(frag_files):
+                                        text = ff.read_text(encoding="utf-8").strip() if ff.exists() else ""
+                                        item = {"index": i, "text": text}
+                                        
+                                        img_url = None
+                                        if img_dir.exists() and img_dir.is_dir():
+                                            for img_stem in [f"image{i}", f"image_{i}", f"frame{i}", f"frame_{i}", str(i)]:
+                                                for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                                                    if (img_dir / f"{img_stem}{ext}").exists():
+                                                        img_url = f"/v1/media/{story_id}/{chapter_id}/images/{img_stem}{ext}"
+                                                        break
+                                                if img_url: break
+                                        
+                                        aud_url = None
+                                        if aud_dir.exists() and aud_dir.is_dir():
+                                            for aud_stem in [f"voiceover{i}", f"voiceover_{i}", f"voice{i}", f"voice_{i}", f"audio{i}", f"audio_{i}", str(i)]:
+                                                for ext in [".mp3", ".wav", ".m4a"]:
+                                                    if (aud_dir / f"{aud_stem}{ext}").exists():
+                                                        aud_url = f"/v1/media/{story_id}/{chapter_id}/audio/{aud_stem}{ext}"
+                                                        break
+                                                if aud_url: break
+                                                
+                                        vid_url = None
+                                        if vid_dir.exists() and vid_dir.is_dir():
+                                            for vid_stem in [f"clip{i}", f"clip_{i}", f"video{i}", f"video_{i}", str(i)]:
+                                                for ext in [".mp4", ".mov", ".webm"]:
+                                                    if (vid_dir / f"{vid_stem}{ext}").exists():
+                                                        vid_url = f"/v1/media/{story_id}/{chapter_id}/videos/{vid_stem}{ext}"
+                                                        break
+                                                if vid_url: break
+
+                                        item["image_url"] = img_url
+                                        item["audio_url"] = aud_url
+                                        item["video_url"] = vid_url
+                                        frags_result.append(item)
+                                        
                             await websocket.send(json.dumps({
                                 "type": "get_fragments_response",
                                 "request_id": request_id,

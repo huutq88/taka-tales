@@ -1865,6 +1865,15 @@ async def get_script_template(slug: str):
 @app.get("/v1/projects/{story_id}/{chapter_id}/fragments")
 async def get_project_fragments(request: Request, story_id: str, chapter_id: str):
     try:
+        ws_id = get_workspace_id_from_request(request)
+        if ws_id and ws_id in agents_by_workspace:
+            res = await tunnel_request_to_agent("get_fragments_request", {
+                "story_id": story_id,
+                "chapter_id": chapter_id
+            }, workspace_id=ws_id, timeout=10.0)
+            if res and isinstance(res, dict) and res.get("fragments"):
+                return res["fragments"]
+
         content = ""
         project_dir = PROJECTS_DIR / story_id / chapter_id
         story_file = project_dir / "story.txt"
