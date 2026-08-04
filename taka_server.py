@@ -4309,7 +4309,6 @@ async def dashboard():
                 subtitleEl.innerText = `Selected Range: Fragment #${startNum} → #${endNum} (${count} clips included in pipeline)`;
             }
             
-            let fragItems = document.querySelectorAll("#fragments-list-container .frag-item");
             fragItems.forEach(item => {
                 let idx = parseInt(item.dataset.index);
                 let isSelected = (idx >= startNum && idx <= endNum);
