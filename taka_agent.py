@@ -19,6 +19,8 @@ os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH"
 
 # Resolve base directory (where taka_agent.py is located)
 AGENT_DIR = pathlib.Path(__file__).resolve().parent
+if str(AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(AGENT_DIR))
 AGENT_DATA_DIR = pathlib.Path.home() / ".taka-agent"
 AGENT_PROJECTS_DIR = AGENT_DATA_DIR / "projects"
 AGENT_PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -857,9 +859,24 @@ def update_reels_content_json(category_dir: pathlib.Path) -> None:
         except Exception as ex:
             print(f"[Agent] Failed to write content.json to {dest}: {ex}")
 
+def normalize_rerun_mode(r_mode: Optional[str]) -> str:
+    if not r_mode:
+        return "all"
+    rm = str(r_mode).lower().strip()
+    if rm in ("images", "image", "images_only", "image_only", "img"):
+        return "images_only"
+    if rm in ("audio", "voice", "audio_only", "voice_only", "tts"):
+        return "audio_only"
+    if rm in ("subtitles", "subtitle", "subtitles_only", "subtitle_only", "sub"):
+        return "subtitles_only"
+    if rm in ("video", "render", "video_only", "render_only", "clip"):
+        return "video_only"
+    return "all"
+
 async def run_pipeline_task(project_name: str, project_path_str: str, websocket, voice_config: dict = None, art_style: str = None, use_watermark: bool = True, use_waveform: bool = True, use_subtitles: bool = True, subtitle_preset: str = "viral-bold-yellow", story_text: str = None, force_rerun: bool = False, effect_type: str = "leaves", image_generator: str = "ima2", rerun_mode: str = "all", aspect_ratio: str = None):
     """Executes the full Taka-Tales pipeline and reports progress in real time."""
     try:
+        rerun_mode = normalize_rerun_mode(rerun_mode)
         # Resolve project folder relative to AGENT_DIR/projects to support remote server
         path_obj = pathlib.Path(project_path_str)
         story_id = path_obj.parent.name

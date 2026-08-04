@@ -2140,6 +2140,20 @@ async def get_project_media(story_id: str, chapter_id: str, sub_dir: str, filena
         raise HTTPException(status_code=404, detail="Media file not found")
     return FileResponse(file_path)
 
+def normalize_rerun_mode(r_mode: Optional[str]) -> str:
+    if not r_mode:
+        return "all"
+    rm = str(r_mode).lower().strip()
+    if rm in ("images", "image", "images_only", "image_only", "img"):
+        return "images_only"
+    if rm in ("audio", "voice", "audio_only", "voice_only", "tts"):
+        return "audio_only"
+    if rm in ("subtitles", "subtitle", "subtitles_only", "subtitle_only", "sub"):
+        return "subtitles_only"
+    if rm in ("video", "render", "video_only", "render_only", "clip"):
+        return "video_only"
+    return "all"
+
 @app.post("/v1/projects/{story_id}/{chapter_id}/run")
 async def run_project_pipeline(request: Request, story_id: str, chapter_id: str, request_data: Optional[RunPipelineRequest] = None):
     ws_id = get_workspace_id_from_request(request)
@@ -2284,7 +2298,7 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
     short_title = request_data.short_title.strip() if (request_data and hasattr(request_data, 'short_title') and request_data.short_title) else None
     slug = request_data.slug.strip() if (request_data and hasattr(request_data, 'slug') and request_data.slug) else None
     image_generator = request_data.image_generator if (request_data and hasattr(request_data, 'image_generator') and request_data.image_generator) else "ima2"
-    rerun_mode = request_data.rerun_mode if (request_data and hasattr(request_data, 'rerun_mode') and request_data.rerun_mode) else "all"
+    rerun_mode = normalize_rerun_mode(request_data.rerun_mode if request_data else "all")
 
     # Determine aspect ratio
     req_aspect = request_data.aspect_ratio if (request_data and hasattr(request_data, 'aspect_ratio') and request_data.aspect_ratio) else None
