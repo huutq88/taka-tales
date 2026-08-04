@@ -2009,6 +2009,7 @@ async def main():
                                         for i, l in enumerate(lines):
                                             frags_result.append({"index": i, "text": l})
                                 else:
+                                    ws_suffix = f"?ws={AGENT_WORKSPACE_ID}" if AGENT_WORKSPACE_ID else ""
                                     for i, ff in enumerate(frag_files):
                                         text = ff.read_text(encoding="utf-8").strip() if ff.exists() else ""
                                         frag_idx = int(re.search(r'\d+', ff.stem).group()) if re.search(r'\d+', ff.stem) else i
@@ -2019,7 +2020,7 @@ async def main():
                                             for img_stem in [f"image{frag_idx}", f"image_{frag_idx}", f"frame{frag_idx}", f"frame_{frag_idx}", str(frag_idx)]:
                                                 for ext in [".jpg", ".jpeg", ".png", ".webp"]:
                                                     if (img_dir / f"{img_stem}{ext}").exists():
-                                                        img_url = f"/v1/media/{story_id}/{chapter_id}/images/{img_stem}{ext}"
+                                                        img_url = f"/v1/media/{story_id}/{chapter_id}/images/{img_stem}{ext}{ws_suffix}"
                                                         break
                                                 if img_url: break
                                         
@@ -2028,7 +2029,7 @@ async def main():
                                             for aud_stem in [f"processed_voiceover{frag_idx}", f"processed_voiceover_{frag_idx}", f"voiceover{frag_idx}", f"voiceover_{frag_idx}", f"voice{frag_idx}", f"voice_{frag_idx}", f"audio{frag_idx}", f"audio_{frag_idx}", str(frag_idx)]:
                                                 for ext in [".mp3", ".wav", ".m4a"]:
                                                     if (aud_dir / f"{aud_stem}{ext}").exists():
-                                                        aud_url = f"/v1/media/{story_id}/{chapter_id}/audio/{aud_stem}{ext}"
+                                                        aud_url = f"/v1/media/{story_id}/{chapter_id}/audio/{aud_stem}{ext}{ws_suffix}"
                                                         break
                                                 if aud_url: break
                                                 
@@ -2037,7 +2038,7 @@ async def main():
                                             for vid_stem in [f"clip{frag_idx}", f"clip_{frag_idx}", f"video{frag_idx}", f"video_{frag_idx}", str(frag_idx)]:
                                                 for ext in [".mp4", ".mov", ".webm"]:
                                                     if (vid_dir / f"{vid_stem}{ext}").exists():
-                                                        vid_url = f"/v1/media/{story_id}/{chapter_id}/videos/{vid_stem}{ext}"
+                                                        vid_url = f"/v1/media/{story_id}/{chapter_id}/videos/{vid_stem}{ext}{ws_suffix}"
                                                         break
                                                 if vid_url: break
 
