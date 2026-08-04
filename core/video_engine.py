@@ -652,11 +652,12 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
 
             elif USE_SD_API == "ima2":
                 import subprocess
-                # Map size to OpenAI ima2 supported aspect ratio sizes: 1536x1024 (Landscape), 1024x1536 (Portrait), 1024x1024 (Square)
-                if IMAGE_WIDTH > IMAGE_HEIGHT:
-                    ima2_size = "1536x1024"
-                elif IMAGE_HEIGHT > IMAGE_WIDTH:
-                    ima2_size = "1024x1536"
+                # Map size to OpenAI ima2 exact aspect ratio sizes: 1824x1024 (16:9 Landscape), 1024x1824 (9:16 Portrait), 1024x1024 (1:1 Square)
+                target_ratio = IMAGE_WIDTH / IMAGE_HEIGHT if IMAGE_HEIGHT else 1.0
+                if abs(target_ratio - (16 / 9)) < 0.2 or IMAGE_WIDTH > IMAGE_HEIGHT:
+                    ima2_size = "1824x1024"
+                elif abs(target_ratio - (9 / 16)) < 0.2 or IMAGE_HEIGHT > IMAGE_WIDTH:
+                    ima2_size = "1024x1824"
                 else:
                     ima2_size = "1024x1024"
 
