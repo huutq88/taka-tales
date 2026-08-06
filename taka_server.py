@@ -56,13 +56,13 @@ def migrate_projects_structure(projects_dir: pathlib.Path):
     if not projects_dir or not projects_dir.exists():
         return
     dao_ly_dir = projects_dir / "dao-ly"
-    dao_ly_dir.mkdir(parents=True, exist_ok=True)
     
     for item in list(projects_dir.iterdir()):
         if not item.is_dir() or item.name.startswith(".") or item.name in ("music", "dao-ly", "affiliate", "test_project_1"):
             continue
             
         if item.name.startswith("dao_ly_") or item.name.startswith("dao-ly-"):
+            dao_ly_dir.mkdir(parents=True, exist_ok=True)
             sub_story = item / "story"
             target_dir = dao_ly_dir / item.name
             if sub_story.exists() and sub_story.is_dir():
@@ -73,6 +73,13 @@ def migrate_projects_structure(projects_dir: pathlib.Path):
             elif item != target_dir and not target_dir.exists():
                 shutil.move(str(item), str(target_dir))
                 print(f"[Migration] Moved legacy project {item} -> {target_dir}")
+
+    # Remove empty dao-ly directory if created previously with no items
+    if dao_ly_dir.exists() and not any(p for p in dao_ly_dir.iterdir() if not p.name.startswith(".")):
+        try:
+            shutil.rmtree(dao_ly_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 migrate_projects_structure(PROJECTS_DIR)
 
