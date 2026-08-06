@@ -3,9 +3,11 @@ import os
 import subprocess
 import base64
 import random
+import urllib.request
 
 CODEX_AUTH_PATH = os.path.expanduser("~/.codex/auth.json")
 LOCAL_STORE_PATH = os.path.expanduser("/Users/huutq/Desktop/WorkingSpace/Taka/appota-hub/services/taka-router/accounts_store.json")
+ROUTER_BASE_URL = os.getenv("TAKA_ROUTER_URL", "https://taka-router.up.railway.app").rstrip("/")
 
 def get_chatgpt_account_id(access_token):
     try:
@@ -17,21 +19,50 @@ def get_chatgpt_account_id(access_token):
         return ""
 
 def fetch_accounts():
+    # 1. Server-to-Server Flow: Call Taka Router API over HTTP
+    api_url = f"{ROUTER_BASE_URL}/admin/accounts?include_credentials=true"
+    try:
+        req = urllib.request.Request(api_url, headers={"User-Agent": "TakaTalesEngine/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            accounts = data.get("accounts", [])
+            valid_accs = []
+            for a in accounts:
+                access_token = a.get("access_token") or a.get("credentials", {}).get("access_token")
+                refresh_token = a.get("refresh_token") or a.get("credentials", {}).get("refresh_token")
+                if access_token:
+                    valid_accs.append({
+                        "name": a.get("name"),
+                        "id": a.get("id"),
+                        "credentials": {
+                            "access_token": access_token,
+                            "refresh_token": refresh_token
+                        }
+                    })
+            if valid_accs:
+                print(f"🌐 Fetched {len(valid_accs)} active account(s) via HTTP from Taka Router ({ROUTER_BASE_URL})")
+                return valid_accs
+    except Exception as e:
+        print(f"⚠️ Could not fetch accounts over HTTP from {api_url}: {e}")
+
+    # 2. Local Fallback (for local offline dev)
     if os.path.exists(LOCAL_STORE_PATH):
         try:
-            with open(LOCAL_STORE_PATH, "r") as f:
+            with open(LOCAL_STORE_PATH, "r", encoding="utf-8") as f:
                 accounts = json.load(f)
             valid_accs = [a for a in accounts if a.get("credentials", {}).get("access_token")]
             if valid_accs:
+                print(f"📁 Loaded {len(valid_accs)} account(s) from local file: {LOCAL_STORE_PATH}")
                 return valid_accs
         except Exception as e:
-            print(f"⚠️ Local store error: {e}")
+            print(f"⚠️ Local store file read error: {e}")
+
     return []
 
 def rotate_auth(index=None):
     valid_accs = fetch_accounts()
     if not valid_accs:
-        print("❌ No valid accounts found in store.")
+        print("❌ No valid accounts found in Taka Router API or local store.")
         return False
 
     if index is not None and index < len(valid_accs):
@@ -53,7 +84,7 @@ def rotate_auth(index=None):
     }
     
     os.makedirs(os.path.dirname(CODEX_AUTH_PATH), exist_ok=True)
-    with open(CODEX_AUTH_PATH, "w") as f:
+    with open(CODEX_AUTH_PATH, "w", encoding="utf-8") as f:
         json.dump(new_auth, f, indent=2)
     
     print(f"✅ Rotated auth to account: {target.get('name')} (ID: {target.get('id')})")
