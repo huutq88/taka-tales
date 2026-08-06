@@ -3,9 +3,11 @@ import os
 import subprocess
 import base64
 import random
+import urllib.request
 
 CODEX_AUTH_PATH = os.path.expanduser("~/.codex/auth.json")
 LOCAL_STORE_PATH = os.path.expanduser("/Users/huutq/Desktop/WorkingSpace/Taka/appota-hub/services/taka-router/accounts_store.json")
+RAILWAY_ACCOUNTS_URL = "https://taka-router.up.railway.app/admin/accounts?include_credentials=true"
 
 def get_chatgpt_account_id(access_token):
     try:
@@ -16,20 +18,51 @@ def get_chatgpt_account_id(access_token):
     except Exception:
         return ""
 
+def fetch_accounts():
+    # 1. Try fetching live accounts from Railway Taka Router
+    try:
+        req = urllib.request.Request(RAILWAY_ACCOUNTS_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            accounts = data.get("accounts", [])
+            valid_accs = [
+                {
+                    "name": a.get("name"),
+                    "id": a.get("id"),
+                    "credentials": {
+                        "access_token": a.get("access_token"),
+                        "refresh_token": a.get("refresh_token")
+                    }
+                }
+                for a in accounts
+                if a.get("access_token") and a.get("status") == "healthy"
+            ]
+            if valid_accs:
+                print("🌐 Fetched active accounts from Railway Taka Router.")
+                return valid_accs
+    except Exception as e:
+        print(f"⚠️ Railway router fetch skipped/failed: {e}")
+
+    # 2. Fallback to local accounts_store.json
+    if os.path.exists(LOCAL_STORE_PATH):
+        try:
+            with open(LOCAL_STORE_PATH, "r") as f:
+                accounts = json.load(f)
+            valid_accs = [a for a in accounts if a.get("credentials", {}).get("access_token")]
+            if valid_accs:
+                print("📁 Loaded active accounts from local accounts_store.json.")
+                return valid_accs
+        except Exception as e:
+            print(f"⚠️ Local store error: {e}")
+
+    return []
+
 def rotate_auth(index=None):
-    if not os.path.exists(LOCAL_STORE_PATH):
-        print(f"❌ File not found: {LOCAL_STORE_PATH}")
-        return False
-        
-    with open(LOCAL_STORE_PATH, "r") as f:
-        accounts = json.load(f)
-    
-    valid_accs = [a for a in accounts if a.get("credentials", {}).get("access_token")]
+    valid_accs = fetch_accounts()
     if not valid_accs:
-        print("❌ No valid accounts found in store.")
+        print("❌ No valid accounts found in Railway pool or local store.")
         return False
 
-    # Choose account index or pick random/next
     if index is not None and index < len(valid_accs):
         target = valid_accs[index]
     else:
@@ -48,6 +81,7 @@ def rotate_auth(index=None):
         }
     }
     
+    os.makedirs(os.path.dirname(CODEX_AUTH_PATH), exist_ok=True)
     with open(CODEX_AUTH_PATH, "w") as f:
         json.dump(new_auth, f, indent=2)
     
