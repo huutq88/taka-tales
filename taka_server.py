@@ -1328,17 +1328,23 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
                     "progress": {"status": it.get("status", "idle")}
                 })
 
+        items_dict_from_content = {}
+        if isinstance(meta.get("items"), list):
+            for it in meta["items"]:
+                if isinstance(it, dict) and it.get("id"):
+                    items_dict_from_content[it["id"]] = it
+
         for idx, item in enumerate(chaps, 1):
             ch_id = item["id"]
             meta_item = {}
+            if ch_id in items_dict_from_content:
+                meta_item.update(items_dict_from_content[ch_id])
+
             candidate_files = [
                 PROJECTS_DIR / s_id / f"{ch_id}.json",
                 PROJECTS_DIR / s_id / ch_id / "item.json",
                 PROJECTS_DIR / s_id / ch_id / "config.json",
                 PROJECTS_DIR / s_id / ch_id / "item_config.json",
-                pathlib.Path.home() / ".taka-agent" / "projects" / s_id / f"{ch_id}.json",
-                pathlib.Path.home() / ".taka-agent" / "projects" / s_id / ch_id / "item.json",
-                pathlib.Path.home() / ".taka-agent" / "projects" / s_id / ch_id / "config.json",
             ]
             for c_file in candidate_files:
                 if c_file.exists():
