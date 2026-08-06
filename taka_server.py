@@ -1267,13 +1267,23 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
                         except Exception:
                             pass
                 for ch_dir in item.iterdir():
-                    if ch_dir.is_dir() and not ch_dir.name.startswith("."):
+                    if ch_dir.name.startswith("."):
+                        continue
+                    if ch_dir.is_dir():
                         ch_id = ch_dir.name
                         key = f"{item.name}/{ch_id}"
                         if key not in agent_files:
                             agent_files[key] = {
                                 "has_story": (ch_dir / "story.txt").exists(),
                                 "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
+                            }
+                    elif ch_dir.is_file() and ch_dir.name.endswith(".json") and ch_dir.name not in ("content.json", "index.json", "project_config.json", "branding.json"):
+                        ch_id = ch_dir.stem
+                        key = f"{item.name}/{ch_id}"
+                        if key not in agent_files:
+                            agent_files[key] = {
+                                "has_story": True,
+                                "has_video": (item / f"{ch_id}.mp4").exists() or (item / f"{item.name}_{ch_id}.mp4").exists()
                             }
 
     stories_map = {s_id: [] for s_id in story_ids}
@@ -1321,34 +1331,57 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
         for idx, item in enumerate(chaps, 1):
             ch_id = item["id"]
             meta_item = {}
-            item_json = PROJECTS_DIR / s_id / ch_id / "item.json"
-            if not item_json.exists():
-                alt_json = pathlib.Path.home() / ".taka-agent" / "projects" / s_id / ch_id / "item.json"
-                if alt_json.exists():
-                    item_json = alt_json
+            candidate_files = [
+                PROJECTS_DIR / s_id / f"{ch_id}.json",
+                PROJECTS_DIR / s_id / ch_id / "item.json",
+                PROJECTS_DIR / s_id / ch_id / "config.json",
+                PROJECTS_DIR / s_id / ch_id / "item_config.json",
+                pathlib.Path.home() / ".taka-agent" / "projects" / s_id / f"{ch_id}.json",
+                pathlib.Path.home() / ".taka-agent" / "projects" / s_id / ch_id / "item.json",
+                pathlib.Path.home() / ".taka-agent" / "projects" / s_id / ch_id / "config.json",
+            ]
+            for c_file in candidate_files:
+                if c_file.exists():
+                    try:
+                        with open(c_file, "r", encoding="utf-8") as f:
+                            data_loaded = json.load(f)
+                            if isinstance(data_loaded, dict):
+                                meta_item.update(data_loaded)
+                                break
+                    except Exception:
+                        pass
 
-            if item_json.exists():
+            raw_ep = meta_item.get("episode")
+            ep_n = None
+            if raw_ep is not None:
                 try:
-                    with open(item_json, "r", encoding="utf-8") as f:
-                        meta_item = json.load(f)
-                except Exception:
+                    ep_n = int(raw_ep)
+                except (ValueError, TypeError):
                     pass
 
-            ep_n = meta_item.get("episode")
             if ep_n is None:
                 m = re.search(r"^(?:ep|tap|episode)?[-_\s]*(\d+)", ch_id, re.IGNORECASE) or re.search(r"^(?:Tập|Episode|#)?\s*(\d+)", item.get("title", ""), re.IGNORECASE)
                 ep_n = int(m.group(1)) if m else idx
+
             item["episode_num"] = ep_n
 
-            ep_label = meta_item.get("episode_label") or f"Tập {ep_n:02d}"
-            short_t = meta_item.get("short_title") or meta_item.get("title")
+            ep_label = meta_item.get("episode_label")
+            if not ep_label:
+                lang = meta_item.get("language") or "vi"
+                ep_label = f"Tập {ep_n:02d}" if lang == "vi" else f"Episode {ep_n:02d}"
+
+            short_t = meta_item.get("short_title") or meta_item.get("title") or item.get("title")
             if short_t:
-                item["title"] = f"{ep_label} - {short_t}"
+                clean_short = re.sub(r"^(?:Tập|Episode|#)?\s*\d+[\s:-]*", "", short_t, flags=re.IGNORECASE).strip()
+                if clean_short:
+                    item["title"] = f"{ep_label} - {clean_short}"
+                else:
+                    item["title"] = f"{ep_label} - {short_t}"
             else:
-                clean_t = re.sub(r"^#?\d+[\s-]*", "", item["title"])
+                clean_t = re.sub(r"^(?:Tập|Episode|#)?\s*\d+[\s:-]*", "", item.get("title", ""), flags=re.IGNORECASE).strip()
                 item["title"] = f"{ep_label} - {clean_t}"
 
-        chaps = sorted(chaps, key=lambda x: (x.get("episode_num", 999), x.get("id", "")))
+        chaps = sorted(chaps, key=lambda x: (int(x.get("episode_num", 999)), str(x.get("id", ""))))
 
         if not p_type:
             cfg_file = PROJECTS_DIR / s_id / "project_config.json"

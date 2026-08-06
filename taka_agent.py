@@ -2102,13 +2102,23 @@ async def main():
                                                 except Exception:
                                                     pass
                                             for ch_dir in item.iterdir():
-                                                if ch_dir.is_dir() and not ch_dir.name.startswith("."):
+                                                if ch_dir.name.startswith("."):
+                                                    continue
+                                                if ch_dir.is_dir():
                                                     ch_id = ch_dir.name
                                                     key = f"{item.name}/{ch_id}"
                                                     if key not in local_files:
                                                         local_files[key] = {
                                                             "has_story": (ch_dir / "story.txt").exists(),
                                                             "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
+                                                        }
+                                                elif ch_dir.is_file() and ch_dir.name.endswith(".json") and ch_dir.name not in ("content.json", "index.json", "project_config.json", "branding.json"):
+                                                    ch_id = ch_dir.stem
+                                                    key = f"{item.name}/{ch_id}"
+                                                    if key not in local_files:
+                                                        local_files[key] = {
+                                                            "has_story": True,
+                                                            "has_video": (item / f"{ch_id}.mp4").exists() or (item / f"{item.name}_{ch_id}.mp4").exists()
                                                         }
                             await websocket.send(json.dumps({
                                 "type": "list_projects_response",
