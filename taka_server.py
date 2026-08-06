@@ -1305,7 +1305,8 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
             "has_story": info.get("has_story", False),
             "has_video": info.get("has_video", False),
             "status": job_state.get("status", "idle"),
-            "progress": job_state
+            "progress": job_state,
+            "agent_meta": info.get("meta", {})
         }
         stories_map[s_id].append(item_data)
 
@@ -1325,7 +1326,8 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
                     "has_story": False,
                     "has_video": False,
                     "status": it.get("status", "idle"),
-                    "progress": {"status": it.get("status", "idle")}
+                    "progress": {"status": it.get("status", "idle")},
+                    "agent_meta": it
                 })
 
         items_dict_from_content = {}
@@ -1339,6 +1341,8 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
             meta_item = {}
             if ch_id in items_dict_from_content:
                 meta_item.update(items_dict_from_content[ch_id])
+            if item.get("agent_meta"):
+                meta_item.update(item["agent_meta"])
 
             candidate_files = [
                 PROJECTS_DIR / s_id / f"{ch_id}.json",
@@ -1373,7 +1377,7 @@ async def list_projects(request: Request, story_id: Optional[str] = None):
 
             ep_label = meta_item.get("episode_label")
             if not ep_label:
-                lang = meta_item.get("language") or "vi"
+                lang = meta_item.get("language") or meta.get("language") or "vi"
                 ep_label = f"Tập {ep_n:02d}" if lang == "vi" else f"Episode {ep_n:02d}"
 
             short_t = meta_item.get("short_title") or meta_item.get("title") or item.get("title")

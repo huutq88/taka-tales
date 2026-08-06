@@ -2104,21 +2104,47 @@ async def main():
                                             for ch_dir in item.iterdir():
                                                 if ch_dir.name.startswith("."):
                                                     continue
+                                                ch_meta = {}
                                                 if ch_dir.is_dir():
                                                     ch_id = ch_dir.name
                                                     key = f"{item.name}/{ch_id}"
+                                                    c_files = [
+                                                        ch_dir / "item.json",
+                                                        ch_dir / "config.json",
+                                                        ch_dir / "item_config.json",
+                                                        item / f"{ch_id}.json"
+                                                    ]
+                                                    for cf in c_files:
+                                                        if cf.exists():
+                                                            try:
+                                                                with open(cf, "r", encoding="utf-8") as f:
+                                                                    d = json.load(f)
+                                                                    if isinstance(d, dict):
+                                                                        ch_meta.update(d)
+                                                                        break
+                                                            except Exception:
+                                                                pass
                                                     if key not in local_files:
                                                         local_files[key] = {
                                                             "has_story": (ch_dir / "story.txt").exists(),
-                                                            "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists()
+                                                            "has_video": (ch_dir / "final.mp4").exists() or (ch_dir / f"{item.name}_{ch_id}.mp4").exists(),
+                                                            "meta": ch_meta
                                                         }
                                                 elif ch_dir.is_file() and ch_dir.name.endswith(".json") and ch_dir.name not in ("content.json", "index.json", "project_config.json", "branding.json"):
                                                     ch_id = ch_dir.stem
                                                     key = f"{item.name}/{ch_id}"
+                                                    try:
+                                                        with open(ch_dir, "r", encoding="utf-8") as f:
+                                                            d = json.load(f)
+                                                            if isinstance(d, dict):
+                                                                ch_meta.update(d)
+                                                    except Exception:
+                                                        pass
                                                     if key not in local_files:
                                                         local_files[key] = {
                                                             "has_story": True,
-                                                            "has_video": (item / f"{ch_id}.mp4").exists() or (item / f"{item.name}_{ch_id}.mp4").exists()
+                                                            "has_video": (item / f"{ch_id}.mp4").exists() or (item / f"{item.name}_{ch_id}.mp4").exists(),
+                                                            "meta": ch_meta
                                                         }
                             await websocket.send(json.dumps({
                                 "type": "list_projects_response",
