@@ -590,10 +590,10 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         "--output", str(out)
     ]
     try:
-        import torch
+        import torch, platform
         if torch.cuda.is_available():
             device = "cuda"
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        elif platform.system() != "Darwin" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             device = "mps"
         else:
             device = "cpu"
@@ -635,15 +635,16 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         import os
         sub_env = os.environ.copy()
         sub_env["PYTHONPATH"] = str(OMNIVOICE_PATH)
-        res = subprocess.run(cmd, check=True, capture_output=True, text=True, env=sub_env, cwd=str(OMNIVOICE_PATH))
+        res = subprocess.run(cmd, check=True, capture_output=True, text=True, env=sub_env, cwd=str(OMNIVOICE_PATH), timeout=180)
         print(f"[Agent] Generated OmniVoice audio at {out}")
         if res.stdout:
             print(f"[Agent] OmniVoice stdout: {res.stdout}")
         if res.stderr:
             print(f"[Agent] OmniVoice stderr: {res.stderr}")
-    except subprocess.CalledProcessError as e:
-        print(f"[Agent] OmniVoice script failed: {e.stderr}")
-        raise RuntimeError(f"OmniVoice synthesis failed: {e.stderr}")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        print(f"[Agent] OmniVoice script failed or timed out: {e}")
+        print("[Agent] Falling back to Edge-TTS...")
+        asyncio.run(video_engine.tts_edge(text, out))
 
 async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
     """Routing helper that generates voiceover according to provider settings."""
