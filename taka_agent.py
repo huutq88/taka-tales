@@ -644,11 +644,57 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
     
     # Add voice cloning or voice design flags if voice_config matches
     if voice_config:
-        mode = voice_config.get("omnivoice_mode")
-        if mode == "clone" and voice_config.get("ref_audio_path"):
-            cmd += ["--ref_audio", voice_config["ref_audio_path"]]
-            # Omit --ref_text so OmniVoice auto-transcribes reference audio with Whisper ASR,
-            # which avoids prepending reference text to generated voiceover.
+        ref_audio_path = voice_config.get("ref_audio_path")
+        ref_text = voice_config.get("ref_text")
+        voice_id = (voice_config.get("voice_id") or "").strip()
+
+        alias_map = {
+            "nam-bac-dao-ly": "nam-dao-ly",
+            "nu-appota": "nu-doc-truyen"
+        }
+        resolved_voice_id = alias_map.get(voice_id, voice_id)
+
+        if not ref_audio_path and resolved_voice_id:
+            search_folders = [
+                AGENT_VOICES_DIR / resolved_voice_id,
+                AGENT_VOICES_DIR / voice_id,
+                AGENT_DIR / "voices" / resolved_voice_id,
+                AGENT_DIR / "voices" / voice_id,
+                pathlib.Path.home() / ".taka-agent" / "voices" / resolved_voice_id,
+                pathlib.Path.home() / ".taka-agent" / "voices" / voice_id
+            ]
+            for vdir in search_folders:
+                if vdir.exists() and vdir.is_dir():
+                    for ext in [".wav", ".mp3", ".m4a", ".flac"]:
+                        cand = vdir / f"ref{ext}"
+                        if cand.exists() and cand.stat().st_size > 0:
+                            ref_audio_path = str(cand)
+                            break
+                    if not ref_audio_path:
+                        lp = vdir / "local_path.txt"
+                        if lp.exists():
+                            try:
+                                val = lp.read_text(encoding="utf-8").strip()
+                                if pathlib.Path(val).exists():
+                                    ref_audio_path = val
+                            except Exception:
+                                pass
+                    if not ref_text:
+                        for txt_name in ["ref_text.txt", "ref.txt"]:
+                            txt_file = vdir / txt_name
+                            if txt_file.exists():
+                                try:
+                                    ref_text = txt_file.read_text(encoding="utf-8").strip()
+                                    break
+                                except Exception:
+                                    pass
+                    if ref_audio_path:
+                        break
+
+        mode = voice_config.get("omnivoice_mode", "clone")
+        if ref_audio_path:
+            cmd += ["--ref_audio", ref_audio_path]
+            print(f"[Agent OmniVoice] Auto-resolved ref_audio for voice_id='{voice_id}': {ref_audio_path}")
         elif mode == "design" and voice_config.get("voice_instruct"):
             raw_inst = voice_config["voice_instruct"].strip()
             valid_tags = {
@@ -670,6 +716,7 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
                 cmd += ["--speed", str(sp_val)]
             except (ValueError, TypeError):
                 pass
+
 
     print(f"[Agent] Executing OmniVoice CLI command: {' '.join(cmd)}")
     try:
