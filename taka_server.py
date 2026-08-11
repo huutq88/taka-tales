@@ -477,12 +477,14 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default_w
             if msg_type == "status_update":
                 agent_status[workspace_id] = payload
             elif msg_type == "pipeline_progress":
-                project_name = data.get("project_name")
-                story_id = data.get("story_id")
-                chapter_id = data.get("chapter_id")
+                project_name = data.get("project_name") or payload.get("project_name")
+                story_id = data.get("story_id") or payload.get("story_id")
+                chapter_id = data.get("chapter_id") or payload.get("chapter_id")
                 
                 if story_id and chapter_id:
                     job_key = f"{story_id}/{chapter_id}"
+                elif project_name and "/" in project_name:
+                    job_key = project_name
                 elif project_name and "_" in project_name:
                     story_p, chap_p = project_name.rsplit("_", 1)
                     job_key = f"{story_p}/{chap_p}"
@@ -1628,6 +1630,8 @@ async def create_project(request: Request, body: CreateProjectRequest):
             "id": item_id,
             "title": item_title,
             "short_title": short_t,
+            "episode": meta["episode"],
+            "episode_label": meta["episode_label"],
             "status": "idle",
             "slug": item_id
         })
@@ -1772,11 +1776,17 @@ async def add_project_item(request: Request, story_id: str, body: AddItemRequest
             "id": item_slug,
             "slug": item_slug,
             "title": display_title,
+            "short_title": display_title,
+            "episode": ep_num,
+            "episode_label": ep_label,
             "status": "idle"
         }
         content_data["items"].append(new_item)
     else:
         existing["title"] = display_title
+        existing["short_title"] = display_title
+        existing["episode"] = ep_num
+        existing["episode_label"] = ep_label
 
     with open(content_file, "w", encoding="utf-8") as f:
         json.dump(content_data, f, ensure_ascii=False, indent=2)
@@ -2014,57 +2024,10 @@ async def get_project_fragments(request: Request, story_id: str, chapter_id: str
             if res and isinstance(res, dict) and res.get("fragments"):
                 return res["fragments"]
 
-        content = ""
-        project_dir = PROJECTS_DIR / story_id / chapter_id
-        story_file = project_dir / "story.txt"
-        if story_file.exists():
-            try:
-                content = story_file.read_text(encoding="utf-8")
-            except Exception:
-                pass
-
-        if story_id == "music":
-            if not content and (PROJECTS_DIR.parent / "downloaded_albums/music").exists():
-                music_story_dir = PROJECTS_DIR.parent / "downloaded_albums/music"
-                for p in music_story_dir.glob("*.txt"):
-                    if chapter_id.replace("_", " ").replace("-", " ").lower() in p.name.lower():
-                        content = p.read_text(encoding="utf-8")
-                        break
-        elif not content:
-            try:
-                from fastapi.concurrency import run_in_threadpool
-                content = await run_in_threadpool(fetch_chapter_content, chapter_id)
-            except Exception as e:
-                print(f"[Server] Warning: Failed to fetch fragments from Lore-Keeper: {e}")
-
-        if not content or not content.strip():
-            ws_id = get_workspace_id_from_request(request)
-            if ws_id and ws_id in agents_by_workspace:
-                res = await tunnel_request_to_agent("get_fragments_request", {
-                    "story_id": story_id,
-                    "chapter_id": chapter_id
-                }, workspace_id=ws_id, timeout=10.0)
-                if res and isinstance(res, dict) and "fragments" in res:
-                    return res["fragments"]
-            return []
-
-        if story_id == "music":
-            project_dir = PROJECTS_DIR / "music" / chapter_id
-            segments_file = project_dir / "segments.json"
-            if segments_file.exists():
-                try:
-                    import json
-                    with open(segments_file, "r", encoding="utf-8") as f:
-                        segments = json.load(f)
-                        return [{"index": i, "text": seg.get("text", "") or f"Slide {i+1}"} for i, seg in enumerate(segments)]
-                except Exception:
-                    pass
-            lines = [l.strip() for l in content.split("\n") if l.strip()]
-            return [{"index": i, "text": l} for i, l in enumerate(lines)]
-
         chapter_dir = PROJECTS_DIR / story_id / chapter_id
         frag_dir = chapter_dir / "text" / "story_fragments"
         
+        # 1. Scan existing fragments on disk first
         fragments_list = []
         import re
         if frag_dir.exists() and frag_dir.is_dir():
@@ -2078,27 +2041,60 @@ async def get_project_fragments(request: Request, story_id: str, chapter_id: str
                     except Exception:
                         pass
 
+        # 2. If no fragment files on disk, check local story.txt or item.json
+        content = ""
         if not fragments_list:
-            prepare_chapter_structure(story_id, chapter_id, content)
-            if frag_dir.exists() and frag_dir.is_dir():
-                frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999)
-                for f in frag_files:
-                    try:
-                        t = f.read_text(encoding="utf-8").strip()
-                        if t:
-                            fragments_list.append(t)
-                    except Exception:
-                        pass
+            story_file = chapter_dir / "story.txt"
+            item_file = chapter_dir / "item.json"
+            if story_file.exists():
+                try:
+                    content = story_file.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+            if not content and item_file.exists():
+                try:
+                    with open(item_file, "r", encoding="utf-8") as f:
+                        ij = json.load(f)
+                        content = ij.get("content", "").strip()
+                except Exception:
+                    pass
 
-        if not fragments_list:
-            lines = [l.strip() for l in content.split("\n") if l.strip()]
-            for line in lines:
-                sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip()]
-                for s in sents:
-                    if s:
-                        fragments_list.append(s)
-            if not fragments_list:
-                fragments_list = lines
+            if story_id == "music" and not content and (PROJECTS_DIR.parent / "downloaded_albums/music").exists():
+                music_story_dir = PROJECTS_DIR.parent / "downloaded_albums/music"
+                for p in music_story_dir.glob("*.txt"):
+                    if chapter_id.replace("_", " ").replace("-", " ").lower() in p.name.lower():
+                        content = p.read_text(encoding="utf-8").strip()
+                        break
+
+            # 3. Only fallback to external Lore-Keeper API if no local content or fragments exist at all
+            if not content and story_id != "music":
+                try:
+                    from fastapi.concurrency import run_in_threadpool
+                    content = await run_in_threadpool(fetch_chapter_content, chapter_id)
+                except Exception as e:
+                    print(f"[Server] Warning: Failed to fetch fragments from Lore-Keeper: {e}")
+
+            if content:
+                prepare_chapter_structure(story_id, chapter_id, content)
+                if frag_dir.exists() and frag_dir.is_dir():
+                    frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999)
+                    for f in frag_files:
+                        try:
+                            t = f.read_text(encoding="utf-8").strip()
+                            if t:
+                                fragments_list.append(t)
+                        except Exception:
+                            pass
+
+            if not fragments_list and content:
+                lines = [l.strip() for l in content.split("\n") if l.strip()]
+                for line in lines:
+                    sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', line) if s.strip()]
+                    for s in sents:
+                        if s:
+                            fragments_list.append(s)
+                if not fragments_list:
+                    fragments_list = lines
 
         # Determine configured aspect ratio for chapter_dir
         configured_aspect_ratio = None
@@ -2525,7 +2521,9 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
     trigger_message = {
         "type": "run_pipeline",
         "payload": {
-            "project_name": f"{story_id}_{chapter_id}",
+            "project_name": f"{story_id}/{chapter_id}",
+            "story_id": story_id,
+            "chapter_id": chapter_id,
             "project_path": str(project_dir),
             "voice_config": voice_payload if voice_payload else None,
             "pipeline_type": "music" if story_id == "music" else ("dao_ly" if (story_id in ("dao-ly", "dao_ly") or story_id.startswith("dao_ly_") or story_id.startswith("dao-ly-")) else "story"),
@@ -4030,16 +4028,35 @@ async def dashboard():
                     }
                 }
 
-                let itemEl = document.querySelector(`.chapter-item[data-chapter-id="${CSS.escape(activeChapterId)}"]`);
-                if (itemEl) {
-                    let badgeEl = itemEl.querySelector(".ch-status-badge");
-                    if (badgeEl) {
-                        let color = (st === "completed") ? "#10b981" : (st === "processing" || st === "running" || st === "queued") ? "#f59e0b" : "var(--text-muted)";
-                        let icon = (st === "completed") ? "● completed" : (st === "processing" || st === "running") ? "⚡ processing" : (st === "queued") ? "⏳ queued" : "● idle";
-                        badgeEl.style.color = color;
-                        badgeEl.innerText = icon;
+                let itemsList = document.querySelectorAll("#workspace-chapters-list .chapter-item");
+                itemsList.forEach(async el => {
+                    let chId = el.dataset.chapterId;
+                    if (!chId) return;
+                    if (chId === activeChapterId) {
+                        let badgeEl = el.querySelector(".ch-status-badge");
+                        if (badgeEl) {
+                            let qPos = stData.queue_position ? ` #${stData.queue_position}` : "";
+                            let color = (st === "completed") ? "#10b981" : (st === "processing" || st === "running" || st === "queued") ? "#f59e0b" : "var(--text-muted)";
+                            let icon = (st === "completed") ? "● completed" : (st === "processing" || st === "running") ? "⚡ processing" : (st === "queued") ? `⏳ queued${qPos}` : "● idle";
+                            badgeEl.style.color = color;
+                            badgeEl.innerText = icon;
+                        }
+                    } else {
+                        try {
+                            let r = await fetch(`/v1/projects/${encodeURIComponent(activeStoryId)}/${encodeURIComponent(chId)}/status`);
+                            let d = await r.json();
+                            let chSt = d.status || "idle";
+                            let badgeEl = el.querySelector(".ch-status-badge");
+                            if (badgeEl) {
+                                let qPos = d.queue_position ? ` #${d.queue_position}` : "";
+                                let color = (chSt === "completed") ? "#10b981" : (chSt === "processing" || chSt === "running" || chSt === "queued") ? "#f59e0b" : "var(--text-muted)";
+                                let icon = (chSt === "completed") ? "● completed" : (chSt === "processing" || chSt === "running") ? "⚡ processing" : (chSt === "queued") ? `⏳ queued${qPos}` : "● idle";
+                                badgeEl.style.color = color;
+                                badgeEl.innerText = icon;
+                            }
+                        } catch(err) {}
                     }
-                }
+                });
 
                 if (st === "processing" || st === "running") {
                     let step = stData.current_step || "Processing...";
@@ -4048,7 +4065,9 @@ async def dashboard():
                     banner.style.borderColor = "rgba(245, 158, 11, 0.4)";
                     banner.style.background = "rgba(245, 158, 11, 0.15)";
                 } else if (st === "queued") {
-                    banner.innerHTML = `<span style="color: #a855f7; font-weight: bold;">⏳ Queued</span>`;
+                    let qPos = stData.queue_position ? ` #${stData.queue_position}` : "";
+                    let qTot = stData.total_queued ? ` / ${stData.total_queued}` : "";
+                    banner.innerHTML = `<span style="color: #a855f7; font-weight: bold;">⏳ Queued${qPos}${qTot}</span>`;
                     banner.style.borderColor = "rgba(168, 85, 247, 0.4)";
                     banner.style.background = "rgba(168, 85, 247, 0.15)";
                 } else if (st === "completed") {

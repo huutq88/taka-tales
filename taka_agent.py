@@ -133,12 +133,17 @@ async def safe_send_ws(ws, payload: dict):
     if not ws:
         return
     try:
-        if isinstance(payload, dict) and payload.get("type") == "pipeline_progress" and payload.get("project_name"):
-            pname = payload["project_name"]
-            if "story_id" not in payload and "_" in pname:
-                sp, cp = pname.rsplit("_", 1)
-                payload["story_id"] = sp
-                payload["chapter_id"] = cp
+        if isinstance(payload, dict) and payload.get("type") == "pipeline_progress":
+            pname = payload.get("project_name", "")
+            if ("story_id" not in payload or "chapter_id" not in payload) and pname:
+                if "/" in pname:
+                    sp, cp = pname.split("/", 1)
+                    payload["story_id"] = sp
+                    payload["chapter_id"] = cp
+                elif "_" in pname:
+                    sp, cp = pname.rsplit("_", 1)
+                    payload["story_id"] = sp
+                    payload["chapter_id"] = cp
         await ws.send(json.dumps(payload))
     except Exception as e:
         print(f"[Agent] Warning: WS send progress skipped ({e})")
@@ -148,10 +153,19 @@ def reorder_queue_positions():
     for p_name, q_info in list(agent_queued_jobs.items()):
         q_info["position"] = pos
         ws = q_info.get("websocket")
+        story_id = q_info.get("story_id")
+        chapter_id = q_info.get("chapter_id")
+        if not story_id or not chapter_id:
+            if "/" in p_name:
+                story_id, chapter_id = p_name.split("/", 1)
+            elif "_" in p_name:
+                story_id, chapter_id = p_name.rsplit("_", 1)
         if ws:
             asyncio.create_task(safe_send_ws(ws, {
                 "type": "pipeline_progress",
                 "project_name": p_name,
+                "story_id": story_id,
+                "chapter_id": chapter_id,
                 "status": "queued",
                 "queue_position": pos,
                 "total_queued": len(agent_queued_jobs)
@@ -245,8 +259,25 @@ async def enqueue_or_run_job(
     rerun_mode: str = "all",
     aspect_ratio: str = None
 ):
+    path_obj = pathlib.Path(project_path_str) if project_path_str else None
+    story_id = path_obj.parent.name if (path_obj and path_obj.parent and path_obj.parent.name) else ""
+    chapter_id = path_obj.name if path_obj else ""
+    
+    if story_id and chapter_id:
+        canonical_key = f"{story_id}/{chapter_id}"
+    elif "/" in project_name:
+        canonical_key = project_name
+        story_id, chapter_id = project_name.split("/", 1)
+    elif "_" in project_name:
+        story_id, chapter_id = project_name.rsplit("_", 1)
+        canonical_key = f"{story_id}/{chapter_id}"
+    else:
+        canonical_key = project_name
+
     payload = {
-        "project_name": project_name,
+        "project_name": canonical_key,
+        "story_id": story_id,
+        "chapter_id": chapter_id,
         "project_path": project_path_str,
         "voice_config": voice_config,
         "art_style": art_style,
@@ -269,22 +300,26 @@ async def enqueue_or_run_job(
     
     if agent_active_tasks or not pipeline_queue.empty():
         q_pos = len(agent_queued_jobs) + 1
-        agent_queued_jobs[project_name] = {
+        agent_queued_jobs[canonical_key] = {
             "position": q_pos,
             "status": "queued",
             "websocket": websocket,
-            "payload": payload
+            "payload": payload,
+            "story_id": story_id,
+            "chapter_id": chapter_id
         }
         await pipeline_queue.put({
-            "project_name": project_name,
+            "project_name": canonical_key,
             "websocket": websocket,
             "payload": payload,
             "pipeline_type": pipeline_type
         })
-        print(f"[Queue Manager] Queued project '{project_name}' at position #{q_pos}. Active tasks: {len(agent_active_tasks)}")
+        print(f"[Queue Manager] Queued project '{canonical_key}' at position #{q_pos}. Active tasks: {len(agent_active_tasks)}")
         await safe_send_ws(websocket, {
             "type": "pipeline_progress",
-            "project_name": project_name,
+            "project_name": canonical_key,
+            "story_id": story_id,
+            "chapter_id": chapter_id,
             "status": "queued",
             "queue_position": q_pos,
             "total_queued": len(agent_queued_jobs),
@@ -292,23 +327,23 @@ async def enqueue_or_run_job(
         })
         return {"status": "queued", "queue_position": q_pos}
     else:
-        print(f"[Queue Manager] Agent free. Starting execution immediately for '{project_name}'.")
+        print(f"[Queue Manager] Agent free. Starting execution immediately for '{canonical_key}'.")
         if pipeline_type == "music":
             t = asyncio.create_task(run_music_pipeline_task(
-                project_name, project_path_str, websocket, voice_config, art_style,
+                canonical_key, project_path_str, websocket, voice_config, art_style,
                 use_watermark, use_subtitles, subtitle_preset, use_whisper,
                 music_b64, music_filename, music_local_path, force_rerun
             ))
-            agent_active_tasks[project_name] = t
+            agent_active_tasks[canonical_key] = t
         else:
             t = asyncio.create_task(run_pipeline_task(
-                project_name, project_path_str, websocket, voice_config, art_style,
+                canonical_key, project_path_str, websocket, voice_config, art_style,
                 use_watermark=use_watermark, use_waveform=use_waveform,
                 use_subtitles=use_subtitles, subtitle_preset=subtitle_preset,
                 story_text=story_text, force_rerun=force_rerun, effect_type=effect_type,
                 image_generator=image_generator, rerun_mode=rerun_mode, aspect_ratio=aspect_ratio
             ))
-            agent_active_tasks[project_name] = t
+            agent_active_tasks[canonical_key] = t
         return {"status": "running"}
 
 async def process_next_queued_job():
@@ -848,6 +883,16 @@ def update_reels_content_json(category_dir: pathlib.Path) -> None:
         if isinstance(item, dict):
             item_slug = item.get("slug") or item.get("id")
             if item_slug and item_slug in existing_subdirs and item_slug not in seen_slugs:
+                p = existing_subdirs[item_slug]
+                if ("episode" not in item or "episode_label" not in item) and (p / "item.json").exists():
+                    try:
+                        with open(p / "item.json", "r", encoding="utf-8") as f:
+                            item_meta = json.load(f)
+                            if "episode" not in item and "episode" in item_meta:
+                                item["episode"] = item_meta["episode"]
+                            if "episode_label" not in item and "episode_label" in item_meta:
+                                item["episode_label"] = item_meta["episode_label"]
+                    except Exception: pass
                 final_items.append(item)
                 seen_slugs.add(item_slug)
 
@@ -882,14 +927,24 @@ def update_reels_content_json(category_dir: pathlib.Path) -> None:
 
     # 5. Write content.json inside each chapter folder
     for slug, p in existing_subdirs.items():
+        item_meta = {}
+        if (p / "item.json").exists():
+            try:
+                with open(p / "item.json", "r", encoding="utf-8") as f:
+                    item_meta = json.load(f)
+            except Exception: pass
         info = kien_thuc_map.get(slug, {})
-        title = info.get("title", slug.replace("-", " ").title())
-        short_title = info.get("short_title", title)
+        title = item_meta.get("title") or info.get("title", slug.replace("-", " ").title())
+        short_title = item_meta.get("short_title") or info.get("short_title", title)
         item_data = {
             "slug": slug,
             "title": title,
             "short_title": short_title
         }
+        if "episode" in item_meta:
+            item_data["episode"] = item_meta["episode"]
+        if "episode_label" in item_meta:
+            item_data["episode_label"] = item_meta["episode_label"]
         try:
             with open(p / "content.json", "w", encoding="utf-8") as f:
                 json.dump(item_data, f, ensure_ascii=False, indent=2)
@@ -2220,18 +2275,29 @@ async def main():
                                     configured_aspect_ratio = "16:9"
 
                                 if not frag_files:
+                                    txt_content = ""
                                     story_txt = target_dir / "story.txt"
+                                    item_json = target_dir / "item.json"
                                     if story_txt.exists():
-                                        txt_content = story_txt.read_text(encoding="utf-8").strip()
-                                        if txt_content:
-                                            try:
-                                                from core import video_engine
-                                                video_engine.prepare_chapter_structure(story_id, chapter_id, txt_content, chapter_dir=target_dir)
-                                                frag_dir = target_dir / "text" / "story_fragments"
-                                                if frag_dir.exists():
-                                                    frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999)
-                                            except Exception as ex:
-                                                print(f"[Agent] Failed auto-generating fragments: {ex}")
+                                        try:
+                                            txt_content = story_txt.read_text(encoding="utf-8").strip()
+                                        except Exception: pass
+                                    if not txt_content and item_json.exists():
+                                        try:
+                                            with open(item_json, "r", encoding="utf-8") as f:
+                                                ij = json.load(f)
+                                                txt_content = ij.get("content", "").strip()
+                                        except Exception: pass
+                                        
+                                    if txt_content:
+                                        try:
+                                            from core import video_engine
+                                            video_engine.prepare_chapter_structure(story_id, chapter_id, txt_content, chapter_dir=target_dir)
+                                            frag_dir = target_dir / "text" / "story_fragments"
+                                            if frag_dir.exists():
+                                                frag_files = sorted([f for f in frag_dir.glob("*.txt")], key=lambda f: int(re.search(r'\d+', f.stem).group()) if re.search(r'\d+', f.stem) else 9999)
+                                        except Exception as ex:
+                                            print(f"[Agent] Failed auto-generating fragments: {ex}")
 
                                 if not frag_files:
                                     story_txt = target_dir / "story.txt"
