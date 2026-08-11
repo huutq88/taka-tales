@@ -669,11 +669,11 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                 import subprocess
                 # Map size to OpenAI ima2 exact aspect ratio sizes: 1824x1024 (16:9 Landscape), 1024x1824 (9:16 Portrait), 1024x1024 (1:1 Square)
                 if (aspect_ratio and aspect_ratio in ("9:16", "vertical", "portrait")) or IMAGE_HEIGHT > IMAGE_WIDTH:
-                    ima2_size = "1024x1824"
+                    ima2_size = "1024x1792"
                 elif (aspect_ratio and aspect_ratio in ("16:9", "horizontal", "landscape")) or IMAGE_WIDTH > IMAGE_HEIGHT:
-                    ima2_size = "1824x1024"
+                    ima2_size = "1792x1024"
                 else:
-                    ima2_size = "1024x1824" if IMAGE_HEIGHT >= IMAGE_WIDTH else "1824x1024"
+                    ima2_size = "1024x1792" if IMAGE_HEIGHT >= IMAGE_WIDTH else "1792x1024"
 
                 _log(f"[VideoEngine] Executing ima2 gen with size: {ima2_size} (-s {ima2_size}) for image {idx}...")
                 cmd = [
@@ -714,8 +714,8 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                             target_ratio = target_w / target_h
                             orig_ratio = orig_w / orig_h
 
-                            # If aspect ratio difference is small (< 8%), use direct LANCZOS resize to preserve 100% of image content (0% cropped)
-                            if abs(orig_ratio - target_ratio) < 0.08:
+                            # If both target and source have matching orientation (both vertical or both horizontal), use direct LANCZOS resize to preserve 100% of image content (0% cropped)
+                            if abs(orig_ratio - target_ratio) < 0.25 or (target_h > target_w and orig_h > orig_w) or (target_w > target_h and orig_w > orig_h):
                                 final_im = rgb_im.resize((target_w, target_h), Image.Resampling.LANCZOS)
                             else:
                                 # Center-crop aspect-fill only if source image has a completely different aspect ratio
