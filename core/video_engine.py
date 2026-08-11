@@ -681,6 +681,7 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                     "ima2", "gen", prompt,
                     "--mode", "direct",
                     "--quality", "low",
+                    "--model", "oauth/gpt-5.6-luna",
                     "-s", ima2_size,
                     "-o", str(image_path)
                 ]
