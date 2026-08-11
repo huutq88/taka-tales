@@ -1869,59 +1869,35 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
 
 @app.get("/v1/voices")
 async def list_voices(request: Request):
-    # 1. Fetch remote voices from Melorix Voice API (https://voice.melorix.co/api/voices)
-    try:
-        r = await asyncio.to_thread(requests.get, "https://voice.melorix.co/api/voices", timeout=5.0)
-        if r.status_code == 200:
-            melorix_voices = r.json()
-            if isinstance(melorix_voices, list) and len(melorix_voices) > 0:
-                v_items = []
-                for v in melorix_voices:
-                    v_id = v.get("id", "")
-                    v_name = v.get("name", v_id)
-                    v_items.append({
-                        "id": v_id,
-                        "name": v_name,
-                        "ref_text": v.get("ref_text", ""),
-                        "has_audio": True,
-                        "is_protected": v_id in ("nam-dao-ly", "nu-doc-truyen", "nam-bac-dao-ly")
-                    })
-                return v_items
-    except Exception as e:
-        print(f"[Server] Failed to fetch Melorix voices: {e}")
+    # Fetch remote voices exclusively from Melorix Cloud API (http://voice.melorix.co/api/voices)
+    for url in ["http://voice.melorix.co/api/voices", "https://voice.melorix.co/api/voices"]:
+        try:
+            r = await asyncio.to_thread(requests.get, url, timeout=5.0)
+            if r.status_code == 200:
+                melorix_voices = r.json()
+                if isinstance(melorix_voices, list) and len(melorix_voices) > 0:
+                    v_items = []
+                    for v in melorix_voices:
+                        v_id = v.get("id", "")
+                        v_name = v.get("name", v_id)
+                        v_items.append({
+                            "id": v_id,
+                            "name": v_name,
+                            "ref_text": v.get("ref_text", ""),
+                            "has_audio": True,
+                            "is_protected": v_id in ("nam-dao-ly", "nu-doc-truyen", "nam-bac-dao-ly")
+                        })
+                    return v_items
+        except Exception as e:
+            print(f"[Server] Failed to fetch Melorix voices from {url}: {e}")
 
-    ws_id = get_workspace_id_from_request(request)
+    # Default static Melorix cloud voice list if server offline during listing
+    return [
+        {"id": "nam-bac-dao-ly", "name": "Nam Bắc Đạo Lý", "has_audio": True, "is_protected": True},
+        {"id": "nu-doc-truyen", "name": "Nữ đọc truyện", "has_audio": True, "is_protected": True},
+        {"id": "nam-doc-truyen", "name": "Nam đọc truyện", "has_audio": True, "is_protected": True}
+    ]
 
-    agent_ws = agents_by_workspace.get(ws_id)
-    if agent_ws:
-        res = await tunnel_request_to_agent("list_voices_request", {}, workspace_id=ws_id, timeout=5.0)
-        if res and isinstance(res, dict) and isinstance(res.get("voices"), list):
-            v_items = res.get("voices")
-            for v in v_items:
-                if isinstance(v, dict):
-                    v_id = v.get("id", "")
-                    v["is_protected"] = v_id in ("nam-dao-ly", "nu-doc-truyen")
-            return sorted(v_items, key=lambda x: x.get("id", "") if isinstance(x, dict) else "")
-            
-    # Fallback to local server folder
-    voices_list = []
-    if VOICES_DIR and VOICES_DIR.exists():
-        for item in VOICES_DIR.iterdir():
-            if item.is_dir():
-                sync_and_migrate_voice_dir(item)
-                voice_id = item.name
-                has_audio = (item / "ref.wav").exists() or (item / "local_path.txt").exists()
-                ref_txt_p = item / "ref_text.txt" if (item / "ref_text.txt").exists() else (item / "ref.txt" if (item / "ref.txt").exists() else None)
-                ref_text = ref_txt_p.read_text(encoding="utf-8").strip() if ref_txt_p else ""
-                voices_list.append({
-                    "id": voice_id,
-                    "name": voice_id,
-                    "has_audio": has_audio,
-                    "has_text": bool(ref_text),
-                    "ref_text": ref_text,
-                    "is_protected": voice_id in ("nam-dao-ly", "nu-doc-truyen")
-                })
-    return sorted(voices_list, key=lambda x: x.get("id", "") if isinstance(x, dict) else "")
 
 @app.get("/v1/voices/{voice_id}/ref.wav")
 async def get_voice_audio(voice_id: str):

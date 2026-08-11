@@ -681,8 +681,8 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         print("[Agent] Falling back to Edge-TTS...")
         asyncio.run(video_engine.tts_edge(text, out))
 
-async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = None) -> bool:
-    """Try synthesizing TTS via Melorix API (https://voice.melorix.co/api/tts). Returns True if success, False if timeout/error."""
+async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
+    """Synthesize TTS audio exclusively using Melorix Voice API (http://voice.melorix.co/api/tts). No local fallback."""
     import requests, time, re
     out = pathlib.Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -701,7 +701,7 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         speed = float(voice_config.get("speed") or 1.0)
         language = voice_config.get("language") or "vi"
 
-    url = "https://voice.melorix.co/api/tts"
+    url = "http://voice.melorix.co/api/tts"
     payload = {
         "text": clean_text,
         "voice_id": voice_id,
@@ -709,93 +709,67 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         "speed": speed
     }
 
-    try:
-        print(f"[Melorix API] Requesting voice synthesis: voice_id='{voice_id}', text='{clean_text[:40]}...'")
-        resp = await asyncio.to_thread(requests.post, url, json=payload, timeout=12)
-        if resp.status_code != 200:
-            print(f"[Melorix API] Status {resp.status_code}: {resp.text}")
-            return False
-        
-        data = resp.json()
-        job_id = data.get("job_id")
-        status = data.get("status")
-        if not job_id:
-            print(f"[Melorix API] Missing job_id: {data}")
-            return False
+    print(f"[Melorix Cloud TTS] Calling http://voice.melorix.co/api/tts: voice_id='{voice_id}', text='{clean_text[:40]}...'")
+    resp = await asyncio.to_thread(requests.post, url, json=payload, timeout=60)
+    if resp.status_code != 200:
+        err_msg = f"Melorix API (http://voice.melorix.co) error status {resp.status_code}: {resp.text}"
+        print(f"[Melorix Cloud TTS] {err_msg}")
+        raise RuntimeError(err_msg)
+    
+    data = resp.json()
+    job_id = data.get("job_id")
+    status = data.get("status")
+    if not job_id:
+        err_msg = f"Missing job_id in Melorix API response: {data}"
+        print(f"[Melorix Cloud TTS] {err_msg}")
+        raise RuntimeError(err_msg)
 
-        start_t = time.time()
-        status_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/status"
-        while status != "done":
-            if time.time() - start_t > 30:
-                print(f"[Melorix API] Job {job_id} status polling timed out")
-                return False
-            await asyncio.sleep(1.5)
-            s_res = await asyncio.to_thread(requests.get, status_url, timeout=5)
-            if s_res.status_code == 200:
-                status = s_res.json().get("status")
+    start_t = time.time()
+    status_url = f"http://voice.melorix.co/api/tts/jobs/{job_id}/status"
+    while status != "done":
+        if time.time() - start_t > 90:
+            err_msg = f"Melorix API job {job_id} timed out after 90 seconds"
+            print(f"[Melorix Cloud TTS] {err_msg}")
+            raise RuntimeError(err_msg)
+        await asyncio.sleep(1.5)
+        s_res = await asyncio.to_thread(requests.get, status_url, timeout=10)
+        if s_res.status_code == 200:
+            status = s_res.json().get("status")
 
-        audio_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/audio"
-        a_res = await asyncio.to_thread(requests.get, audio_url, timeout=15)
-        if a_res.status_code != 200:
-            print(f"[Melorix API] Failed to download audio: status {a_res.status_code}")
-            return False
+    audio_url = f"http://voice.melorix.co/api/tts/jobs/{job_id}/audio"
+    a_res = await asyncio.to_thread(requests.get, audio_url, timeout=30)
+    if a_res.status_code != 200:
+        err_msg = f"Failed to download audio from Melorix API: status {a_res.status_code}"
+        print(f"[Melorix Cloud TTS] {err_msg}")
+        raise RuntimeError(err_msg)
 
-        with open(out, "wb") as f:
-            f.write(a_res.content)
-        
-        print(f"[Melorix API] Successfully generated audio ({out.stat().st_size} bytes)")
-        return True
-    except Exception as e:
-        print(f"[Melorix API] Exception / Timeout: {e}")
-        return False
+    with open(out, "wb") as f:
+        f.write(a_res.content)
+    
+    print(f"[Melorix Cloud TTS] Successfully generated audio ({out.stat().st_size} bytes)")
 
 
 async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
-    """Routing helper that generates voiceover according to provider settings."""
+    """Routing helper that generates voiceover exclusively using Melorix Cloud API."""
     default_config = {
-        "provider": config.get("AUDIO", "TTS_PROVIDER", fallback="edge"),
-        "omnivoice_mode": config.get("AUDIO", "OMNIVOICE_MODE", fallback="auto"),
-        "ref_audio_path": config.get("AUDIO", "OMNIVOICE_REF_AUDIO", fallback=None),
-        "ref_text": config.get("AUDIO", "OMNIVOICE_REF_TEXT", fallback=None),
-        "voice_instruct": config.get("AUDIO", "OMNIVOICE_INSTRUCT", fallback=None),
-        "voice_id": config.get("AUDIO", "VOICE", fallback=None),
+        "voice_id": config.get("AUDIO", "VOICE", fallback="nu-doc-truyen"),
         "language": config.get("OMNIVOICE", "LANGUAGE", fallback="vi"),
-        "speed": float(config.get("AUDIO", "OMNIVOICE_SPEED", fallback="0.85"))
+        "speed": float(config.get("AUDIO", "OMNIVOICE_SPEED", fallback="1.0"))
     }
     
-    # Merge custom voice_config over defaults
     merged_config = default_config.copy()
     if voice_config:
         for k, v in voice_config.items():
             if v is not None and v != "":
                 merged_config[k] = v
 
-    voice_id = merged_config.get("voice_id", "")
     lang = merged_config.get("language", "vi")
     from core.text_formatter import format_for_voice
     formatted_text = format_for_voice(text, language=lang)
 
-    # 1. First try Melorix Cloud API (https://voice.melorix.co)
-    melorix_success = await tts_melorix_api(formatted_text, out, merged_config)
-    if melorix_success and out.exists() and out.stat().st_size > 0:
-        return
+    # Call Melorix Cloud API directly (100% cloud, no fallback)
+    await tts_melorix_api(formatted_text, out, merged_config)
 
-    # 2. Fallback to Edge-TTS / Local provider if Melorix API is unreachable
-    print(f"[Agent] Falling back to Edge-TTS for voice_id='{voice_id}'...")
-    custom_voice = voice_id
-    if custom_voice == "nu-doc-truyen":
-        custom_voice = "vi-VN-HoaiMyNeural"
-    elif custom_voice in ("nam-dao-ly", "nam-bac-dao-ly"):
-        custom_voice = "vi-VN-NamMinhNeural"
-    elif not custom_voice:
-        custom_voice = "vi-VN-HoaiMyNeural"
-
-    orig_voice = video_engine.VOICE
-    video_engine.VOICE = custom_voice
-    try:
-        await video_engine.tts_edge(formatted_text, out)
-    finally:
-        video_engine.VOICE = orig_voice
 
 
     # Apply audio speed post-processing if speed != 1.0
