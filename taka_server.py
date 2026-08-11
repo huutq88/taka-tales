@@ -2955,11 +2955,12 @@ async def welcome_page():
 # ==========================================
 # TAKA VIDEO DUBBER & STOCK VIDEO TOOL (/cover)
 # ==========================================
-DUBBER_DIR = BASE_DIR / "storage" / "dubber"
+DUBBER_DIR = pathlib.Path.home() / "taka-cover"
 DUBBER_INPUT_DIR = DUBBER_DIR / "input"
 DUBBER_OUTPUT_DIR = DUBBER_DIR / "output"
 DUBBER_INPUT_DIR.mkdir(parents=True, exist_ok=True)
 DUBBER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 @app.post("/v1/dubber/download-video")
 async def dubber_download_video(request: Request):
