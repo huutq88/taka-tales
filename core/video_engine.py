@@ -144,7 +144,7 @@ def configure_project_resolution(project_dir: pathlib.Path = None, aspect_ratio:
         is_horizontal = (aspect_ratio in ("16:9", "horizontal", "landscape"))
     elif project_dir:
         dirs_to_check = [project_dir, project_dir.parent]
-        if project_dir.parent:
+        if project_dir.parent and project_dir.parent.parent:
             dirs_to_check.append(project_dir.parent.parent)
         for check_d in dirs_to_check:
             if not check_d or not check_d.exists():
@@ -174,6 +174,19 @@ def configure_project_resolution(project_dir: pathlib.Path = None, aspect_ratio:
                         break
                 except Exception:
                     pass
+            if (check_d / "item.json").exists():
+                try:
+                    with open(check_d / "item.json", "r", encoding="utf-8") as f:
+                        ij = json.load(f)
+                    aspect_val = ij.get("aspect_ratio")
+                    if aspect_val in ("16:9", "horizontal", "landscape"):
+                        is_horizontal = True
+                        break
+                    elif aspect_val in ("9:16", "vertical", "portrait"):
+                        is_horizontal = False
+                        break
+                except Exception:
+                    pass
             if (check_d / "content.json").exists():
                 try:
                     with open(check_d / "content.json", "r", encoding="utf-8") as f:
@@ -191,7 +204,9 @@ def configure_project_resolution(project_dir: pathlib.Path = None, aspect_ratio:
 
         if is_horizontal is None:
             p_str = str(project_dir).lower()
-            if any(k in p_str for k in ("longform", "tri-thuc", "knowledge", "sketch", "story")):
+            if any(k in p_str for k in ("reels", "reel", "shorts", "short", "vertical", "portrait")):
+                is_horizontal = False
+            elif any(k in p_str for k in ("longform", "long", "horizontal", "landscape", "sketch")):
                 is_horizontal = True
 
     if is_horizontal is None:
@@ -553,8 +568,8 @@ def generate_sd_payload(prompt: str, negative_prompt: str) -> Dict[str, Any]:
     }
 
 
-def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, force: bool = False) -> None:
-    configure_project_resolution(project_dir)
+def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, force: bool = False, aspect_ratio: str = None) -> None:
+    configure_project_resolution(project_dir, aspect_ratio=aspect_ratio)
     prompt_path = project_dir / f"text/image_prompts/image_prompt{idx}.txt"
     image_path = project_dir / f"images/image{idx}.jpg"
     if image_path.exists() and not force:

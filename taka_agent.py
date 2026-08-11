@@ -1304,7 +1304,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
                                 "total_fragments": total_frags,
                                 "fragment_status": {"idx": idx, "step": "image"}
                             }))
-                            await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style, force_img_gen)
+                            await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style, force_img_gen, final_aspect)
 
                 tasks = [gen_single(idx) for idx in target_indices]
                 await asyncio.gather(*tasks)
