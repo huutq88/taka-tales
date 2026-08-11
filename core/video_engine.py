@@ -720,8 +720,13 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                             target_ratio = target_w / target_h
                             orig_ratio = orig_w / orig_h
 
-                            # No cropping - preserve 100% of the generated ima2 image
-                            final_im = rgb_im.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                            # Center-crop aspect-fill to fit exact target canvas without distortion
+                            scale = max(target_w / orig_w, target_h / orig_h)
+                            new_w, new_h = round(orig_w * scale), round(orig_h * scale)
+                            scaled_im = rgb_im.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                            left = (new_w - target_w) // 2
+                            top = (new_h - target_h) // 2
+                            final_im = scaled_im.crop((left, top, left + target_w, top + target_h))
                             final_im.save(image_path, "JPEG", quality=95, optimize=True)
                         if png_counterpart.exists() and png_counterpart != image_path:
                             png_counterpart.unlink()
