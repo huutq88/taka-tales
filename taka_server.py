@@ -3340,6 +3340,7 @@ async def dashboard():
                             <div>
                                 <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">🎨 Art Style</label>
                                 <select id="art-style-select" onchange="saveCurrentChapterConfig()" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border); color: #fff;">
+                                    <option value="cyber_tech_glassmorphism">💎 Cyber-Tech Glassmorphism</option>
                                     <option value="watercolor">🎨 Watercolor Painting</option>
                                     <option value="thuy_mac_blackwhite">⚫ Thủy Mặc Black & White</option>
                                     <option value="2d-stick-figure-cartoon">🧸 2D Stick Figure Cartoon</option>

@@ -124,7 +124,9 @@ ART_STYLES: Dict[str, str] = {
     "2d-stick-figure-cartoon": "minimalist 2D flat vector explainer illustration, educational infographic animation style, cream background #ECE7D8, stickman character with white circular head, thick 8px black outline, orange shirt #F4A621, black necktie, simple black limbs, clean geometric shapes, flat color fills, high contrast vector art, Adobe Illustrator style presentation",
     "monochromatic_pencil_sketch": "A clean monochromatic graphite pencil concept art sketch, Warhammer 40K codex art style, clean pencil linework, smooth graphite shading, high contrast, dramatic cinematic lighting, focused composition, white and grey pencil tone, no color, dark grimdark atmosphere",
     "watercolor": "hand-painted watercolor style, soft edges, ink washes, detailed textures, classical literary book illustration of old Vietnam, warm nostalgic colors, featuring traditional Vietnamese clothing, Vietnamese village house, Vietnamese landscape, masterpiece",
-    "thuy_mac_blackwhite": "strict monochrome traditional East Asian black ink wash brush painting, ancient Chinese sumi-e style, bold black ink calligraphic brush strokes, charcoal grey washes, pure black ink on aged white Xuan paper, minimalist zen ink painting, high contrast black and white, negative space, no colors, monochrome masterpiece"
+    "thuy_mac_blackwhite": "strict monochrome traditional East Asian black ink wash brush painting, ancient Chinese sumi-e style, bold black ink calligraphic brush strokes, charcoal grey washes, pure black ink on aged white Xuan paper, minimalist zen ink painting, high contrast black and white, negative space, no colors, monochrome masterpiece",
+    "cyber_tech_glassmorphism": "Futuristic Apple Silicon chip micro-architecture with semi-transparent frosted glass UI cards floating in 3D dark space, showing execution plans, memory bandwidth graph, glowing cyan and violet laser data pipelines representing unified memory, sleek dark obsidian background, 8k resolution, cinematic lighting, ultra-high detailed 3D render",
+    "cyber-tech-glassmorphism": "Futuristic Apple Silicon chip micro-architecture with semi-transparent frosted glass UI cards floating in 3D dark space, showing execution plans, memory bandwidth graph, glowing cyan and violet laser data pipelines representing unified memory, sleek dark obsidian background, 8k resolution, cinematic lighting, ultra-high detailed 3D render"
 }
 NEGATIVE_PROMPT: str = config["STABLE_DIFFUSION"]["negative_prompt"]
 USE_SD_API: str = config["STABLE_DIFFUSION"]["USE_SD_VIA_API"]
@@ -589,6 +591,11 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
         prefix = "traditional monochrome black and white Chinese ink brush painting, sumi-e style, masterwork black ink brushwork on white Xuan paper,"
         style_suffix = "pure black ink, charcoal grey wash gradients, expressive calligraphic brush strokes, negative space, dramatic silhouette, zen art aesthetic, no color, black and white masterpiece"
         negative_str = "color, colorful, red, green, blue, yellow, warm colors, watercolor, oil painting, 3d, cgi, photorealistic, digital painting, nsfw, text, letters, words, signature, watermark, typography, chinese characters"
+        prompt = f"{prefix} {prompt_raw}, {style_suffix}"
+    elif art_style in ("cyber_tech_glassmorphism", "cyber-tech-glassmorphism"):
+        prefix = "Futuristic 3D cyber-tech glassmorphism scene depicting"
+        style_suffix = "semi-transparent frosted glass UI cards floating in 3D dark space, showing system execution plans, glowing cyan and violet laser data pipelines, sleek dark obsidian background, 8k resolution, cinematic lighting, ultra-high detailed 3D render"
+        negative_str = "flat 2d, stick figure, watercolor, hand drawn, sketchy, low quality, blurry, bright daylight, oversaturated, text errors, watermark"
         prompt = f"{prefix} {prompt_raw}, {style_suffix}"
     elif art_style == "watercolor":
         prefix = "traditional Vietnamese watercolor illustration showing"
