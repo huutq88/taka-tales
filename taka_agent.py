@@ -773,7 +773,7 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
 
 
 async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
-    """Routing helper that generates voiceover exclusively using Melorix Cloud API."""
+    """Routing helper that generates voiceover using OmniVoice (or Melorix if explicitly selected)."""
     default_config = {
         "voice_id": config.get("AUDIO", "VOICE", fallback="nu-doc-truyen"),
         "language": config.get("OMNIVOICE", "LANGUAGE", fallback="vi"),
@@ -790,8 +790,15 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
     from core.text_formatter import format_for_voice
     formatted_text = format_for_voice(text, language=lang)
 
-    # Call Melorix Cloud API directly (100% cloud, no fallback)
-    await tts_melorix_api(formatted_text, out, merged_config)
+    tts_provider = str(merged_config.get("provider") or merged_config.get("tts_provider") or "").lower()
+
+    if tts_provider == "melorix" or merged_config.get("use_melorix"):
+        print(f"[Agent Voiceover] Routing to Melorix Cloud TTS API")
+        await tts_melorix_api(formatted_text, out, merged_config)
+    else:
+        print(f"[Agent Voiceover] Routing to OmniVoice Local GPU Voice Clone (provider='{tts_provider or 'omnivoice'}')")
+        await asyncio.to_thread(tts_omnivoice, formatted_text, out, merged_config)
+
 
 
 
@@ -2834,7 +2841,8 @@ async def main():
                                 out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
                                 voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
                                 output_video = DUBBER_OUTPUT_DIR / f"{out_id}.mp4"
-                                voice_config = {"voice_id": voice_id, "speed": speed}
+                                voice_config = {"voice_id": voice_id, "speed": speed, "use_melorix": True}
+
 
                                 await generate_voiceover(text_content, voice_audio, voice_config)
                                 from core import video_engine
