@@ -3053,7 +3053,8 @@ async def dubber_process_dubbing(request: Request):
 
         input_video = DUBBER_INPUT_DIR / f"{video_id}.mp4"
         if not input_video.exists():
-            raise HTTPException(status_code=404, detail="Input video file not found")
+            raise HTTPException(status_code=404, detail="Không tìm thấy file video nguồn. Vui lòng dán link video (và bấm 'Tải Nguồn Video') hoặc chọn tab 'Tải File Lên' để nạp video trước.")
+
 
         out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
         voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
@@ -3525,7 +3526,14 @@ async def dubber_ui_page():
         }
 
         async function processDubbing() {
-            if (!currentVideoId) return alert('Chưa chọn video nguồn!');
+            if (!currentVideoId) {
+                const url = document.getElementById('video-url') ? document.getElementById('video-url').value.trim() : '';
+                if (url) {
+                    await fetchVideoFromUrl();
+                }
+            }
+            if (!currentVideoId) return alert('Chưa chọn video nguồn! Vui lòng nhập link video (và bấm Tải Nguồn Video) hoặc chọn Tải File Lên từ máy tính.');
+
             const voiceId = document.getElementById('voice-select').value;
             const text = document.getElementById('voice-text').value.trim();
             const mixMode = document.getElementById('mix-mode').value;
@@ -3535,6 +3543,7 @@ async def dubber_ui_page():
             const btnText = document.getElementById('process-btn-text');
             btnText.innerHTML = '<div class="spinner"></div> Đang đọc TTS & Lồng tiếng vào video...';
             document.getElementById('process-btn').disabled = true;
+
 
             try {
                 const res = await fetch('/v1/dubber/process', {
