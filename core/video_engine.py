@@ -669,11 +669,11 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                 import subprocess
                 # Map size to OpenAI ima2 exact aspect ratio sizes: 1824x1024 (16:9 Landscape), 1024x1824 (9:16 Portrait), 1024x1024 (1:1 Square)
                 if (aspect_ratio and aspect_ratio in ("9:16", "vertical", "portrait")) or IMAGE_HEIGHT > IMAGE_WIDTH:
-                    ima2_size = "1024x1824"
+                    ima2_size = "1152x2048"
                 elif (aspect_ratio and aspect_ratio in ("16:9", "horizontal", "landscape")) or IMAGE_WIDTH > IMAGE_HEIGHT:
                     ima2_size = "1824x1024"
                 else:
-                    ima2_size = "1024x1824" if IMAGE_HEIGHT >= IMAGE_WIDTH else "1824x1024"
+                    ima2_size = "1152x2048" if IMAGE_HEIGHT >= IMAGE_WIDTH else "1824x1024"
 
                 _log(f"[VideoEngine] Executing ima2 gen with size: {ima2_size} (-s {ima2_size}) for image {idx}...")
                 cmd = [
