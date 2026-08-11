@@ -117,8 +117,11 @@ def get_workspace_id_from_request(request: Request) -> str:
     return ws_id
 
 async def tunnel_request_to_agent(message_type: str, payload: dict, workspace_id: str = "", timeout: float = 10.0) -> Optional[dict]:
-    if not workspace_id:
-        return None
+    if not workspace_id or workspace_id not in agents_by_workspace:
+        if len(agents_by_workspace) >= 1:
+            workspace_id = list(agents_by_workspace.keys())[0]
+        else:
+            return None
     agent_ws = agents_by_workspace.get(workspace_id)
     if not agent_ws:
         return None

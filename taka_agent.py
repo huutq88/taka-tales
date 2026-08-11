@@ -431,7 +431,7 @@ server_env = os.environ.get("SERVER_URL")
 if server_env:
     SERVER_URL = server_env
 else:
-    SERVER_URL = config.get("TAKA_AGENT", "SERVER_URL", fallback="https://tales.taka.zone")
+    SERVER_URL = config.get("TAKA_AGENT", "SERVER_URL", fallback="http://127.0.0.1:8080")
 config_ws = config.get("TAKA_AGENT", "WORKSPACE_ID", fallback="").strip()
 if config_ws and config_ws.lower() not in ("auto", "default", "default_workspace") and not config_ws.startswith("device_"):
     WORKSPACE_ID = config_ws
