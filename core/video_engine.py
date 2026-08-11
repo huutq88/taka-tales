@@ -2128,3 +2128,63 @@ def make_final_music_video(project_name: str, project_dir: pathlib.Path, origina
     
     out = project_dir / f"{project_name}.mp4"
     final.write_videofile(str(out), fps=FPS, codec="libx264")
+
+
+def dub_video_with_voice(input_video_path: pathlib.Path, voice_audio_path: pathlib.Path, output_video_path: pathlib.Path, mix_mode: str = "replace", bg_volume: float = 0.15) -> pathlib.Path:
+    """
+    Dubs a video clip with a generated voiceover audio track.
+    mix_mode: 'replace' (replaces original audio completely) or 'mix' (ducks original audio and overlays voiceover).
+    """
+    import subprocess
+    input_video_path = pathlib.Path(input_video_path)
+    voice_audio_path = pathlib.Path(voice_audio_path)
+    output_video_path = pathlib.Path(output_video_path)
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if mix_mode == "mix":
+        filter_complex = f"[0:a]volume={bg_volume}[bg];[1:a]volume=1.0[voice];[bg][voice]amix=inputs=2:duration=first[aout]"
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(input_video_path),
+            "-i", str(voice_audio_path),
+            "-filter_complex", filter_complex,
+            "-map", "0:v:0",
+            "-map", "[aout]",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            str(output_video_path)
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(input_video_path),
+            "-i", str(voice_audio_path),
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            str(output_video_path)
+        ]
+    
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if res.returncode != 0 or not output_video_path.exists() or output_video_path.stat().st_size == 0:
+        from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
+        video_clip = VideoFileClip(str(input_video_path))
+        voice_clip = AudioFileClip(str(voice_audio_path))
+        if mix_mode == "mix" and video_clip.audio is not None:
+            bg_clip = video_clip.audio.volumex(bg_volume)
+            final_audio = CompositeAudioClip([bg_clip, voice_clip])
+        else:
+            final_audio = voice_clip
+        
+        final_video = video_clip.set_audio(final_audio)
+        final_video.write_videofile(str(output_video_path), fps=video_clip.fps or 30, codec="libx264", audio_codec="aac")
+        try:
+            video_clip.close()
+            voice_clip.close()
+        except Exception:
+            pass
+
+    return output_video_path
+

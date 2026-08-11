@@ -23,6 +23,8 @@ from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse, Res
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 import shutil
+import uuid
+
 
 app = FastAPI(title="Taka Coordinator Server", version="0.1.0")
 app.add_middleware(
@@ -2943,6 +2945,620 @@ async def welcome_page():
         content=html_content,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
+
+
+# ==========================================
+# TAKA VIDEO DUBBER & STOCK VIDEO TOOL (/cover)
+# ==========================================
+DUBBER_DIR = BASE_DIR / "storage" / "dubber"
+DUBBER_INPUT_DIR = DUBBER_DIR / "input"
+DUBBER_OUTPUT_DIR = DUBBER_DIR / "output"
+DUBBER_INPUT_DIR.mkdir(parents=True, exist_ok=True)
+DUBBER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+@app.post("/v1/dubber/download-video")
+async def dubber_download_video(request: Request):
+    try:
+        body = await request.json()
+        video_url = body.get("url", "").strip()
+        if not video_url:
+            raise HTTPException(status_code=400, detail="Missing video URL")
+
+        vid = f"v_{uuid.uuid4().hex[:10]}"
+        target_mp4 = DUBBER_INPUT_DIR / f"{vid}.mp4"
+
+        ytdlp_bin = BASE_DIR / "env" / "bin" / "yt-dlp"
+        if not ytdlp_bin.exists():
+            ytdlp_bin = shutil.which("yt-dlp") or "yt-dlp"
+        else:
+            ytdlp_bin = str(ytdlp_bin)
+
+        cmd = [
+            ytdlp_bin,
+            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "-o", str(target_mp4),
+            "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            video_url
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+        if not target_mp4.exists() or target_mp4.stat().st_size == 0:
+            import requests
+            headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+            r = requests.get(video_url, headers=headers, stream=True, timeout=60)
+            if r.status_code == 200:
+                with open(target_mp4, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+        if not target_mp4.exists() or target_mp4.stat().st_size == 0:
+            raise HTTPException(status_code=400, detail=f"Could not download video from URL. Please check the URL or upload the file directly.")
+
+        return {
+            "ok": True,
+            "video_id": vid,
+            "video_url": f"/v1/dubber/media/input/{vid}.mp4",
+            "size": target_mp4.stat().st_size
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/dubber/upload-video")
+async def dubber_upload_video(file: UploadFile = File(...)):
+    try:
+        vid = f"v_{uuid.uuid4().hex[:10]}"
+        target_mp4 = DUBBER_INPUT_DIR / f"{vid}.mp4"
+        with open(target_mp4, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return {
+            "ok": True,
+            "video_id": vid,
+            "video_url": f"/v1/dubber/media/input/{vid}.mp4",
+            "size": target_mp4.stat().st_size
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/dubber/process")
+async def dubber_process_dubbing(request: Request):
+    try:
+        body = await request.json()
+        video_id = body.get("video_id", "").strip()
+        voice_id = body.get("voice_id", "nam-dao-ly").strip()
+        text_content = body.get("text", "").strip()
+        mix_mode = body.get("mix_mode", "replace").strip()
+        speed = float(body.get("speed", 1.0))
+
+        if not video_id or not text_content:
+            raise HTTPException(status_code=400, detail="Missing video_id or text content")
+
+        input_video = DUBBER_INPUT_DIR / f"{video_id}.mp4"
+        if not input_video.exists():
+            raise HTTPException(status_code=404, detail="Input video file not found")
+
+        out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
+        voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
+        output_video = DUBBER_OUTPUT_DIR / f"{out_id}.mp4"
+
+        voice_config = {"voice_id": voice_id, "speed": speed}
+        try:
+            import taka_agent
+            await taka_agent.generate_voiceover(text_content, voice_audio, voice_config)
+        except Exception as tts_err:
+            print(f"[Dubber] TTS generation error: {tts_err}")
+            raise HTTPException(status_code=500, detail=f"TTS error: {tts_err}")
+
+        from core import video_engine
+        await asyncio.to_thread(
+            video_engine.dub_video_with_voice,
+            input_video, voice_audio, output_video, mix_mode
+        )
+
+        if not output_video.exists() or output_video.stat().st_size == 0:
+            raise HTTPException(status_code=500, detail="Dubbed video rendering failed")
+
+        return {
+            "ok": True,
+            "dubbed_url": f"/v1/dubber/media/output/{out_id}.mp4",
+            "size": output_video.stat().st_size
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/v1/dubber/media/{category}/{filename}")
+async def dubber_get_media(category: str, filename: str):
+    if category not in ("input", "output"):
+        raise HTTPException(status_code=400, detail="Invalid media category")
+    target_dir = DUBBER_INPUT_DIR if category == "input" else DUBBER_OUTPUT_DIR
+    target_file = target_dir / filename
+    if not target_file.exists():
+        raise HTTPException(status_code=404, detail="Media file not found")
+    media_type = "video/mp4" if filename.endswith(".mp4") else ("audio/wav" if filename.endswith(".wav") else "application/octet-stream")
+    return FileResponse(target_file, media_type=media_type)
+
+@app.get("/cover", response_class=HTMLResponse)
+@app.get("/cover.html", response_class=HTMLResponse)
+async def dubber_ui_page():
+    html_content = r"""<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Taka Cover & Video Dubber Studio</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #090d16;
+            --card-bg: rgba(18, 26, 43, 0.75);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.35);
+            --accent-purple: #c084fc;
+            --text-main: #f8fafc;
+            --text-sub: #94a3b8;
+            --success: #34d399;
+            --danger: #f87171;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.12), transparent 45%),
+                radial-gradient(circle at 85% 85%, rgba(192, 132, 252, 0.12), transparent 45%);
+            background-attachment: fixed;
+        }
+
+        .header {
+            padding: 1.25rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--card-border);
+            backdrop-filter: blur(16px);
+            background: rgba(9, 13, 22, 0.8);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-area { display: flex; align-items: center; gap: 0.75rem; }
+        .logo-icon {
+            width: 40px; height: 40px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 800; font-size: 1.2rem; color: #fff;
+            box-shadow: 0 0 16px var(--accent-glow);
+        }
+        .logo-title { font-size: 1.35rem; font-weight: 700; background: linear-gradient(to right, #fff, var(--text-sub)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+        .back-btn {
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--card-border);
+            color: var(--text-main);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        .back-btn:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--accent); }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            margin: 2rem auto;
+            padding: 0 1.5rem;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+
+        @media (max-width: 900px) {
+            .container { grid-template-columns: 1fr; }
+        }
+
+        .panel {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 1.75rem;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .panel-title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--accent);
+        }
+
+        .tab-group {
+            display: flex;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 4px;
+            border-radius: 12px;
+            border: 1px solid var(--card-border);
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 0.6rem;
+            text-align: center;
+            border: none;
+            background: transparent;
+            color: var(--text-sub);
+            font-family: inherit;
+            font-weight: 600;
+            font-size: 0.9rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tab-btn.active {
+            background: var(--accent);
+            color: #090d16;
+        }
+
+        .input-box {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        label { font-size: 0.85rem; color: var(--text-sub); font-weight: 600; }
+        input[type="text"], textarea, select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--card-border);
+            border-radius: 10px;
+            color: #fff;
+            font-family: inherit;
+            font-size: 0.95rem;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .btn-action {
+            padding: 0.85rem 1.5rem;
+            background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+            border: none;
+            border-radius: 12px;
+            color: #fff;
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 20px var(--accent-glow);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+        .btn-action:hover { opacity: 0.95; transform: translateY(-2px); }
+        .btn-action:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        .dropzone {
+            border: 2px dashed var(--card-border);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            background: rgba(0, 0, 0, 0.2);
+            transition: all 0.2s;
+        }
+        .dropzone:hover { border-color: var(--accent); background: rgba(56, 189, 248, 0.05); }
+
+        .video-preview {
+            width: 100%;
+            border-radius: 12px;
+            background: #000;
+            max-height: 380px;
+            object-fit: contain;
+        }
+
+        .status-badge {
+            font-size: 0.85rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            width: fit-content;
+        }
+        .status-loading { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid var(--accent); }
+        .status-success { background: rgba(52, 211, 153, 0.15); color: var(--success); border: 1px solid var(--success); }
+        .status-error { background: rgba(248, 113, 113, 0.15); color: var(--danger); border: 1px solid var(--danger); }
+
+        .download-btn {
+            background: var(--success);
+            color: #090d16;
+            text-decoration: none;
+            padding: 0.75rem 1.25rem;
+            border-radius: 10px;
+            font-weight: 700;
+            text-align: center;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            transition: all 0.2s;
+        }
+        .download-btn:hover { opacity: 0.9; }
+
+        .spinner {
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="logo-area">
+            <div class="logo-icon">🎬</div>
+            <div class="logo-title">Taka Cover & Video Dubber</div>
+        </div>
+        <a href="/" class="back-btn">📚 Về Taka Studio</a>
+    </header>
+
+    <main class="container">
+        <!-- LEFT PANEL: VIDEO SOURCE & VOICEOVER INPUT -->
+        <section class="panel">
+            <div class="panel-title">1. Chọn Nguồn Video & Nội Dung Voice</div>
+
+            <div class="tab-group">
+                <button class="tab-btn active" id="tab-url-btn" onclick="switchTab('url')">🔗 Nhập Link Video</button>
+                <button class="tab-btn" id="tab-upload-btn" onclick="switchTab('upload')">📁 Tải File Lên</button>
+            </div>
+
+            <div id="tab-url-sec" class="input-box">
+                <label for="video-url">URL Video (iStock, YouTube, Direct MP4...):</label>
+                <input type="text" id="video-url" placeholder="https://www.istockphoto.com/vi/video/... hoặc link mp4">
+                <button class="btn-action" style="margin-top: 0.5rem;" onclick="fetchVideoFromUrl()">
+                    <span id="fetch-btn-text">📥 Tải Nguồn Video</span>
+                </button>
+            </div>
+
+            <div id="tab-upload-sec" class="input-box" style="display: none;">
+                <label>Tải File Video Từ Máy Tính (.mp4, .mov):</label>
+                <div class="dropzone" onclick="document.getElementById('file-input').click()">
+                    <p style="font-size: 1.5rem; margin-bottom: 0.5rem;">📂</p>
+                    <p style="font-weight: 600;">Nhấn vào đây để chọn file video</p>
+                    <input type="file" id="file-input" accept="video/*" style="display: none;" onchange="uploadVideoFile(this.files[0])">
+                </div>
+            </div>
+
+            <div id="source-status" style="display: none;"></div>
+
+            <div class="input-box">
+                <label for="voice-select">Chọn Giọng Đọc (Voice ID):</label>
+                <select id="voice-select">
+                    <option value="nam-dao-ly">🎙️ nam-dao-ly (Giọng Nam Truyền Cảm)</option>
+                    <option value="nu-doc-truyen">🎙️ nu-doc-truyen (Giọng Nữ Đọc Truyện)</option>
+                </select>
+            </div>
+
+            <div class="input-box">
+                <label for="voice-text">Nội Dung Lồng Tiếng (Voiceover Text):</label>
+                <textarea id="voice-text" rows="5" placeholder="Nhập câu thoại hoặc đoạn văn bản cần đọc lồng tiếng vào video tại đây..."></textarea>
+            </div>
+
+            <div class="input-box">
+                <label for="mix-mode">Chế Độ Hòa Âm Thanh:</label>
+                <select id="mix-mode">
+                    <option value="replace">🔇 Thay Thế Hoàn Toàn Nhạc Gốc (Replace Audio)</option>
+                    <option value="mix">🔊 Giảm Nhỏ Nhạc Gốc & Đè Voice lên (Mix Background)</option>
+                </select>
+            </div>
+
+            <button class="btn-action" id="process-btn" onclick="processDubbing()" disabled>
+                <span id="process-btn-text">🔊 Sinh Giọng & Lồng Tiếng Vào Video</span>
+            </button>
+        </section>
+
+        <!-- RIGHT PANEL: PREVIEW & OUTPUT -->
+        <section class="panel">
+            <div class="panel-title">2. Xem Trước & Tải Video Thành Phẩm</div>
+
+            <div class="input-box">
+                <label>Video Nguồn (Gốc):</label>
+                <video id="source-player" class="video-preview" controls style="display: none;"></video>
+                <div id="source-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
+                    Chưa có video nguồn. Hãy nhập URL hoặc tải file lên ở bảng bên trái.
+                </div>
+            </div>
+
+            <div class="input-box">
+                <label>Video Sau Khi Lồng Tiếng (Dubbed Result):</label>
+                <video id="result-player" class="video-preview" controls style="display: none;"></video>
+                <div id="result-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
+                    Video sau khi lồng tiếng sẽ xuất hiện tại đây.
+                </div>
+            </div>
+
+            <a id="download-link" class="download-btn" style="display: none;" download>
+                📥 Tải Video Đã Lồng Tiếng (.mp4)
+            </a>
+        </section>
+    </main>
+
+    <script>
+        let currentVideoId = null;
+
+        function switchTab(tab) {
+            document.getElementById('tab-url-btn').classList.toggle('active', tab === 'url');
+            document.getElementById('tab-upload-btn').classList.toggle('active', tab === 'upload');
+            document.getElementById('tab-url-sec').style.display = tab === 'url' ? 'flex' : 'none';
+            document.getElementById('tab-upload-sec').style.display = tab === 'upload' ? 'flex' : 'none';
+        }
+
+        async function loadVoices() {
+            try {
+                const res = await fetch('/v1/voices');
+                const data = await res.json();
+                if (data.voices) {
+                    const sel = document.getElementById('voice-select');
+                    sel.innerHTML = '';
+                    data.voices.forEach(v => {
+                        const opt = document.createElement('option');
+                        opt.value = v.id;
+                        opt.textContent = `🎙️ ${v.name || v.id}`;
+                        sel.appendChild(opt);
+                    });
+                }
+            } catch(e) {}
+        }
+        loadVoices();
+
+        function setStatus(msg, type) {
+            const el = document.getElementById('source-status');
+            el.style.display = 'block';
+            el.className = `status-badge status-${type}`;
+            el.innerHTML = msg;
+        }
+
+        async function fetchVideoFromUrl() {
+            const url = document.getElementById('video-url').value.trim();
+            if (!url) return alert('Vui lòng nhập URL video!');
+
+            const btnText = document.getElementById('fetch-btn-text');
+            btnText.innerHTML = '<div class="spinner"></div> Đang tải video từ URL...';
+            setStatus('⌛ Đang xử lý và tải video từ URL...', 'loading');
+
+            try {
+                const res = await fetch('/v1/dubber/download-video', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({url})
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    currentVideoId = data.video_id;
+                    showSourceVideo(data.video_url);
+                    setStatus('✅ Tải nguồn video thành công!', 'success');
+                    document.getElementById('process-btn').disabled = false;
+                } else {
+                    setStatus(`❌ Lỗi tải video: ${data.detail || 'Không xác định'}`, 'error');
+                }
+            } catch(e) {
+                setStatus(`❌ Lỗi kết nối: ${e.message}`, 'error');
+            } finally {
+                btnText.innerHTML = '📥 Tải Nguồn Video';
+            }
+        }
+
+        async function uploadVideoFile(file) {
+            if (!file) return;
+            setStatus('⌛ Đang tải file video lên...', 'loading');
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch('/v1/dubber/upload-video', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    currentVideoId = data.video_id;
+                    showSourceVideo(data.video_url);
+                    setStatus('✅ Upload video thành công!', 'success');
+                    document.getElementById('process-btn').disabled = false;
+                } else {
+                    setStatus(`❌ Lỗi upload: ${data.detail || 'Không xác định'}`, 'error');
+                }
+            } catch(e) {
+                setStatus(`❌ Lỗi kết nối: ${e.message}`, 'error');
+            }
+        }
+
+        function showSourceVideo(url) {
+            const player = document.getElementById('source-player');
+            const placeholder = document.getElementById('source-placeholder');
+            player.src = url;
+            player.style.display = 'block';
+            placeholder.style.display = 'none';
+        }
+
+        async function processDubbing() {
+            if (!currentVideoId) return alert('Chưa chọn video nguồn!');
+            const voiceId = document.getElementById('voice-select').value;
+            const text = document.getElementById('voice-text').value.trim();
+            const mixMode = document.getElementById('mix-mode').value;
+
+            if (!text) return alert('Vui lòng nhập nội dung lồng tiếng!');
+
+            const btnText = document.getElementById('process-btn-text');
+            btnText.innerHTML = '<div class="spinner"></div> Đang đọc TTS & Lồng tiếng vào video...';
+            document.getElementById('process-btn').disabled = true;
+
+            try {
+                const res = await fetch('/v1/dubber/process', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        video_id: currentVideoId,
+                        voice_id: voiceId,
+                        text: text,
+                        mix_mode: mixMode
+                    })
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    const resultPlayer = document.getElementById('result-player');
+                    const resultPlaceholder = document.getElementById('result-placeholder');
+                    const downloadLink = document.getElementById('download-link');
+
+                    resultPlayer.src = data.dubbed_url;
+                    resultPlayer.style.display = 'block';
+                    resultPlaceholder.style.display = 'none';
+
+                    downloadLink.href = data.dubbed_url;
+                    downloadLink.style.display = 'inline-flex';
+
+                    resultPlayer.play();
+                } else {
+                    alert(`❌ Lỗi xử lý lồng tiếng: ${data.detail || 'Không xác định'}`);
+                }
+            } catch(e) {
+                alert(`❌ Lỗi kết nối: ${e.message}`);
+            } finally {
+                btnText.innerHTML = '🔊 Sinh Giọng & Lồng Tiếng Vào Video';
+                document.getElementById('process-btn').disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
+"""
+    return HTMLResponse(
+        content=html_content,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
+
 
 # HTML Dashboard using rich dark glassmorphism styling
 @app.get("/", response_class=HTMLResponse)
