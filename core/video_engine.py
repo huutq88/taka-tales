@@ -670,14 +670,17 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                 # Map size to OpenAI ima2 exact aspect ratio sizes: 1824x1024 (16:9 Landscape), 1024x1824 (9:16 Portrait), 1024x1024 (1:1 Square)
                 if (aspect_ratio and aspect_ratio in ("9:16", "vertical", "portrait")) or IMAGE_HEIGHT > IMAGE_WIDTH:
                     ima2_size = "1152x2048"
+                    final_prompt = f"Vertical 9:16 portrait orientation, tall vertical mobile frame format, {prompt}"
                 elif (aspect_ratio and aspect_ratio in ("16:9", "horizontal", "landscape")) or IMAGE_WIDTH > IMAGE_HEIGHT:
                     ima2_size = "1824x1024"
+                    final_prompt = prompt
                 else:
                     ima2_size = "1152x2048" if IMAGE_HEIGHT >= IMAGE_WIDTH else "1824x1024"
+                    final_prompt = f"Vertical 9:16 portrait orientation, tall vertical mobile frame format, {prompt}" if IMAGE_HEIGHT >= IMAGE_WIDTH else prompt
 
                 _log(f"[VideoEngine] Executing ima2 gen with size: {ima2_size} (-s {ima2_size}) for image {idx}...")
                 cmd = [
-                    "ima2", "gen", prompt,
+                    "ima2", "gen", final_prompt,
                     "--mode", "direct",
                     "--quality", "low",
                     "--model", "oauth/gpt-5.6-luna",
