@@ -683,6 +683,7 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                 else:
                     ima2_size = "1024x1024"
 
+                _log(f"[VideoEngine] Executing ima2 gen with size: {ima2_size} (-s {ima2_size}) for image {idx}...")
                 cmd = [
                     "ima2", "gen", prompt,
                     "--mode", "direct",
