@@ -1869,8 +1869,9 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
 
 @app.get("/v1/voices")
 async def list_voices(request: Request):
-    # Fetch remote voices exclusively from Melorix Cloud API (http://voice.melorix.co/api/voices)
-    for url in ["http://voice.melorix.co/api/voices", "https://voice.melorix.co/api/voices"]:
+    # Fetch remote voices exclusively from Melorix Cloud API (https://voice.melorix.co/api/voices)
+    for url in ["https://voice.melorix.co/api/voices", "http://voice.melorix.co/api/voices"]:
+
         try:
             r = await asyncio.to_thread(requests.get, url, timeout=5.0)
             if r.status_code == 200:

@@ -701,7 +701,7 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         speed = float(voice_config.get("speed") or 1.0)
         language = voice_config.get("language") or "vi"
 
-    url = "http://voice.melorix.co/api/tts"
+    url = "https://voice.melorix.co/api/tts"
     payload = {
         "text": clean_text,
         "voice_id": voice_id,
@@ -709,10 +709,10 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         "speed": speed
     }
 
-    print(f"[Melorix Cloud TTS] Calling http://voice.melorix.co/api/tts: voice_id='{voice_id}', text='{clean_text[:40]}...'")
+    print(f"[Melorix Cloud TTS] Calling https://voice.melorix.co/api/tts: voice_id='{voice_id}', text='{clean_text[:40]}...'")
     resp = await asyncio.to_thread(requests.post, url, json=payload, timeout=60)
     if resp.status_code != 200:
-        err_msg = f"Melorix API (http://voice.melorix.co) error status {resp.status_code}: {resp.text}"
+        err_msg = f"Melorix API (https://voice.melorix.co) error status {resp.status_code}: {resp.text}"
         print(f"[Melorix Cloud TTS] {err_msg}")
         raise RuntimeError(err_msg)
     
@@ -725,7 +725,7 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         raise RuntimeError(err_msg)
 
     start_t = time.time()
-    status_url = f"http://voice.melorix.co/api/tts/jobs/{job_id}/status"
+    status_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/status"
     while status != "done":
         if time.time() - start_t > 90:
             err_msg = f"Melorix API job {job_id} timed out after 90 seconds"
@@ -736,8 +736,9 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         if s_res.status_code == 200:
             status = s_res.json().get("status")
 
-    audio_url = f"http://voice.melorix.co/api/tts/jobs/{job_id}/audio"
+    audio_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/audio"
     a_res = await asyncio.to_thread(requests.get, audio_url, timeout=30)
+
     if a_res.status_code != 200:
         err_msg = f"Failed to download audio from Melorix API: status {a_res.status_code}"
         print(f"[Melorix Cloud TTS] {err_msg}")
