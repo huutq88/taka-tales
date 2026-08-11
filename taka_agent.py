@@ -1381,8 +1381,8 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             "type": "pipeline_progress",
             "project_name": project_name,
             "status": "completed",
-            "current_fragment": num_frags,
-            "total_fragments": num_frags
+            "current_fragment": total_frags,
+            "total_fragments": total_frags
         }))
     except asyncio.CancelledError:
         print(f"[Agent] Pipeline task for '{project_name}' was cancelled.")

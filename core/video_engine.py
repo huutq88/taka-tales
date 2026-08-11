@@ -1640,6 +1640,14 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
     # Generate Thumbnail Cover Image & Embed Metadata + Cover Art into MP4
     generate_thumbnail_and_embed_metadata(project_dir, project_name)
 
+    server_final = project_dir / "final.mp4"
+    if out.exists():
+        try:
+            shutil.copy(str(out), str(server_final))
+            print(f"[VideoEngine] Copied final video to {server_final.name}")
+        except Exception as ex:
+            print(f"[VideoEngine] Error copying to final.mp4: {ex}")
+
 
 def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_name: str) -> None:
     """Generates a high-quality video cover thumbnail and embeds metadata + cover art into the final MP4 file."""

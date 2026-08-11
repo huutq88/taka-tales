@@ -11,6 +11,21 @@
 3. [Bug 3: Lỗi UnboundLocalError & Thiếu `final_aspect` Trong Vòng Lặp Pipeline](#bug-3-lỗi-unboundlocalerror--thiếu-final_aspect-trong-vòng-lặp-pipeline)
 4. [Bug 4: Lỗi Trùng Lặp Thư Mục Dự Án Ngầm (`~/.taka-agent/projects/projects/`)](#bug-4-lỗi-trùng-lặp-thư-mục-dự-án-ngầm-taka-agentprojectsprojects)
 5. [Bug 5: Chênh Lệch Tiến Độ Giữa `ima2` Proxy (3333) Và Taka Web UI (8080)](#bug-5-chênh-lệch-tiến-độ-giữa-ima2-proxy-3333-và-taka-web-ui-8080)
+6. [Bug 6: Lỗi `NameError: num_frags` Khi Bấm Video Render Only](#bug-6-lỗi-nameerror-num_frags-khi-bấm-video-render-only)
+
+---
+
+## 6. Bug 6: Lỗi `NameError: num_frags` Khi Bấm Video Render Only
+
+### 🔴 Hiện tượng:
+- Khi chọn chế độ `Video Render Only`, hệ thống tạo xong các video clip phân đoạn (`video*.mp4`) nhưng không báo hoàn thành và không xuất file `final.mp4` trên Web UI.
+
+### 🔍 Nguyên nhân gốc rễ (Root Cause):
+- Trong `taka_agent.py` dòng 1384, khi gửi sự kiện WebSocket thông báo hoàn thành pipeline, mã nguồn sử dụng nhầm tên biến `num_frags` (không tồn tại) thay vì `total_frags`. Điều này khiến agent văng ngoại lệ `NameError: name 'num_frags' is not defined` ngay trước bước báo `completed`.
+
+### 🛠️ Giải pháp khắc phục (Fix):
+1. **Sửa `taka_agent.py`**: Thay `num_frags` bằng `total_frags`.
+2. **Cập nhật `core/video_engine.py`**: Bổ sung tự động sao chép file xuất ra sang `final.mp4` trực tiếp bên trong `make_final_video`.
 
 ---
 
