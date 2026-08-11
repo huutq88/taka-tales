@@ -3448,6 +3448,23 @@ async def dubber_ui_page():
 
     <script>
         let currentVideoId = sessionStorage.getItem('dubber_video_id') || null;
+        let API_BASE = '';
+
+        async function detectApiBase() {
+            if (window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost') {
+                try {
+                    const testRes = await fetch('http://127.0.0.1:8080/v1/voices', { method: 'GET' });
+                    if (testRes.ok) {
+                        API_BASE = 'http://127.0.0.1:8080';
+                        console.log('Detected Local Taka Agent:', API_BASE);
+                        return;
+                    }
+                } catch(e) {
+                    console.log('Local Taka Agent not available on 127.0.0.1:8080, falling back to host domain');
+                }
+            }
+            API_BASE = '';
+        }
 
         function switchTab(tab) {
             document.getElementById('tab-url-btn').classList.toggle('active', tab === 'url');
@@ -3457,8 +3474,9 @@ async def dubber_ui_page():
         }
 
         async function loadVoices() {
+            await detectApiBase();
             try {
-                const res = await fetch('/v1/voices');
+                const res = await fetch(API_BASE + '/v1/voices');
                 const data = await res.json();
                 const voicesList = Array.isArray(data) ? data : (data.voices || []);
                 if (voicesList.length > 0) {
@@ -3493,7 +3511,7 @@ async def dubber_ui_page():
             setStatus('⌛ Đang xử lý và tải video từ URL...', 'loading');
 
             try {
-                const res = await fetch('/v1/dubber/download-video', {
+                const res = await fetch(API_BASE + '/v1/dubber/download-video', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({url})
@@ -3504,7 +3522,7 @@ async def dubber_ui_page():
                     sessionStorage.setItem('dubber_video_id', data.video_id);
                     sessionStorage.setItem('dubber_video_url', data.video_url);
                     showSourceVideo(data.video_url);
-                    setStatus('✅ Tải nguồn video thành công!', 'success');
+                    setStatus('✅ Tải nguồn video thành công (Local Agent)!', 'success');
                     document.getElementById('process-btn').disabled = false;
                 } else {
                     setStatus(`❌ Lỗi tải video: ${data.detail || 'Không xác định'}`, 'error');
@@ -3518,12 +3536,12 @@ async def dubber_ui_page():
 
         async function uploadVideoFile(file) {
             if (!file) return;
-            setStatus('⌛ Đang tải file video lên...', 'loading');
+            setStatus('⌛ Đang tải file video lên Local Agent...', 'loading');
             const formData = new FormData();
             formData.append('file', file);
 
             try {
-                const res = await fetch('/v1/dubber/upload-video', {
+                const res = await fetch(API_BASE + '/v1/dubber/upload-video', {
                     method: 'POST',
                     body: formData
                 });
@@ -3533,7 +3551,7 @@ async def dubber_ui_page():
                     sessionStorage.setItem('dubber_video_id', data.video_id);
                     sessionStorage.setItem('dubber_video_url', data.video_url);
                     showSourceVideo(data.video_url);
-                    setStatus('✅ Upload video thành công!', 'success');
+                    setStatus('✅ Upload video thành công (Local Agent)!', 'success');
                     document.getElementById('process-btn').disabled = false;
                 } else {
                     setStatus(`❌ Lỗi upload: ${data.detail || 'Không xác định'}`, 'error');
@@ -3546,17 +3564,17 @@ async def dubber_ui_page():
         function showSourceVideo(url) {
             const player = document.getElementById('source-player');
             const placeholder = document.getElementById('source-placeholder');
-            player.src = url;
+            const fullUrl = (url && url.startsWith('/') && API_BASE) ? (API_BASE + url) : url;
+            player.src = fullUrl;
             player.style.display = 'block';
             placeholder.style.display = 'none';
         }
 
         if (sessionStorage.getItem('dubber_video_id') && sessionStorage.getItem('dubber_video_url')) {
             showSourceVideo(sessionStorage.getItem('dubber_video_url'));
-            setStatus('✅ Đã nạp video nguồn sẵn sàng!', 'success');
+            setStatus('✅ Đã nạp video nguồn sẵn sàng (Local Agent)!', 'success');
             document.getElementById('process-btn').disabled = false;
         }
-
 
         async function processDubbing() {
             if (!currentVideoId) {
@@ -3574,12 +3592,11 @@ async def dubber_ui_page():
             if (!text) return alert('Vui lòng nhập nội dung lồng tiếng!');
 
             const btnText = document.getElementById('process-btn-text');
-            btnText.innerHTML = '<div class="spinner"></div> Đang đọc TTS & Lồng tiếng vào video...';
+            btnText.innerHTML = '<div class="spinner"></div> Đang đọc TTS & Lồng tiếng vào video (Local Agent)...';
             document.getElementById('process-btn').disabled = true;
 
-
             try {
-                const res = await fetch('/v1/dubber/process', {
+                const res = await fetch(API_BASE + '/v1/dubber/process', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
@@ -3595,11 +3612,12 @@ async def dubber_ui_page():
                     const resultPlaceholder = document.getElementById('result-placeholder');
                     const downloadLink = document.getElementById('download-link');
 
-                    resultPlayer.src = data.dubbed_url;
+                    const dubbedFullUrl = (data.dubbed_url && data.dubbed_url.startsWith('/') && API_BASE) ? (API_BASE + data.dubbed_url) : data.dubbed_url;
+                    resultPlayer.src = dubbedFullUrl;
                     resultPlayer.style.display = 'block';
                     resultPlaceholder.style.display = 'none';
 
-                    downloadLink.href = data.dubbed_url;
+                    downloadLink.href = dubbedFullUrl;
                     downloadLink.style.display = 'inline-flex';
 
                     resultPlayer.play();
