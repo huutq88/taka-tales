@@ -1896,8 +1896,12 @@ async def list_voices(request: Request):
     return [
         {"id": "nam-bac-dao-ly", "name": "Nam Bắc Đạo Lý", "has_audio": True, "is_protected": True},
         {"id": "nu-doc-truyen", "name": "Nữ đọc truyện", "has_audio": True, "is_protected": True},
-        {"id": "nam-doc-truyen", "name": "Nam đọc truyện", "has_audio": True, "is_protected": True}
+        {"id": "nam-doc-truyen", "name": "Nam đọc truyện", "has_audio": True, "is_protected": True},
+        {"id": "c3f327b1-d4e3-4937-b619-088bedd3eb69", "name": "remix-voice-c3f327b1", "has_audio": True, "is_protected": False},
+        {"id": "e77bba8f-e1f8-4d6e-919d-5fe5dfd98d15", "name": "remix-voice-e77bba8f", "has_audio": True, "is_protected": False},
+        {"id": "cb5f87ed-14e5-491b-8b39-3ec7150fae63", "name": "remix-voice-cb5f87ed", "has_audio": True, "is_protected": False}
     ]
+
 
 
 @app.get("/v1/voices/{voice_id}/ref.wav")
