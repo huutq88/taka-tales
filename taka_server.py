@@ -3101,9 +3101,25 @@ async def dubber_get_media(category: str, filename: str):
     target_dir = DUBBER_INPUT_DIR if category == "input" else DUBBER_OUTPUT_DIR
     target_file = target_dir / filename
     if not target_file.exists():
+        matches = [f for f in target_dir.glob(f"{filename}*") if f.is_file()]
+        if matches:
+            target_file = matches[0]
+    if not target_file.exists():
         raise HTTPException(status_code=404, detail="Media file not found")
-    media_type = "video/mp4" if filename.endswith(".mp4") else ("audio/wav" if filename.endswith(".wav") else "application/octet-stream")
-    return FileResponse(target_file, media_type=media_type)
+
+    ext = target_file.suffix.lower()
+    media_type_map = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+        ".m4v": "video/x-m4v",
+        ".mkv": "video/x-matroska",
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg"
+    }
+    media_type = media_type_map.get(ext, "application/octet-stream")
+    return FileResponse(target_file, media_type=media_type, headers={"Accept-Ranges": "bytes"})
+
 
 @app.get("/cover", response_class=HTMLResponse)
 @app.get("/cover.html", response_class=HTMLResponse)
