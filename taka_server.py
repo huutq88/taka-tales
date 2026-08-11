@@ -3436,19 +3436,23 @@ async def dubber_ui_page():
             try {
                 const res = await fetch('/v1/voices');
                 const data = await res.json();
-                if (data.voices) {
+                const voicesList = Array.isArray(data) ? data : (data.voices || []);
+                if (voicesList.length > 0) {
                     const sel = document.getElementById('voice-select');
                     sel.innerHTML = '';
-                    data.voices.forEach(v => {
+                    voicesList.forEach(v => {
                         const opt = document.createElement('option');
                         opt.value = v.id;
-                        opt.textContent = `🎙️ ${v.name || v.id}`;
+                        opt.textContent = `🎙️ ${v.name || v.id} (${v.id})`;
                         sel.appendChild(opt);
                     });
                 }
-            } catch(e) {}
+            } catch(e) {
+                console.error('Failed to load voices:', e);
+            }
         }
         loadVoices();
+
 
         function setStatus(msg, type) {
             const el = document.getElementById('source-status');
