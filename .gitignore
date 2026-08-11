@@ -167,5 +167,9 @@ scratch/
 
 
 
+# Ignore local storage directory
+storage/
+
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 graft/
+

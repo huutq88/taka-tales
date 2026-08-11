@@ -681,6 +681,75 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         print("[Agent] Falling back to Edge-TTS...")
         asyncio.run(video_engine.tts_edge(text, out))
 
+async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = None) -> bool:
+    """Try synthesizing TTS via Melorix API (https://voice.melorix.co/api/tts). Returns True if success, False if timeout/error."""
+    import requests, time, re
+    out = pathlib.Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    
+    clean_text = text.replace("\\n", " ").replace("\n", " ")
+    clean_text = re.sub(r'\[.*?\]', '', clean_text)
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+    if not clean_text:
+        clean_text = text
+
+    voice_id = "nu-doc-truyen"
+    speed = 1.0
+    language = "vi"
+    if voice_config:
+        voice_id = voice_config.get("voice_id") or voice_id
+        speed = float(voice_config.get("speed") or 1.0)
+        language = voice_config.get("language") or "vi"
+
+    url = "https://voice.melorix.co/api/tts"
+    payload = {
+        "text": clean_text,
+        "voice_id": voice_id,
+        "language": language,
+        "speed": speed
+    }
+
+    try:
+        print(f"[Melorix API] Requesting voice synthesis: voice_id='{voice_id}', text='{clean_text[:40]}...'")
+        resp = await asyncio.to_thread(requests.post, url, json=payload, timeout=12)
+        if resp.status_code != 200:
+            print(f"[Melorix API] Status {resp.status_code}: {resp.text}")
+            return False
+        
+        data = resp.json()
+        job_id = data.get("job_id")
+        status = data.get("status")
+        if not job_id:
+            print(f"[Melorix API] Missing job_id: {data}")
+            return False
+
+        start_t = time.time()
+        status_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/status"
+        while status != "done":
+            if time.time() - start_t > 30:
+                print(f"[Melorix API] Job {job_id} status polling timed out")
+                return False
+            await asyncio.sleep(1.5)
+            s_res = await asyncio.to_thread(requests.get, status_url, timeout=5)
+            if s_res.status_code == 200:
+                status = s_res.json().get("status")
+
+        audio_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/audio"
+        a_res = await asyncio.to_thread(requests.get, audio_url, timeout=15)
+        if a_res.status_code != 200:
+            print(f"[Melorix API] Failed to download audio: status {a_res.status_code}")
+            return False
+
+        with open(out, "wb") as f:
+            f.write(a_res.content)
+        
+        print(f"[Melorix API] Successfully generated audio ({out.stat().st_size} bytes)")
+        return True
+    except Exception as e:
+        print(f"[Melorix API] Exception / Timeout: {e}")
+        return False
+
+
 async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
     """Routing helper that generates voiceover according to provider settings."""
     default_config = {
@@ -700,122 +769,34 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
         for k, v in voice_config.items():
             if v is not None and v != "":
                 merged_config[k] = v
-                
-    # If ref_audio_b64 is passed, save it to a local temp file
-    ref_audio_b64 = merged_config.get("ref_audio_b64")
-    if ref_audio_b64 and not merged_config.get("ref_audio_path"):
-        try:
-            import base64
-            voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
-            voices_base.mkdir(parents=True, exist_ok=True)
-            voice_id = merged_config.get("voice_id", "temp_voice")
-            voice_dir = voices_base / voice_id
-            voice_dir.mkdir(parents=True, exist_ok=True)
-            
-            ref_audio_file = voice_dir / "ref.wav"
-            with open(ref_audio_file, "wb") as f:
-                f.write(base64.b64decode(ref_audio_b64))
-            merged_config["ref_audio_path"] = str(ref_audio_file)
-            print(f"[Agent] Decoded and saved ref_audio_b64 to {ref_audio_file}")
-        except Exception as ex:
-            print(f"[Agent] Failed to decode ref_audio_b64: {ex}")
 
-    # Resolve local voice profile directory if voice_id is specified
-    voice_id = merged_config.get("voice_id")
-    if voice_id:
-        voices_base = pathlib.Path.home() / ".taka-agent" / "voices"
-        if not voices_base.exists():
-            voices_base = AGENT_DIR / "voices"
-            
-        voice_dir = voices_base / voice_id
-        if not voice_dir.exists():
-            voice_dir = AGENT_DIR / "voices" / voice_id
-            
-        if voice_dir.exists():
-            local_path_file = voice_dir / "local_path.txt"
-            ref_audio_file = voice_dir / "ref.wav"
-            if not ref_audio_file.exists():
-                for ext in ["mp3", "m4a", "flac", "ogg"]:
-                    alt = voice_dir / f"ref.{ext}"
-                    if alt.exists():
-                        ref_audio_file = alt
-                        break
-            ref_text_file = voice_dir / "ref_text.txt"
-            if not ref_text_file.exists():
-                ref_text_file = voice_dir / "ref.txt"
-            voice_instruct_file = voice_dir / "voice_instruct.txt"
-            if not voice_instruct_file.exists():
-                voice_instruct_file = voice_dir / "instruct.txt"
-            
-            profile_ref_audio = None
-            if local_path_file.exists():
-                try:
-                    with open(local_path_file, "r", encoding="utf-8") as f:
-                        path_str = f.read().strip()
-                        if path_str and pathlib.Path(path_str).exists():
-                            profile_ref_audio = path_str
-                except Exception as ex:
-                    print(f"[Agent] Failed to read local_path.txt: {ex}")
-            if not profile_ref_audio and ref_audio_file and ref_audio_file.exists():
-                profile_ref_audio = str(ref_audio_file)
-            
-            if profile_ref_audio:
-                merged_config["ref_audio_path"] = profile_ref_audio
-            
-            if ref_text_file.exists():
-                try:
-                    with open(ref_text_file, "r", encoding="utf-8") as f:
-                        merged_config["ref_text"] = f.read().strip()
-                except Exception as ex:
-                    print(f"[Agent] Failed to read ref_text.txt: {ex}")
-
-            if voice_instruct_file.exists():
-                try:
-                    with open(voice_instruct_file, "r", encoding="utf-8") as f:
-                        merged_config["voice_instruct"] = f.read().strip()
-                        merged_config["omnivoice_mode"] = "design"
-                        merged_config["provider"] = "omnivoice"
-                except Exception as ex:
-                    print(f"[Agent] Failed to read voice_instruct.txt: {ex}")
-
+    voice_id = merged_config.get("voice_id", "")
     lang = merged_config.get("language", "vi")
     from core.text_formatter import format_for_voice
     formatted_text = format_for_voice(text, language=lang)
 
-    provider = merged_config.get("provider", "edge").lower()
-    print(f"[Agent] Routing TTS generation. provider={provider}, language={lang}, voice_config: { {k: (v[:30]+'...' if isinstance(v, str) and len(v) > 30 else v) for k, v in merged_config.items() if k != 'ref_audio_b64'} }")
-    if voice_id:
-        print(f"[Agent] Resolved local voice profile for voice_id='{voice_id}': ref_audio_path='{merged_config.get('ref_audio_path')}', ref_text='{merged_config.get('ref_text')}'")
-    
-    if provider == "omnivoice":
-        await asyncio.to_thread(tts_omnivoice, formatted_text, out, merged_config)
-    elif provider == "kokoro":
-        custom_voice = merged_config.get("voice_id")
-        orig_voice = video_engine.KOKORO_VOICE_ID
-        if custom_voice:
-            video_engine.KOKORO_VOICE_ID = custom_voice
-        try:
-            await asyncio.to_thread(video_engine.tts_kokoro, formatted_text, out)
-        finally:
-            video_engine.KOKORO_VOICE_ID = orig_voice
-    elif provider == "elevenlabs":
-        custom_voice = merged_config.get("voice_id")
-        orig_voice = video_engine.ELEVENLABS_VOICE_ID
-        if custom_voice:
-            video_engine.ELEVENLABS_VOICE_ID = custom_voice
-        try:
-            await asyncio.to_thread(video_engine.tts_elevenlabs, formatted_text, out)
-        finally:
-            video_engine.ELEVENLABS_VOICE_ID = orig_voice
-    else:  # edge-tts
-        custom_voice = merged_config.get("voice_id")
-        orig_voice = video_engine.VOICE
-        if custom_voice:
-            video_engine.VOICE = custom_voice
-        try:
-            await video_engine.tts_edge(formatted_text, out)
-        finally:
-            video_engine.VOICE = orig_voice
+    # 1. First try Melorix Cloud API (https://voice.melorix.co)
+    melorix_success = await tts_melorix_api(formatted_text, out, merged_config)
+    if melorix_success and out.exists() and out.stat().st_size > 0:
+        return
+
+    # 2. Fallback to Edge-TTS / Local provider if Melorix API is unreachable
+    print(f"[Agent] Falling back to Edge-TTS for voice_id='{voice_id}'...")
+    custom_voice = voice_id
+    if custom_voice == "nu-doc-truyen":
+        custom_voice = "vi-VN-HoaiMyNeural"
+    elif custom_voice in ("nam-dao-ly", "nam-bac-dao-ly"):
+        custom_voice = "vi-VN-NamMinhNeural"
+    elif not custom_voice:
+        custom_voice = "vi-VN-HoaiMyNeural"
+
+    orig_voice = video_engine.VOICE
+    video_engine.VOICE = custom_voice
+    try:
+        await video_engine.tts_edge(formatted_text, out)
+    finally:
+        video_engine.VOICE = orig_voice
+
 
     # Apply audio speed post-processing if speed != 1.0
     desired_speed = float(merged_config.get("speed", 1.0))

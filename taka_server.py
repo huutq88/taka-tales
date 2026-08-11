@@ -1869,7 +1869,29 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
 
 @app.get("/v1/voices")
 async def list_voices(request: Request):
+    # 1. Fetch remote voices from Melorix Voice API (https://voice.melorix.co/api/voices)
+    try:
+        r = await asyncio.to_thread(requests.get, "https://voice.melorix.co/api/voices", timeout=5.0)
+        if r.status_code == 200:
+            melorix_voices = r.json()
+            if isinstance(melorix_voices, list) and len(melorix_voices) > 0:
+                v_items = []
+                for v in melorix_voices:
+                    v_id = v.get("id", "")
+                    v_name = v.get("name", v_id)
+                    v_items.append({
+                        "id": v_id,
+                        "name": v_name,
+                        "ref_text": v.get("ref_text", ""),
+                        "has_audio": True,
+                        "is_protected": v_id in ("nam-dao-ly", "nu-doc-truyen", "nam-bac-dao-ly")
+                    })
+                return v_items
+    except Exception as e:
+        print(f"[Server] Failed to fetch Melorix voices: {e}")
+
     ws_id = get_workspace_id_from_request(request)
+
     agent_ws = agents_by_workspace.get(ws_id)
     if agent_ws:
         res = await tunnel_request_to_agent("list_voices_request", {}, workspace_id=ws_id, timeout=5.0)
