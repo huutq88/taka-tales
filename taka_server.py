@@ -3053,7 +3053,13 @@ async def dubber_process_dubbing(request: Request):
 
         input_video = DUBBER_INPUT_DIR / f"{video_id}.mp4"
         if not input_video.exists():
-            raise HTTPException(status_code=404, detail="Không tìm thấy file video nguồn. Vui lòng dán link video (và bấm 'Tải Nguồn Video') hoặc chọn tab 'Tải File Lên' để nạp video trước.")
+            matches = [f for f in DUBBER_INPUT_DIR.glob(f"{video_id}*") if f.is_file()]
+            if matches:
+                input_video = matches[0]
+
+        if not input_video or not input_video.exists():
+            raise HTTPException(status_code=404, detail="Không tìm thấy file video nguồn. Vui lòng chọn lại file video ở tab 'Tải File Lên' hoặc dán link video mới.")
+
 
 
         out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
@@ -3424,7 +3430,7 @@ async def dubber_ui_page():
     </main>
 
     <script>
-        let currentVideoId = null;
+        let currentVideoId = sessionStorage.getItem('dubber_video_id') || null;
 
         function switchTab(tab) {
             document.getElementById('tab-url-btn').classList.toggle('active', tab === 'url');
@@ -3454,7 +3460,6 @@ async def dubber_ui_page():
         }
         loadVoices();
 
-
         function setStatus(msg, type) {
             const el = document.getElementById('source-status');
             el.style.display = 'block';
@@ -3479,6 +3484,8 @@ async def dubber_ui_page():
                 const data = await res.json();
                 if (data.ok) {
                     currentVideoId = data.video_id;
+                    sessionStorage.setItem('dubber_video_id', data.video_id);
+                    sessionStorage.setItem('dubber_video_url', data.video_url);
                     showSourceVideo(data.video_url);
                     setStatus('✅ Tải nguồn video thành công!', 'success');
                     document.getElementById('process-btn').disabled = false;
@@ -3506,6 +3513,8 @@ async def dubber_ui_page():
                 const data = await res.json();
                 if (data.ok) {
                     currentVideoId = data.video_id;
+                    sessionStorage.setItem('dubber_video_id', data.video_id);
+                    sessionStorage.setItem('dubber_video_url', data.video_url);
                     showSourceVideo(data.video_url);
                     setStatus('✅ Upload video thành công!', 'success');
                     document.getElementById('process-btn').disabled = false;
@@ -3524,6 +3533,13 @@ async def dubber_ui_page():
             player.style.display = 'block';
             placeholder.style.display = 'none';
         }
+
+        if (sessionStorage.getItem('dubber_video_id') && sessionStorage.getItem('dubber_video_url')) {
+            showSourceVideo(sessionStorage.getItem('dubber_video_url'));
+            setStatus('✅ Đã nạp video nguồn sẵn sàng!', 'success');
+            document.getElementById('process-btn').disabled = false;
+        }
+
 
         async function processDubbing() {
             if (!currentVideoId) {
