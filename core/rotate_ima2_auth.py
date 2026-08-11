@@ -57,6 +57,25 @@ def fetch_accounts():
         except Exception as e:
             print(f"⚠️ Local store file read error: {e}")
 
+    # 3. Existing ~/.codex/auth.json fallback
+    if os.path.exists(CODEX_AUTH_PATH):
+        try:
+            with open(CODEX_AUTH_PATH, "r", encoding="utf-8") as f:
+                c_auth = json.load(f)
+            toks = c_auth.get("tokens", {})
+            if toks.get("access_token"):
+                print(f"🔑 Using active credentials from {CODEX_AUTH_PATH}")
+                return [{
+                    "name": "codex_local_active",
+                    "id": "codex_local_active",
+                    "credentials": {
+                        "access_token": toks.get("access_token"),
+                        "refresh_token": toks.get("refresh_token")
+                    }
+                }]
+        except Exception:
+            pass
+
     return []
 
 def rotate_auth(index=None):
