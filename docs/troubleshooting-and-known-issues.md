@@ -116,9 +116,25 @@
 
 ---
 
-## 🔐 Quy Trình Đóng Gói & Deploy Khi Sửa Code Backend
+## 7. Bug 7: Lỗi Agent Disconnect Liên Tục do Trùng Dịch Vụ macOS LaunchAgent (`com.taka.agent`)
 
-Mỗi khi chỉnh sửa file trong thư mục làm việc (`taka-tales/`), bạn cần thực hiện các bước sau để đảm bảo daemon local cập nhật mã nguồn mới nhất:
+### 🔴 Hiện tượng:
+- Agent trên Web UI báo Offline hoặc nhảy status chập chờn liên tục.
+
+### 🔍 Nguyên nhân gốc rễ (Root Cause):
+- Hệ thống macOS có sẵn dịch vụ hệ thống LaunchAgent tên **`com.taka.agent`** (`~/Library/LaunchAgents/com.taka.agent.plist` có tham số `KeepAlive: true` tự động duy trì ngầm).
+- Khi lệnh script thủ công chạy thêm 1 tiến trình `python taka_agent.py` thứ hai, 2 agent cùng gửi kết nối WebSocket tới Server `8080`. Server liên tục đá kết nối cũ để nhận kết nối mới khiến cả 2 bị rơi vào vòng lặp disconnect/reconnect.
+
+### 🛠️ Giải pháp khắc phục (Fix):
+- **Không tự bật agent thứ 2 bằng tay**.
+- Khởi động lại dịch vụ hệ thống qua macOS launchctl:
+  `launchctl kickstart -k gui/$(id -u)/com.taka.agent`
+
+---
+
+## 🔐 Quy Trình Đóng Gói & Deploy Chuẩn Trên macOS
+
+Mỗi khi chỉnh sửa file trong thư mục làm việc (`taka-tales/`), chạy script đồng bộ dưới đây:
 
 ```bash
 # 1. Commit và Push mã nguồn
@@ -126,19 +142,13 @@ git add .
 git commit -m "fix: mô tả nội dung sửa lỗi"
 git push origin main
 
-# 2. Chạy script đồng bộ sang ~/.taka-agent/ và Restart Daemon
+# 2. Đồng bộ mã nguồn sang ~/.taka-agent/ và Khởi động lại Dịch Vụ macOS LaunchAgent
 ./env/bin/python -c "
 import os, signal, subprocess, pathlib, shutil, time
 
 ws_dir = pathlib.Path('/Users/huutq/Desktop/WorkingSpace/Taka/taka-tales')
 home_agent_dir = pathlib.Path.home() / '.taka-agent'
 
-# Terminate existing processes
-res = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
-for line in res.stdout.splitlines():
-    if ('taka_agent.py' in line or 'taka_server.py' in line) and 'grep' not in line:
-        try: os.kill(int(line.split()[1]), signal.SIGTERM)
-        except Exception: pass
 
 time.sleep(1)
 
