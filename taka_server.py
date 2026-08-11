@@ -2970,6 +2970,13 @@ async def dubber_download_video(request: Request):
         if not video_url:
             raise HTTPException(status_code=400, detail="Missing video URL")
 
+        ws_id = get_workspace_id_from_request(request)
+        res = await tunnel_request_to_agent("dubber_download_video_request", {"url": video_url}, workspace_id=ws_id, timeout=120.0)
+        if res and isinstance(res, dict) and res.get("ok"):
+            return res
+        if res and isinstance(res, dict) and res.get("detail"):
+            raise HTTPException(status_code=400, detail=res["detail"])
+
         vid = f"v_{uuid.uuid4().hex[:10]}"
         target_mp4 = DUBBER_INPUT_DIR / f"{vid}.mp4"
 
@@ -2983,10 +2990,10 @@ async def dubber_download_video(request: Request):
             ytdlp_bin,
             "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "-o", str(target_mp4),
-            "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
             video_url
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
         if not target_mp4.exists() or target_mp4.stat().st_size == 0:
             import requests
@@ -2998,21 +3005,9 @@ async def dubber_download_video(request: Request):
                         f.write(chunk)
 
         if not target_mp4.exists() or target_mp4.stat().st_size == 0:
-            raise HTTPException(status_code=400, detail=f"Không thể tải video từ URL. Vui lòng chuyển sang thẻ 'Tải File Lên' để nạp video trực tiếp.")
-
-        # Validate that the downloaded file is a real video file and not an HTML error page (e.g. Cloudflare Bot-Wall)
-        with open(target_mp4, 'rb') as f:
-            header_bytes = f.read(200)
-
-        if header_bytes.startswith(b'<!DOCTYPE') or header_bytes.startswith(b'<html') or b'bot-wall' in header_bytes or b'<!doctype' in header_bytes:
-            target_mp4.unlink(missing_ok=True)
-            raise HTTPException(
-                status_code=400,
-                detail="Trang web trang thương mại (iStock/Cloudflare) bật cơ chế chống tải tự động (Bot-Wall). Vui lòng dùng tab 'Tải File Lên' để chọn file video từ máy tính."
-            )
+            raise HTTPException(status_code=400, detail="Không thể tải video từ URL. Vui lòng chọn 'Tải File Lên' để nạp video trực tiếp.")
 
         return {
-
             "ok": True,
             "video_id": vid,
             "video_url": f"/v1/dubber/media/input/{vid}.mp4",
@@ -3024,12 +3019,27 @@ async def dubber_download_video(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/v1/dubber/upload-video")
-async def dubber_upload_video(file: UploadFile = File(...)):
+async def dubber_upload_video(request: Request, file: UploadFile = File(...)):
     try:
+        ws_id = get_workspace_id_from_request(request)
+        content_bytes = await file.read()
+        import base64
+        content_b64 = base64.b64encode(content_bytes).decode("utf-8")
+
+        res = await tunnel_request_to_agent("dubber_upload_video_request", {
+            "filename": file.filename,
+            "content_b64": content_b64
+        }, workspace_id=ws_id, timeout=120.0)
+
+        if res and isinstance(res, dict) and res.get("ok"):
+            return res
+        if res and isinstance(res, dict) and res.get("detail"):
+            raise HTTPException(status_code=400, detail=res["detail"])
+
         vid = f"v_{uuid.uuid4().hex[:10]}"
         target_mp4 = DUBBER_INPUT_DIR / f"{vid}.mp4"
         with open(target_mp4, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(content_bytes)
         return {
             "ok": True,
             "video_id": vid,
@@ -3052,6 +3062,13 @@ async def dubber_process_dubbing(request: Request):
         if not video_id or not text_content:
             raise HTTPException(status_code=400, detail="Missing video_id or text content")
 
+        ws_id = get_workspace_id_from_request(request)
+        res = await tunnel_request_to_agent("dubber_process_request", body, workspace_id=ws_id, timeout=300.0)
+        if res and isinstance(res, dict) and res.get("ok"):
+            return res
+        if res and isinstance(res, dict) and res.get("detail"):
+            raise HTTPException(status_code=400, detail=res["detail"])
+
         input_video = DUBBER_INPUT_DIR / f"{video_id}.mp4"
         if not input_video.exists():
             matches = [f for f in DUBBER_INPUT_DIR.glob(f"{video_id}*") if f.is_file()]
@@ -3060,8 +3077,6 @@ async def dubber_process_dubbing(request: Request):
 
         if not input_video or not input_video.exists():
             raise HTTPException(status_code=404, detail="Không tìm thấy file video nguồn. Vui lòng chọn lại file video ở tab 'Tải File Lên' hoặc dán link video mới.")
-
-
 
         out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
         voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
@@ -3095,9 +3110,51 @@ async def dubber_process_dubbing(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/v1/dubber/media/{category}/{filename}")
-async def dubber_get_media(category: str, filename: str):
+async def dubber_get_media(category: str, filename: str, request: Request):
     if category not in ("input", "output"):
         raise HTTPException(status_code=400, detail="Invalid media category")
+
+    ws_id = get_workspace_id_from_request(request)
+    is_head = (request.method == "HEAD")
+    range_hdr = request.headers.get("range")
+
+    res = await tunnel_request_to_agent("dubber_get_media_request", {
+        "category": category,
+        "filename": filename,
+        "range": range_hdr,
+        "head_only": is_head
+    }, workspace_id=ws_id, timeout=10.0 if is_head else 30.0)
+
+    if res and isinstance(res, dict) and res.get("exists"):
+        content_type = res.get("content_type", "video/mp4")
+        file_size = res.get("size", 0)
+        if is_head:
+            return Response(status_code=200, headers={
+                "Content-Type": content_type,
+                "Content-Length": str(file_size),
+                "Accept-Ranges": "bytes"
+            })
+
+        content_bytes = b""
+        if res.get("content_b64"):
+            import base64
+            content_bytes = base64.b64decode(res["content_b64"])
+
+        if res.get("partial"):
+            start = res.get("start", 0)
+            end = res.get("end", len(content_bytes) - 1)
+            return Response(
+                content=content_bytes,
+                status_code=206,
+                headers={
+                    "Content-Type": content_type,
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Content-Length": str(len(content_bytes)),
+                    "Accept-Ranges": "bytes"
+                }
+            )
+        return Response(content=content_bytes, media_type=content_type, headers={"Accept-Ranges": "bytes"})
+
     target_dir = DUBBER_INPUT_DIR if category == "input" else DUBBER_OUTPUT_DIR
     target_file = target_dir / filename
     if not target_file.exists():
@@ -3119,6 +3176,7 @@ async def dubber_get_media(category: str, filename: str):
     }
     media_type = media_type_map.get(ext, "application/octet-stream")
     return FileResponse(target_file, media_type=media_type, headers={"Accept-Ranges": "bytes"})
+
 
 
 @app.get("/cover", response_class=HTMLResponse)

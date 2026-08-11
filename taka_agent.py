@@ -35,6 +35,12 @@ AGENT_PROJECTS_DIR = AGENT_DATA_DIR / "projects"
 AGENT_PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 AGENT_VOICES_DIR = AGENT_DATA_DIR / "voices"
 AGENT_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+DUBBER_DIR = pathlib.Path.home() / "taka-cover"
+DUBBER_INPUT_DIR = DUBBER_DIR / "input"
+DUBBER_OUTPUT_DIR = DUBBER_DIR / "output"
+DUBBER_INPUT_DIR.mkdir(parents=True, exist_ok=True)
+DUBBER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def migrate_projects_structure(projects_dir: pathlib.Path):
     if not projects_dir or not projects_dir.exists():
@@ -2730,6 +2736,168 @@ async def main():
                                 "request_id": request_id,
                                 "payload": res_payload
                             }))
+
+                        elif msg_type == "dubber_download_video_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            video_url = payload.get("url", "").strip()
+                            try:
+                                vid = f"v_{uuid.uuid4().hex[:10]}"
+                                target_mp4 = DUBBER_INPUT_DIR / f"{vid}.mp4"
+                                ytdlp_bin = shutil.which("yt-dlp") or "yt-dlp"
+                                cmd = [
+                                    ytdlp_bin,
+                                    "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                                    "-o", str(target_mp4),
+                                    "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                                    video_url
+                                ]
+                                subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                                if not target_mp4.exists() or target_mp4.stat().st_size == 0:
+                                    import requests
+                                    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+                                    r = requests.get(video_url, headers=headers, stream=True, timeout=60)
+                                    if r.status_code == 200:
+                                        with open(target_mp4, 'wb') as f:
+                                            for chunk in r.iter_content(chunk_size=8192):
+                                                f.write(chunk)
+                                res_payload = {
+                                    "ok": True,
+                                    "video_id": vid,
+                                    "video_url": f"/v1/dubber/media/input/{vid}.mp4",
+                                    "size": target_mp4.stat().st_size if target_mp4.exists() else 0
+                                }
+                            except Exception as err:
+                                res_payload = {"ok": False, "detail": str(err)}
+                            await websocket.send(json.dumps({
+                                "type": "dubber_download_video_response",
+                                "request_id": request_id,
+                                "payload": res_payload
+                            }))
+
+                        elif msg_type == "dubber_upload_video_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            content_b64 = payload.get("content_b64", "")
+                            try:
+                                import base64
+                                vid = f"v_{uuid.uuid4().hex[:10]}"
+                                target_mp4 = DUBBER_INPUT_DIR / f"{vid}.mp4"
+                                with open(target_mp4, "wb") as f:
+                                    f.write(base64.b64decode(content_b64))
+                                res_payload = {
+                                    "ok": True,
+                                    "video_id": vid,
+                                    "video_url": f"/v1/dubber/media/input/{vid}.mp4",
+                                    "size": target_mp4.stat().st_size
+                                }
+                            except Exception as err:
+                                res_payload = {"ok": False, "detail": str(err)}
+                            await websocket.send(json.dumps({
+                                "type": "dubber_upload_video_response",
+                                "request_id": request_id,
+                                "payload": res_payload
+                            }))
+
+                        elif msg_type == "dubber_process_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            video_id = payload.get("video_id", "").strip()
+                            voice_id = payload.get("voice_id", "nam-dao-ly").strip()
+                            text_content = payload.get("text", "").strip()
+                            mix_mode = payload.get("mix_mode", "replace").strip()
+                            speed = float(payload.get("speed", 1.0))
+                            try:
+                                input_video = DUBBER_INPUT_DIR / f"{video_id}.mp4"
+                                if not input_video.exists():
+                                    matches = [f for f in DUBBER_INPUT_DIR.glob(f"{video_id}*") if f.is_file()]
+                                    if matches: input_video = matches[0]
+                                if not input_video or not input_video.exists():
+                                    raise Exception("Không tìm thấy file video nguồn tại ~/taka-cover/input trên máy bạn!")
+
+                                out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
+                                voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
+                                output_video = DUBBER_OUTPUT_DIR / f"{out_id}.mp4"
+                                voice_config = {"voice_id": voice_id, "speed": speed}
+
+                                await generate_voiceover(text_content, voice_audio, voice_config)
+                                from core import video_engine
+                                await asyncio.to_thread(
+                                    video_engine.dub_video_with_voice,
+                                    input_video, voice_audio, output_video, mix_mode
+                                )
+                                res_payload = {
+                                    "ok": True,
+                                    "dubbed_url": f"/v1/dubber/media/output/{out_id}.mp4",
+                                    "size": output_video.stat().st_size if output_video.exists() else 0
+                                }
+                            except Exception as err:
+                                res_payload = {"ok": False, "detail": str(err)}
+                            await websocket.send(json.dumps({
+                                "type": "dubber_process_response",
+                                "request_id": request_id,
+                                "payload": res_payload
+                            }))
+
+                        elif msg_type == "dubber_get_media_request":
+                            request_id = message.get("request_id")
+                            payload = message.get("payload", {})
+                            category = payload.get("category", "input")
+                            filename = payload.get("filename", "")
+                            target_dir = DUBBER_INPUT_DIR if category == "input" else DUBBER_OUTPUT_DIR
+                            found_file = target_dir / filename
+                            if not found_file.exists():
+                                matches = [f for f in target_dir.glob(f"{filename}*") if f.is_file()]
+                                if matches: found_file = matches[0]
+
+                            if found_file and found_file.exists():
+                                import base64, mimetypes
+                                content_type, _ = mimetypes.guess_type(str(found_file))
+                                if not content_type: content_type = "video/mp4" if str(found_file).endswith(".mp4") else "application/octet-stream"
+                                file_size = found_file.stat().st_size
+                                range_hdr = payload.get("range")
+
+                                if payload.get("head_only"):
+                                    res_payload = {"exists": True, "size": file_size, "content_type": content_type}
+                                else:
+                                    try:
+                                        with open(found_file, "rb") as f:
+                                            max_chunk = 2 * 1024 * 1024
+                                            if range_hdr and range_hdr.startswith("bytes="):
+                                                r_parts = range_hdr.split("=")[1].split("-")
+                                                start = int(r_parts[0]) if r_parts[0] else 0
+                                                end = int(r_parts[1]) if len(r_parts) > 1 and r_parts[1] else min(start + max_chunk - 1, file_size - 1)
+                                                start = max(0, min(start, file_size - 1))
+                                                end = max(start, min(end, file_size - 1))
+                                                f.seek(start)
+                                                chunk_data = f.read(end - start + 1)
+                                                res_payload = {
+                                                    "exists": True,
+                                                    "content_b64": base64.b64encode(chunk_data).decode("utf-8"),
+                                                    "content_type": content_type,
+                                                    "size": file_size,
+                                                    "start": start,
+                                                    "end": start + len(chunk_data) - 1,
+                                                    "partial": True
+                                                }
+                                            else:
+                                                res_payload = {
+                                                    "exists": True,
+                                                    "content_b64": base64.b64encode(f.read()).decode("utf-8"),
+                                                    "content_type": content_type,
+                                                    "size": file_size
+                                                }
+                                    except Exception as r_err:
+                                        res_payload = {"exists": False, "error": str(r_err)}
+                            else:
+                                res_payload = {"exists": False}
+
+                            await websocket.send(json.dumps({
+                                "type": "dubber_get_media_response",
+                                "request_id": request_id,
+                                "payload": res_payload
+                            }))
+
 
                         elif msg_type == "list_voices_request":
                             request_id = message.get("request_id")
