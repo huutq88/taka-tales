@@ -1671,6 +1671,7 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
                     "fragment_status": {"idx": idx, "step": "image"}
                 }))
                 
+                img = project_dir / f"images/image{idx}.jpg"
                 if force_img_gen or not img.exists():
                     await asyncio.to_thread(video_engine.generate_image, idx, project_dir, art_style, force_img_gen, final_aspect)
         finally:
