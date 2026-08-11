@@ -49,14 +49,31 @@ os.environ["IMAGEMAGICK_BINARY"] = "/opt/homebrew/bin/convert"
 from datetime import datetime
 from typing import (Dict, List, Tuple)
 
-import edge_tts
-import openai
-import psutil
-import requests
-from concurrent.futures import ProcessPoolExecutor
-from fake_useragent import UserAgent
-from functools import lru_cache
-from keybert import KeyBERT
+try:
+    import edge_tts
+except ImportError:
+    edge_tts = None
+
+try:
+    import openai
+except ImportError:
+    openai = None
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    from fake_useragent import UserAgent
+except ImportError:
+    UserAgent = None
+
+try:
+    from keybert import KeyBERT
+except ImportError:
+    KeyBERT = None
+
 from moviepy.audio.AudioClip import AudioClip
 from moviepy.audio.fx.all import volumex
 from moviepy.editor import (
