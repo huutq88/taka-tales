@@ -2429,8 +2429,7 @@ async def run_project_pipeline(request: Request, story_id: str, chapter_id: str,
             except Exception:
                 pass
 
-    is_long_dir = ("long" in story_id.lower() or "videos" in story_id.lower() or "sketch" in story_id.lower())
-    aspect_ratio = req_aspect or ("16:9" if is_long_dir else "9:16")
+    aspect_ratio = req_aspect or "16:9"
 
     # Save project configuration for video engine (preserving existing fields)
     config_data = {}

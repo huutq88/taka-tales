@@ -202,13 +202,6 @@ def configure_project_resolution(project_dir: pathlib.Path = None, aspect_ratio:
                 except Exception:
                     pass
 
-        if is_horizontal is None:
-            p_str = str(project_dir).lower()
-            if any(k in p_str for k in ("reels", "reel", "shorts", "short", "vertical", "portrait")):
-                is_horizontal = False
-            elif any(k in p_str for k in ("longform", "long", "horizontal", "landscape", "sketch")):
-                is_horizontal = True
-
     if is_horizontal is None:
         is_horizontal = True
 

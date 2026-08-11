@@ -1031,8 +1031,7 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             except Exception:
                 pass
 
-        is_long = ("long" in story_id.lower() or "videos" in story_id.lower() or "sketch" in story_id.lower())
-        final_aspect = req_aspect or ("16:9" if is_long else "9:16")
+        final_aspect = req_aspect or "16:9"
         project_dir.mkdir(parents=True, exist_ok=True)
         with open(project_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
             f.write(final_aspect)
