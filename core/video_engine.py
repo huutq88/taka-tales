@@ -74,19 +74,33 @@ try:
 except ImportError:
     KeyBERT = None
 
-from moviepy.audio.AudioClip import AudioClip
-from moviepy.audio.fx.all import volumex
-from moviepy.editor import (
-    AudioFileClip,
-    CompositeAudioClip,
-    CompositeVideoClip,
-    ImageClip,
-    TextClip,
-    VideoFileClip,
-    VideoClip,
-    concatenate_audioclips,
-    concatenate_videoclips,
-)
+try:
+    from moviepy.audio.AudioClip import AudioClip
+    from moviepy.audio.fx.all import volumex
+    from moviepy.editor import (
+        AudioFileClip,
+        CompositeAudioClip,
+        CompositeVideoClip,
+        ImageClip,
+        TextClip,
+        VideoFileClip,
+        VideoClip,
+        concatenate_audioclips,
+        concatenate_videoclips,
+    )
+except ImportError:
+    AudioClip = None
+    volumex = None
+    AudioFileClip = None
+    CompositeAudioClip = None
+    CompositeVideoClip = None
+    ImageClip = None
+    TextClip = None
+    VideoFileClip = None
+    VideoClip = None
+    concatenate_audioclips = None
+    concatenate_videoclips = None
+
 from nltk.tokenize import sent_tokenize, word_tokenize
 import nltk
 for nltk_res in ('punkt', 'punkt_tab'):
@@ -2186,22 +2200,27 @@ def dub_video_with_voice(input_video_path: pathlib.Path, voice_audio_path: pathl
     
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if res.returncode != 0 or not output_video_path.exists() or output_video_path.stat().st_size == 0:
-        from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
-        video_clip = VideoFileClip(str(input_video_path))
-        voice_clip = AudioFileClip(str(voice_audio_path))
-        if mix_mode == "mix" and video_clip.audio is not None:
-            bg_clip = video_clip.audio.volumex(bg_volume)
-            final_audio = CompositeAudioClip([bg_clip, voice_clip])
-        else:
-            final_audio = voice_clip
-        
-        final_video = video_clip.set_audio(final_audio)
-        final_video.write_videofile(str(output_video_path), fps=video_clip.fps or 30, codec="libx264", audio_codec="aac")
         try:
-            video_clip.close()
-            voice_clip.close()
-        except Exception:
-            pass
+            from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
+            video_clip = VideoFileClip(str(input_video_path))
+            voice_clip = AudioFileClip(str(voice_audio_path))
+            if mix_mode == "mix" and video_clip.audio is not None:
+                bg_clip = video_clip.audio.volumex(bg_volume)
+                final_audio = CompositeAudioClip([bg_clip, voice_clip])
+            else:
+                final_audio = voice_clip
+            
+            final_video = video_clip.set_audio(final_audio)
+            final_video.write_videofile(str(output_video_path), fps=video_clip.fps or 30, codec="libx264", audio_codec="aac")
+            try:
+                video_clip.close()
+                voice_clip.close()
+            except Exception:
+                pass
+        except ImportError:
+            err_log = res.stderr.decode("utf-8", errors="ignore")
+            raise RuntimeError(f"FFmpeg dubbing failed (returncode {res.returncode}): {err_log}")
 
     return output_video_path
+
 
