@@ -673,10 +673,14 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                     final_prompt = f"Vertical 9:16 portrait orientation, tall vertical mobile frame format, {prompt}"
                 elif (aspect_ratio and aspect_ratio in ("16:9", "horizontal", "landscape")) or IMAGE_WIDTH > IMAGE_HEIGHT:
                     ima2_size = "1824x1024"
-                    final_prompt = prompt
+                    final_prompt = f"Horizontal 16:9 widescreen landscape orientation, wide cinematic format, {prompt}"
                 else:
-                    ima2_size = "1152x2048" if IMAGE_HEIGHT >= IMAGE_WIDTH else "1824x1024"
-                    final_prompt = f"Vertical 9:16 portrait orientation, tall vertical mobile frame format, {prompt}" if IMAGE_HEIGHT >= IMAGE_WIDTH else prompt
+                    if IMAGE_HEIGHT >= IMAGE_WIDTH:
+                        ima2_size = "1152x2048"
+                        final_prompt = f"Vertical 9:16 portrait orientation, tall vertical mobile frame format, {prompt}"
+                    else:
+                        ima2_size = "1824x1024"
+                        final_prompt = f"Horizontal 16:9 widescreen landscape orientation, wide cinematic format, {prompt}"
 
                 _log(f"[VideoEngine] Executing ima2 gen with size: {ima2_size} (-s {ima2_size}) for image {idx}...")
                 cmd = [
