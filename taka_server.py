@@ -1869,38 +1869,73 @@ def sync_and_migrate_voice_dir(voice_dir: pathlib.Path):
 
 @app.get("/v1/voices")
 async def list_voices(request: Request):
-    # Fetch remote voices exclusively from Melorix Cloud API (https://voice.melorix.co/api/voices)
-    for url in ["https://voice.melorix.co/api/voices", "http://voice.melorix.co/api/voices"]:
+    voices_list = []
+    ws_id = get_workspace_id_from_request(request)
 
-        try:
-            r = await asyncio.to_thread(requests.get, url, timeout=5.0)
-            if r.status_code == 200:
-                melorix_voices = r.json()
-                if isinstance(melorix_voices, list) and len(melorix_voices) > 0:
-                    v_items = []
-                    for v in melorix_voices:
-                        v_id = v.get("id", "")
-                        v_name = v.get("name", v_id)
-                        v_items.append({
+    # 1. Try fetching from connected Taka Agent first
+    res = await tunnel_request_to_agent("list_voices_request", {}, workspace_id=ws_id, timeout=5.0)
+    if res and isinstance(res, dict) and "voices" in res:
+        voices_list = res["voices"]
+        print(f"[Server] Fetched voices list from Agent: {[v['id'] for v in voices_list]}")
+
+    # 2. Also check local server VOICES_DIR and ~/.taka-agent/voices
+    existing_ids = {v["id"] for v in voices_list if isinstance(v, dict) and "id" in v}
+    search_dirs = [VOICES_DIR, pathlib.Path.home() / ".taka-agent" / "voices"]
+    for sdir in search_dirs:
+        if sdir.exists():
+            for item in sdir.iterdir():
+                if item.is_dir() and not item.name.startswith("."):
+                    v_id = item.name
+                    if v_id not in existing_ids:
+                        sync_and_migrate_voice_dir(item)
+                        has_audio = (item / "ref.wav").exists() or (item / "local_path.txt").exists()
+                        has_text = (item / "ref_text.txt").exists() or (item / "ref.txt").exists()
+                        voices_list.append({
                             "id": v_id,
-                            "name": v_name,
+                            "name": v_id,
+                            "has_audio": has_audio,
+                            "has_text": has_text,
+                            "is_protected": v_id in ("nam-dao-ly", "nu-doc-truyen", "nam-bac-dao-ly", "nu-appota")
+                        })
+                        existing_ids.add(v_id)
+
+    # 3. Include Melorix Cloud voices as well
+    try:
+        r = await asyncio.to_thread(requests.get, "https://voice.melorix.co/api/voices", timeout=3.0)
+        if r.status_code == 200:
+            melorix_voices = r.json()
+            if isinstance(melorix_voices, list):
+                for v in melorix_voices:
+                    v_id = v.get("id", "")
+                    if v_id and v_id not in existing_ids:
+                        voices_list.append({
+                            "id": v_id,
+                            "name": v.get("name", v_id),
                             "ref_text": v.get("ref_text", ""),
                             "has_audio": True,
-                            "is_protected": v_id in ("nam-dao-ly", "nu-doc-truyen", "nam-bac-dao-ly")
+                            "is_protected": True
                         })
-                    return v_items
-        except Exception as e:
-            print(f"[Server] Failed to fetch Melorix voices from {url}: {e}")
+                        existing_ids.add(v_id)
+    except Exception:
+        pass
 
-    # Default static Melorix cloud voice list if server offline during listing
+    return sorted(voices_list, key=lambda x: x.get("id", ""))
+
+
+@app.get("/v1/dubber/voices")
+async def list_dubber_voices():
+    try:
+        r = await asyncio.to_thread(requests.get, "https://voice.melorix.co/api/voices", timeout=5.0)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
     return [
-        {"id": "nam-bac-dao-ly", "name": "Nam Bắc Đạo Lý", "has_audio": True, "is_protected": True},
-        {"id": "nu-doc-truyen", "name": "Nữ đọc truyện", "has_audio": True, "is_protected": True},
-        {"id": "nam-doc-truyen", "name": "Nam đọc truyện", "has_audio": True, "is_protected": True},
-        {"id": "c3f327b1-d4e3-4937-b619-088bedd3eb69", "name": "remix-voice-c3f327b1", "has_audio": True, "is_protected": False},
-        {"id": "e77bba8f-e1f8-4d6e-919d-5fe5dfd98d15", "name": "remix-voice-e77bba8f", "has_audio": True, "is_protected": False},
-        {"id": "cb5f87ed-14e5-491b-8b39-3ec7150fae63", "name": "remix-voice-cb5f87ed", "has_audio": True, "is_protected": False}
+        {"id": "nam-bac-dao-ly", "name": "Nam Bắc Đạo Lý"},
+        {"id": "nam-doc-truyen", "name": "Nam đọc truyện"},
+        {"id": "nu-doc-truyen", "name": "Nữ đọc truyện"}
     ]
+
 
 
 
@@ -3534,9 +3569,10 @@ async def dubber_ui_page():
         async function loadVoices() {
             await detectApiBase();
             try {
-                const res = await fetch(API_BASE + '/v1/voices');
+                const res = await fetch(API_BASE + '/v1/dubber/voices');
                 const data = await res.json();
                 const voicesList = Array.isArray(data) ? data : (data.voices || []);
+
                 if (voicesList.length > 0) {
                     const sel = document.getElementById('voice-select');
                     sel.innerHTML = '';
