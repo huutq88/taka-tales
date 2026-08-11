@@ -2994,9 +2994,21 @@ async def dubber_download_video(request: Request):
                         f.write(chunk)
 
         if not target_mp4.exists() or target_mp4.stat().st_size == 0:
-            raise HTTPException(status_code=400, detail=f"Could not download video from URL. Please check the URL or upload the file directly.")
+            raise HTTPException(status_code=400, detail=f"Không thể tải video từ URL. Vui lòng chuyển sang thẻ 'Tải File Lên' để nạp video trực tiếp.")
+
+        # Validate that the downloaded file is a real video file and not an HTML error page (e.g. Cloudflare Bot-Wall)
+        with open(target_mp4, 'rb') as f:
+            header_bytes = f.read(200)
+
+        if header_bytes.startswith(b'<!DOCTYPE') or header_bytes.startswith(b'<html') or b'bot-wall' in header_bytes or b'<!doctype' in header_bytes:
+            target_mp4.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400,
+                detail="Trang web trang thương mại (iStock/Cloudflare) bật cơ chế chống tải tự động (Bot-Wall). Vui lòng dùng tab 'Tải File Lên' để chọn file video từ máy tính."
+            )
 
         return {
+
             "ok": True,
             "video_id": vid,
             "video_url": f"/v1/dubber/media/input/{vid}.mp4",
