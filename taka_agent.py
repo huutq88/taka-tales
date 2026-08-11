@@ -1030,8 +1030,30 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
                 req_aspect = pc.get("aspect_ratio")
             except Exception:
                 pass
+        
+        # Check parent folder content.json (e.g. adaptive-local-ai-reels/content.json)
+        parent_ptype = None
+        for p_parent in [project_dir.parent, project_dir.parent.parent]:
+            if p_parent and (p_parent / "content.json").exists():
+                try:
+                    with open(p_parent / "content.json", "r", encoding="utf-8") as f:
+                        cdata = json.load(f)
+                    if isinstance(cdata, dict):
+                        if not req_aspect:
+                            req_aspect = cdata.get("aspect_ratio")
+                        if not parent_ptype:
+                            parent_ptype = cdata.get("project_type")
+                except Exception:
+                    pass
 
-        final_aspect = req_aspect or "16:9"
+        if not req_aspect:
+            if parent_ptype in ("reels", "reel", "shorts", "short") or "reels" in str(project_dir).lower():
+                final_aspect = "9:16"
+            else:
+                final_aspect = "16:9"
+        else:
+            final_aspect = req_aspect
+
         project_dir.mkdir(parents=True, exist_ok=True)
         with open(project_dir / "aspect_ratio.txt", "w", encoding="utf-8") as f:
             f.write(final_aspect)
