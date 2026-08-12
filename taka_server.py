@@ -3256,7 +3256,7 @@ async def dubber_ui_page():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Taka Cover & Video Dubber Studio</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg-dark: #090d16;
@@ -3267,13 +3267,13 @@ async def dubber_ui_page():
             --accent-purple: #c084fc;
             --text-main: #f8fafc;
             --text-sub: #94a3b8;
-            --success: #34d399;
-            --danger: #f87171;
+            --success: #10b981;
+            --danger: #ef4444;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Outfit', 'Inter', sans-serif;
             background: var(--bg-dark);
             color: var(--text-main);
             min-height: 100vh;
@@ -3441,160 +3441,155 @@ async def dubber_ui_page():
             background: #000;
             max-height: 380px;
             object-fit: contain;
+            aspect-ratio: 16/9;
         }
 
         .status-badge {
             font-size: 0.85rem;
-            padding: 0.4rem 0.8rem;
-            border-radius: 20px;
-            display: inline-flex;
-            align-items: center;
-            --accent: #10b981;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-weight: 500;
+            display: none;
+            margin-top: 0.5rem;
         }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        body { background: var(--bg-color); color: var(--text-main); padding: 2rem 1rem; min-height: 100vh; }
-        .container { max-width: 1200px; margin: 0 auto; }
-
-        header { text-align: center; margin-bottom: 2.5rem; }
-        header h1 { font-size: 2.2rem; font-weight: 700; background: linear-gradient(135deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        header p { color: var(--text-sub); margin-top: 0.5rem; font-size: 1rem; }
-
-        .grid-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
-        @media (max-width: 900px) { .grid-layout { grid-template-columns: 1fr; } }
-
-        .panel { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 1.8rem; display: flex; flex-direction: column; gap: 1.2rem; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3); }
-        .panel-title { font-size: 1.25rem; font-weight: 600; color: #e2e8f0; border-bottom: 1px solid var(--card-border); padding-bottom: 0.8rem; }
-
-        .input-box { display: flex; flex-direction: column; gap: 0.5rem; }
-        .input-box label { font-size: 0.9rem; font-weight: 500; color: var(--text-sub); }
-        .input-box input[type="text"], .input-box select, .input-box textarea { background: #0f172a; border: 1px solid var(--card-border); border-radius: 8px; padding: 0.75rem 1rem; color: #fff; font-size: 0.95rem; outline: none; transition: border 0.2s; }
-        .input-box input[type="text"]:focus, .input-box select:focus, .input-box textarea:focus { border-color: var(--primary); }
-        .input-box textarea { resize: vertical; min-height: 120px; }
-
-        .tabs { display: flex; gap: 0.5rem; background: #0f172a; padding: 4px; border-radius: 8px; border: 1px solid var(--card-border); }
-        .tab-btn { flex: 1; padding: 0.6rem; border: none; background: transparent; color: var(--text-sub); border-radius: 6px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-        .tab-btn.active { background: var(--card-bg); color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-
-        .btn-action { background: linear-gradient(135deg, var(--primary), #6366f1); color: #fff; border: none; border-radius: 8px; padding: 0.9rem; font-size: 1rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
-        .btn-action:hover { opacity: 0.9; }
-        .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .video-preview { width: 100%; border-radius: 12px; background: #000; aspect-ratio: 16/9; }
-
-        .download-btn { background: var(--accent); color: #fff; text-decoration: none; border-radius: 8px; padding: 0.9rem; font-weight: 600; text-align: center; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; transition: background 0.2s; margin-top: 1rem; }
-        .download-btn:hover { background: #059669; }
-
-        .status-badge { padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 500; display: none; margin-top: 0.5rem; }
         .status-loading { background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; color: #93c5fd; }
         .status-success { background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #6ee7b7; }
         .status-error { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; }
 
-        .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        .download-btn {
+            background: var(--success);
+            color: #090d16;
+            text-decoration: none;
+            padding: 0.75rem 1.25rem;
+            border-radius: 10px;
+            font-weight: 700;
+            text-align: center;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            transition: all 0.2s;
+            margin-top: 1rem;
+        }
+        .download-btn:hover { opacity: 0.9; }
+
+        .spinner {
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🎬 Taka Cover Studio - Video Dubbing</h1>
-            <p>Lồng tiếng chuẩn Studio vào video với mô hình OmniVoice & AI Agent</p>
-        </header>
+    <header class="header">
+        <div class="logo-area">
+            <div class="logo-icon">🎬</div>
+            <div class="logo-title">Taka Cover & Video Dubber Studio</div>
+        </div>
+        <a href="/" class="back-btn">📚 Về Taka Studio</a>
+    </header>
 
-        <main class="grid-layout">
-            <!-- LEFT PANEL: INPUT SOURCE & VOICE TEXT -->
-            <section class="panel">
-                <div class="panel-title">1. Chọn Nguồn Video & Nội Dung Voice</div>
+    <main class="container">
+        <!-- LEFT PANEL: VIDEO SOURCE & VOICEOVER INPUT -->
+        <section class="panel">
+            <div class="panel-title">1. Chọn Nguồn Video & Nội Dung Voice</div>
 
-                <div class="tabs">
-                    <button class="tab-btn active" id="tab-url-btn" onclick="switchTab('url')">🌐 Link Video (URL)</button>
-                    <button class="tab-btn" id="tab-upload-btn" onclick="switchTab('upload')">📁 Tải File Lên</button>
+            <div class="tab-group">
+                <button class="tab-btn active" id="tab-url-btn" onclick="switchTab('url')">🔗 Nhập Link Video</button>
+                <button class="tab-btn" id="tab-upload-btn" onclick="switchTab('upload')">📁 Tải File Lên</button>
+            </div>
+
+            <div id="tab-url-sec" class="input-box">
+                <label for="video-url">URL Video (TikTok, YouTube, Direct MP4...):</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="video-url" placeholder="https://www.tiktok.com/@... hoặc link video mp4" style="flex: 1;">
+                    <button class="btn-action" style="padding: 0.75rem 1.2rem; font-size: 0.9rem;" onclick="fetchVideoFromUrl()">
+                        <span id="fetch-btn-text">📥 Tải Nguồn Video</span>
+                    </button>
                 </div>
+            </div>
 
-                <div id="tab-url-sec" class="input-box">
-                    <label for="video-url">Nhập Link Video (TikTok, YouTube, MP4 URL...):</label>
-                    <div style="display: flex; gap: 0.5rem;">
-                        <input type="text" id="video-url" placeholder="https://..." style="flex: 1;">
-                        <button class="btn-action" style="padding: 0.75rem 1.2rem; font-size: 0.9rem;" onclick="fetchVideoFromUrl()">
-                            <span id="fetch-btn-text">📥 Tải Nguồn Video</span>
-                        </button>
-                    </div>
+            <div id="tab-upload-sec" class="input-box" style="display: none;">
+                <label>Tải File Video Từ Máy Tính (.mp4, .mov):</label>
+                <div class="dropzone" onclick="document.getElementById('file-input').click()">
+                    <p style="font-size: 1.5rem; margin-bottom: 0.5rem;">📂</p>
+                    <p style="font-weight: 600;">Nhấn vào đây để chọn file video</p>
+                    <input type="file" id="file-input" accept="video/*" style="display: none;" onchange="uploadVideoFile(this.files[0])">
                 </div>
+            </div>
 
-                <div id="tab-upload-sec" class="input-box" style="display: none;">
-                    <label for="video-file">Chọn File Video từ máy tính (.mp4, .mov):</label>
-                    <input type="file" id="video-file" accept="video/*" onchange="uploadVideoFile(this.files[0])">
+            <div id="source-status" class="status-badge"></div>
+
+            <div class="input-box">
+                <label for="voice-select">Chọn Giọng Đọc (Voice ID):</label>
+                <select id="voice-select">
+                    <option value="nam-bac-dao-ly" data-provider="melorix">☁️ Nam Bắc Đạo Lý [Melorix Cloud]</option>
+                    <option value="nu-doc-truyen" data-provider="melorix">☁️ Nữ Đọc Truyện [Melorix Cloud]</option>
+                    <option value="nam-doc-truyen" data-provider="melorix">☁️ Nam Đọc Truyện [Melorix Cloud]</option>
+                    <option value="nu-appota" data-provider="melorix">☁️ Nữ Appota [Melorix Cloud]</option>
+                    <option value="nam-doc-truyen" data-provider="agent">🎙️ Nam Đọc Truyện [Local Agent]</option>
+                    <option value="nu-doc-truyen" data-provider="agent">🎙️ Nữ Đọc Truyện [Local Agent]</option>
+                    <option value="nam-bac-dao-ly" data-provider="agent">🎙️ Nam Bắc Đạo Lý [Local Agent]</option>
+                </select>
+            </div>
+
+            <div class="input-box">
+                <label for="voice-text">Nội Dung Lồng Tiếng (Voiceover Text):</label>
+                <textarea id="voice-text" rows="5" placeholder="Nhập câu thoại hoặc đoạn văn bản cần đọc lồng tiếng vào video tại đây..."></textarea>
+            </div>
+
+            <div class="input-box">
+                <label for="mix-mode">Chế Độ Hòa Âm Thanh:</label>
+                <select id="mix-mode">
+                    <option value="replace">🔇 Thay Thế Hoàn Toàn Nhạc Gốc (Replace Audio)</option>
+                    <option value="mix">🔊 Giảm Nhỏ Nhạc Gốc & Đè Voice lên (Mix Background)</option>
+                </select>
+            </div>
+
+            <button class="btn-action" id="process-btn" onclick="processDubbing()" disabled>
+                <span id="process-btn-text">🔊 Sinh Giọng & Lồng Tiếng Vào Video</span>
+            </button>
+        </section>
+
+        <!-- RIGHT PANEL: PREVIEW & OUTPUT -->
+        <section class="panel">
+            <div class="panel-title">2. Xem Trước & Tải Video Thành Phẩm</div>
+
+            <div class="input-box">
+                <label>Video Nguồn (Gốc):</label>
+                <video id="source-player" class="video-preview" controls preload="metadata" playsinline style="display: none;"></video>
+                <div id="source-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
+                    Chưa có video nguồn. Hãy nhập URL hoặc tải file lên ở bảng bên trái.
                 </div>
+            </div>
 
-                <div id="source-status" class="status-badge"></div>
-
-                <div class="input-box" style="margin-top: 1rem;">
-                    <label for="voice-select">Chọn Giọng Đọc (Voice):</label>
-                    <select id="voice-select">
-                        <option value="nam-bac-dao-ly" data-provider="melorix">☁️ Nam Bắc Đạo Lý [Melorix Cloud]</option>
-                        <option value="nu-doc-truyen" data-provider="melorix">☁️ Nữ Đọc Truyện [Melorix Cloud]</option>
-                        <option value="nam-doc-truyen" data-provider="melorix">☁️ Nam Đọc Truyện [Melorix Cloud]</option>
-                        <option value="nu-appota" data-provider="melorix">☁️ Nữ Appota [Melorix Cloud]</option>
-                        <option value="nam-doc-truyen" data-provider="agent">🎙️ Nam Đọc Truyện [Local Agent]</option>
-                        <option value="nu-doc-truyen" data-provider="agent">🎙️ Nữ Đọc Truyện [Local Agent]</option>
-                        <option value="nam-bac-dao-ly" data-provider="agent">🎙️ Nam Bắc Đạo Lý [Local Agent]</option>
-                    </select>
+            <div class="input-box">
+                <label>Video Sau Khi Lồng Tiếng (Dubbed Result):</label>
+                <video id="result-player" class="video-preview" controls preload="metadata" playsinline style="display: none;"></video>
+                <div id="result-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
+                    Video sau khi lồng tiếng sẽ xuất hiện tại đây.
                 </div>
+            </div>
 
-                <div class="input-box">
-                    <label for="voice-text">Nội Dung Lồng Tiếng (Text Kịch Bản):</label>
-                    <textarea id="voice-text" placeholder="Nhập văn bản cần lồng tiếng vào video..."></textarea>
-                </div>
+            <a id="download-link" class="download-btn" style="display: none;" download>
+                📥 Tải Video Đã Lồng Tiếng (.mp4)
+            </a>
+        </section>
 
-                <div class="input-box">
-                    <label for="mix-mode">Chế Độ Hòa Âm Thanh:</label>
-                    <select id="mix-mode">
-                        <option value="replace">🔇 Thay Thế Hoàn Toàn Nhạc Gốc (Replace Audio)</option>
-                        <option value="mix">🔊 Giảm Nhỏ Nhạc Gốc & Đè Voice lên (Mix Background)</option>
-                    </select>
-                </div>
-
-                <button class="btn-action" id="process-btn" onclick="processDubbing()" disabled>
-                    <span id="process-btn-text">🔊 Sinh Giọng & Lồng Tiếng Vào Video</span>
-                </button>
-            </section>
-
-            <!-- RIGHT PANEL: PREVIEW & OUTPUT -->
-            <section class="panel">
-                <div class="panel-title">2. Xem Trước & Tải Video Thành Phẩm</div>
-
-                <div class="input-box">
-                    <label>Video Nguồn (Gốc):</label>
-                    <video id="source-player" class="video-preview" controls preload="metadata" playsinline style="display: none;"></video>
-                    <div id="source-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
-                        Chưa có video nguồn. Hãy nhập URL hoặc tải file lên ở bảng bên trái.
-                    </div>
-                </div>
-
-                <div class="input-box">
-                    <label>Video Sau Khi Lồng Tiếng (Dubbed Result):</label>
-                    <video id="result-player" class="video-preview" controls preload="metadata" playsinline style="display: none;"></video>
-                    <div id="result-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
-                        Video sau khi lồng tiếng sẽ xuất hiện tại đây.
-                    </div>
-                </div>
-
-                <a id="download-link" class="download-btn" style="display: none;" download>
-                    📥 Tải Video Đã Lồng Tiếng (.mp4)
-                </a>
-            </section>
-
-            <!-- BOTTOM PANEL: SYSTEM CONSOLE LOGS -->
-            <section class="panel" style="grid-column: 1 / -1; margin-top: 1rem;">
-                <div class="panel-title" style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>💻 Nhật Ký Hệ Thống (Console Log)</span>
-                    <button onclick="clearConsoleLog()" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); color: #ccc; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">🧹 Xóa Log</button>
-                </div>
-                <div id="console-log-box" style="background: #0d1117; color: #39d353; font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace; font-size: 0.85rem; padding: 1rem; border-radius: 8px; height: 180px; overflow-y: auto; border: 1px solid #30363d; white-space: pre-wrap; word-break: break-word;">
-                    <div style="color: #8b949e;">[System Log] Console ready. Waiting for events...</div>
-                </div>
-            </section>
-        </main>
+        <!-- BOTTOM PANEL: SYSTEM CONSOLE LOGS -->
+        <section class="panel" style="grid-column: 1 / -1; margin-top: 1rem;">
+            <div class="panel-title" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>💻 Nhật Ký Hệ Thống (Console Log)</span>
+                <button onclick="clearConsoleLog()" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); color: #ccc; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">🧹 Xóa Log</button>
+            </div>
+            <div id="console-log-box" style="background: #0d1117; color: #39d353; font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace; font-size: 0.85rem; padding: 1rem; border-radius: 8px; height: 180px; overflow-y: auto; border: 1px solid #30363d; white-space: pre-wrap; word-break: break-word;">
+                <div style="color: #8b949e;">[System Log] Console ready. Waiting for events...</div>
+            </div>
+        </section>
+    </main>
 
         <script>
             let currentVideoId = sessionStorage.getItem('dubber_video_id') || null;
