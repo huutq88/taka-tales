@@ -1875,7 +1875,11 @@ async def list_voices(request: Request):
     # 1. Try fetching from connected Taka Agent first
     res = await tunnel_request_to_agent("list_voices_request", {}, workspace_id=ws_id, timeout=5.0)
     if res and isinstance(res, dict) and "voices" in res:
-        voices_list = res["voices"]
+        for v in res["voices"]:
+            if isinstance(v, dict):
+                v["provider"] = "agent"
+                v["provider_label"] = "Local Agent"
+                voices_list.append(v)
         print(f"[Server] Fetched voices list from Agent: {[v['id'] for v in voices_list]}")
 
     # 2. Also check local server VOICES_DIR and ~/.taka-agent/voices
@@ -1895,7 +1899,9 @@ async def list_voices(request: Request):
                             "name": v_id,
                             "has_audio": has_audio,
                             "has_text": has_text,
-                            "is_protected": v_id in ("nam-dao-ly", "nu-doc-truyen", "nam-bac-dao-ly", "nu-appota")
+                            "is_protected": v_id in ("nam-dao-ly", "nu-doc-truyen", "nam-bac-dao-ly", "nu-appota"),
+                            "provider": "agent",
+                            "provider_label": "Local Agent"
                         })
                         existing_ids.add(v_id)
 
@@ -1914,13 +1920,15 @@ async def list_voices(request: Request):
                             "name": v.get("name", v_id),
                             "ref_text": v.get("ref_text", ""),
                             "has_audio": True,
-                            "is_protected": True
+                            "is_protected": True,
+                            "provider": "melorix",
+                            "provider_label": "Melorix Cloud"
                         })
                         existing_ids.add(v_id)
     except Exception:
         pass
 
-    return sorted(voices_list, key=lambda x: x.get("id", ""))
+    return sorted(voices_list, key=lambda x: (x.get("provider", ""), x.get("id", "")))
 
 
 @app.get("/v1/dubber/voices")
@@ -3594,7 +3602,10 @@ async def dubber_ui_page():
                     voicesList.forEach(v => {
                         const opt = document.createElement('option');
                         opt.value = v.id;
-                        opt.textContent = `🎙️ ${v.name || v.id} (${v.id})`;
+                        const icon = v.provider === 'melorix' ? '☁️' : '🎙️';
+                        const providerText = v.provider_label ? ` [${v.provider_label}]` : '';
+                        opt.textContent = `${icon} ${v.name || v.id}${providerText}`;
+                        opt.dataset.provider = v.provider || '';
                         sel.appendChild(opt);
                     });
                 }
@@ -3713,14 +3724,17 @@ async def dubber_ui_page():
             }
             if (!currentVideoId) return alert('Chưa chọn video nguồn! Vui lòng nhập link video (và bấm Tải Nguồn Video) hoặc chọn Tải File Lên từ máy tính.');
 
-            const voiceId = document.getElementById('voice-select').value;
+            const voiceSelect = document.getElementById('voice-select');
+            const voiceId = voiceSelect.value;
+            const selectedOpt = voiceSelect.options[voiceSelect.selectedIndex];
+            const provider = selectedOpt ? (selectedOpt.dataset.provider || '') : '';
             const text = document.getElementById('voice-text').value.trim();
             const mixMode = document.getElementById('mix-mode').value;
 
             if (!text) return alert('Vui lòng nhập nội dung lồng tiếng!');
 
             const btnText = document.getElementById('process-btn-text');
-            btnText.innerHTML = '<div class="spinner"></div> Đang đọc TTS & Lồng tiếng vào video (Local Agent)...';
+            btnText.innerHTML = '<div class="spinner"></div> Đang đọc TTS & Lồng tiếng vào video...';
             document.getElementById('process-btn').disabled = true;
 
             try {
@@ -3730,6 +3744,8 @@ async def dubber_ui_page():
                     body: JSON.stringify({
                         video_id: currentVideoId,
                         voice_id: voiceId,
+                        provider: provider,
+                        use_melorix: provider === 'melorix',
                         text: text,
                         mix_mode: mixMode
                     })

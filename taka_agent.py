@@ -2908,10 +2908,21 @@ async def main():
                                 out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
                                 voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
                                 output_video = DUBBER_OUTPUT_DIR / f"{out_id}.mp4"
+                                provider = payload.get("provider", "")
                                 use_melorix = payload.get("use_melorix")
                                 if use_melorix is None:
-                                    use_melorix = (voice_id != "nam-dao-ly")
-                                voice_config = {"voice_id": voice_id, "speed": speed, "use_melorix": use_melorix}
+                                    if provider == "melorix":
+                                        use_melorix = True
+                                    elif provider == "agent" or voice_id == "nam-dao-ly":
+                                        use_melorix = False
+                                    else:
+                                        use_melorix = (voice_id != "nam-dao-ly")
+                                voice_config = {
+                                    "voice_id": voice_id,
+                                    "speed": speed,
+                                    "provider": provider,
+                                    "use_melorix": use_melorix
+                                }
 
 
                                 await generate_voiceover(text_content, voice_audio, voice_config)
