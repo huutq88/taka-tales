@@ -740,36 +740,8 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         v_id = voice_config.get("voice_id") if voice_config else None
         asyncio.run(video_engine.tts_edge(text, out, voice=v_id))
 
-async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
-    """Synthesize TTS audio exclusively using Melorix Voice API (http://voice.melorix.co/api/tts). No local fallback."""
-    import requests, time, re
-    out = pathlib.Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    
-    clean_text = text.replace("\\n", " ").replace("\n", " ")
-    clean_text = re.sub(r'\[.*?\]', '', clean_text)
-    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-    if not clean_text:
-        clean_text = text
-
-    voice_id = "nu-doc-truyen"
-    speed = 1.0
-    language = "vi"
-    if voice_config:
-        voice_id = voice_config.get("voice_id") or voice_id
-        speed = float(voice_config.get("speed") or 1.0)
-        language = voice_config.get("language") or "vi"
-
-    norm_voice = (voice_id or "").strip().lower().replace("_", "-")
-    melorix_map = {
-        "nam-dao-ly": "nam-bac-dao-ly",
-        "nam-bac-dao-ly": "nam-bac-dao-ly",
-        "nam-doc-truyen": "nam-doc-truyen",
-        "nu-doc-truyen": "nu-doc-truyen",
-        "nu-appota": "nu-appota",
-    }
-    voice_id = melorix_map.get(norm_voice, voice_id)
-
+async def _tts_melorix_single_chunk(clean_text: str, voice_id: str, speed: float, language: str, out: pathlib.Path) -> None:
+    import requests, time
     url = "https://voice.melorix.co/api/tts"
     payload = {
         "text": clean_text,
@@ -777,12 +749,10 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         "language": language,
         "speed": speed
     }
-
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    print(f"[Melorix Cloud TTS] Calling https://voice.melorix.co/api/tts: voice_id='{voice_id}', text='{clean_text[:40]}...'")
     resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=90)
     if resp.status_code != 200:
         print(f"[Melorix Cloud TTS] Warning: Voice '{voice_id}' returned {resp.status_code}. Attempting fallback Melorix voice...")
@@ -804,7 +774,6 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
             print(f"[Melorix Cloud TTS] {err_msg}")
             raise RuntimeError(err_msg)
 
-    
     data = resp.json()
     job_id = data.get("job_id")
     status = data.get("status")
@@ -838,8 +807,110 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
 
     with open(out, "wb") as f:
         f.write(a_res.content)
-    
-    print(f"[Melorix Cloud TTS] Successfully generated audio ({out.stat().st_size} bytes)")
+
+
+def split_text_into_chunks(text: str, max_chars: int = 180) -> list:
+    import re
+    text = text.strip()
+    if len(text) <= max_chars:
+        return [text]
+
+    sentences = re.split(r'(?<=[.?!;\n])\s+', text)
+    chunks = []
+    current = ""
+    for s in sentences:
+        s = s.strip()
+        if not s:
+            continue
+        if len(current) + len(s) + 1 <= max_chars:
+            current = (current + " " + s).strip()
+        else:
+            if current:
+                chunks.append(current)
+            if len(s) > max_chars:
+                parts = re.split(r'(?<=[,])\s+', s)
+                sub = ""
+                for p in parts:
+                    if len(sub) + len(p) + 1 <= max_chars:
+                        sub = (sub + " " + p).strip()
+                    else:
+                        if sub: chunks.append(sub)
+                        sub = p
+                current = sub
+            else:
+                current = s
+    if current:
+        chunks.append(current)
+    return chunks if chunks else [text]
+
+
+async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
+    """Synthesize TTS audio exclusively using Melorix Voice API (http://voice.melorix.co/api/tts). Support chunking & logs."""
+    import requests, time, re
+    out = pathlib.Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    clean_text = text.replace("\\n", " ").replace("\n", " ")
+    clean_text = re.sub(r'\[.*?\]', '', clean_text)
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+    if not clean_text:
+        clean_text = text
+
+    voice_id = "nu-doc-truyen"
+    speed = 1.0
+    language = "vi"
+    if voice_config:
+        voice_id = voice_config.get("voice_id") or voice_id
+        speed = float(voice_config.get("speed") or 1.0)
+        language = voice_config.get("language") or "vi"
+
+    norm_voice = (voice_id or "").strip().lower().replace("_", "-")
+    melorix_map = {
+        "nam-dao-ly": "nam-bac-dao-ly",
+        "nam-bac-dao-ly": "nam-bac-dao-ly",
+        "nam-doc-truyen": "nam-doc-truyen",
+        "nu-doc-truyen": "nu-doc-truyen",
+        "nu-appota": "nu-appota",
+    }
+    voice_id = melorix_map.get(norm_voice, voice_id)
+
+    chunks = split_text_into_chunks(clean_text, max_chars=180)
+    if len(chunks) == 1:
+        print(f"[Melorix Cloud TTS] Generating voiceover for 1 single text block: '{clean_text[:40]}...'")
+        await _tts_melorix_single_chunk(clean_text, voice_id, speed, language, out)
+    else:
+        print(f"[Melorix Cloud TTS] Tách văn bản thành {len(chunks)} đoạn thoại để sinh voice từng đoạn.")
+        temp_files = []
+        try:
+            for idx, ch_text in enumerate(chunks, 1):
+                chunk_out = out.parent / f"{out.stem}_part_{idx}.wav"
+                temp_files.append(chunk_out)
+                print(f"[Melorix Cloud TTS] [Đoạn {idx}/{len(chunks)}] Đang tạo voice cho: '{ch_text[:35]}...'")
+                await _tts_melorix_single_chunk(ch_text, voice_id, speed, language, chunk_out)
+
+            # Combine audio chunks using ffmpeg concat
+            concat_list_file = out.parent / f"{out.stem}_concat.txt"
+            with open(concat_list_file, "w", encoding="utf-8") as cf:
+                for tf in temp_files:
+                    cf.write(f"file '{tf.name}'\n")
+
+            cmd = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(concat_list_file),
+                "-c", "copy", str(out)
+            ]
+            await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, check=True)
+            print(f"[Melorix Cloud TTS] ✅ Đã ghép hoàn chỉnh {len(chunks)} đoạn thoại thành file âm thanh: {out.name}")
+
+            # Cleanup temp chunk files
+            try: concat_list_file.unlink(missing_ok=True)
+            except Exception: pass
+            for tf in temp_files:
+                try: tf.unlink(missing_ok=True)
+                except Exception: pass
+        except Exception as err:
+            print(f"[Melorix Cloud TTS] Lỗi sinh voice theo đoạn: {err}")
+            raise err
 
 
 async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
