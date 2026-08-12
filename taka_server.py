@@ -3599,6 +3599,7 @@ async def dubber_ui_page():
         <script>
             let currentVideoId = sessionStorage.getItem('dubber_video_id') || null;
             let API_BASE = '';
+            let isApiDetected = false;
 
             function addConsoleLog(msg, type = 'info') {
                 const box = document.getElementById('console-log-box');
@@ -3623,19 +3624,23 @@ async def dubber_ui_page():
             }
 
             async function detectApiBase() {
+                if (isApiDetected) return API_BASE;
                 if (window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost') {
                     try {
                         const testRes = await fetch('http://127.0.0.1:8080/v1/voices', { method: 'GET' });
                         if (testRes.ok) {
                             API_BASE = 'http://127.0.0.1:8080';
-                            addConsoleLog('Khởi tạo kết nối Taka Agent: ' + API_BASE, 'system');
-                            return;
+                            isApiDetected = true;
+                            addConsoleLog('Khởi tạo kết nối Local Agent: ' + API_BASE, 'system');
+                            return API_BASE;
                         }
                     } catch(e) {
                         addConsoleLog('Chạy trên Host Domain (Fallback): ' + window.location.origin, 'system');
                     }
                 }
                 API_BASE = '';
+                isApiDetected = true;
+                return API_BASE;
             }
 
             function switchTab(tab) {
@@ -3670,7 +3675,6 @@ async def dubber_ui_page():
                     addConsoleLog('Lỗi nạp danh sách giọng đọc: ' + e.message, 'error');
                 }
             }
-            loadVoices();
 
             function setStatus(msg, type) {
                 const el = document.getElementById('source-status');
@@ -3680,6 +3684,7 @@ async def dubber_ui_page():
             }
 
             async function fetchVideoFromUrl() {
+                await detectApiBase();
                 const url = document.getElementById('video-url').value.trim();
                 if (!url) return alert('Vui lòng nhập URL video!');
 
@@ -3717,6 +3722,7 @@ async def dubber_ui_page():
 
             async function uploadVideoFile(file) {
                 if (!file) return;
+                await detectApiBase();
                 setStatus('⌛ Đang tải file video lên Local Agent...', 'loading');
                 addConsoleLog('Bắt đầu upload file video: ' + file.name + ' (' + Math.round(file.size/1024/1024) + ' MB)', 'info');
                 const formData = new FormData();
@@ -3763,6 +3769,7 @@ async def dubber_ui_page():
             }
 
             async function autoLoadLatestVideo() {
+                await detectApiBase();
                 try {
                     let data = null;
                     if (API_BASE) {
@@ -3776,15 +3783,111 @@ async def dubber_ui_page():
                     if (!data || !data.ok) {
                         const res = await fetch('/v1/dubber/latest-input');
                         data = await res.json();
+                    }
+                    if (data && data.ok && data.video_id && data.video_url) {
+                        currentVideoId = data.video_id;
+                        sessionStorage.setItem('dubber_video_id', data.video_id);
+                        sessionStorage.setItem('dubber_video_url', data.video_url);
+                        showSourceVideo(data.video_url);
+                        setStatus('✅ Đã nạp video nguồn gần nhất sẵn sàng (Local Agent)!', 'success');
+                        addConsoleLog('Đã nạp video nguồn gần nhất: ' + data.video_id + ' (' + Math.round((data.size || 0)/1024/1024) + ' MB)', 'system');
+                        document.getElementById('process-btn').disabled = false;
+                        return;
+                    }
+                } catch(e) {
+                    console.warn('Failed to fetch latest input video:', e);
                 }
-            } catch(e) {
-                setStatus(`❌ <b>Lỗi kết nối:</b> ${e.message}`, 'error');
-                addConsoleLog('❌ Lỗi kết nối: ' + e.message, 'error');
-            } finally {
-                btnText.innerHTML = '🔊 Sinh Giọng & Lồng Tiếng Vào Video';
-                document.getElementById('process-btn').disabled = false;
+
+                if (sessionStorage.getItem('dubber_video_id') && sessionStorage.getItem('dubber_video_url')) {
+                    showSourceVideo(sessionStorage.getItem('dubber_video_url'));
+                    setStatus('✅ Đã nạp video nguồn sẵn sàng (Local Agent)!', 'success');
+                    addConsoleLog('Đã nạp video nguồn sẵn sàng từ cache.', 'system');
+                    document.getElementById('process-btn').disabled = false;
+                }
             }
-        }
+
+            async function initPage() {
+                await loadVoices();
+                await autoLoadLatestVideo();
+            }
+            initPage();
+
+            async function processDubbing() {
+                await detectApiBase();
+                if (!currentVideoId) {
+                    const url = document.getElementById('video-url') ? document.getElementById('video-url').value.trim() : '';
+                    if (url) {
+                        await fetchVideoFromUrl();
+                    }
+                }
+                if (!currentVideoId) return alert('Chưa chọn video nguồn! Vui lòng nhập link video (và bấm Tải Nguồn Video) hoặc chọn Tải File Lên từ máy tính.');
+
+                const voiceSelect = document.getElementById('voice-select');
+                const voiceId = voiceSelect.value;
+                const selectedOpt = voiceSelect.options[voiceSelect.selectedIndex];
+                const provider = selectedOpt ? (selectedOpt.dataset.provider || '') : '';
+                const text = document.getElementById('voice-text').value.trim();
+                const mixMode = document.getElementById('mix-mode').value;
+
+                if (!text) return alert('Vui lòng nhập nội dung lồng tiếng!');
+
+                setStatus('⏳ <b>Đang tiến hành lồng tiếng video...</b><br>• Bước 1: Gọi TTS đọc thoại (' + (provider === 'melorix' ? 'Melorix Cloud' : 'Local Agent') + ')<br>• Bước 2: Ghép âm thanh thoại vào video gốc bằng FFmpeg', 'loading');
+                addConsoleLog('Bắt đầu lồng tiếng cho video: ' + currentVideoId, 'system');
+                addConsoleLog('Thông số: Voice=' + voiceId + ' (' + (provider || 'agent') + '), MixMode=' + mixMode, 'info');
+                addConsoleLog('Bước 1: Gọi mô hình TTS đọc nội dung thoại...', 'info');
+
+                const btnText = document.getElementById('process-btn-text');
+                btnText.innerHTML = '<div class="spinner"></div> Đang lồng tiếng video...';
+                document.getElementById('process-btn').disabled = true;
+
+                try {
+                    const res = await fetch(API_BASE + '/v1/dubber/process', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            video_id: currentVideoId,
+                            voice_id: voiceId,
+                            provider: provider,
+                            use_melorix: provider === 'melorix',
+                            text: text,
+                            mix_mode: mixMode
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                        const resultPlayer = document.getElementById('result-player');
+                        const resultPlaceholder = document.getElementById('result-placeholder');
+                        const downloadLink = document.getElementById('download-link');
+
+                        const useApiBase = (API_BASE && (window.location.protocol === 'http:' || API_BASE.startsWith('https:')));
+                        const dubbedFullUrl = (data.dubbed_url && data.dubbed_url.startsWith('/') && useApiBase) ? (API_BASE + data.dubbed_url) : data.dubbed_url;
+
+                        const cleanResultUrl = dubbedFullUrl.split('#')[0];
+                        const sep = cleanResultUrl.includes('?') ? '&' : '?';
+                        resultPlayer.src = cleanResultUrl + sep + '_v=' + Date.now() + '#t=0.1';
+                        try { resultPlayer.load(); } catch(e) {}
+                        resultPlayer.style.display = 'block';
+                        resultPlaceholder.style.display = 'none';
+
+                        downloadLink.href = dubbedFullUrl;
+                        downloadLink.style.display = 'inline-flex';
+
+                        setStatus('✅ <b>Lồng tiếng thành công!</b> Bạn có thể xem trước hoặc tải video thành phẩm bên phải.', 'success');
+                        addConsoleLog('Bước 2: Ghép âm thanh & render video thành công!', 'info');
+                        addConsoleLog('✅ Hoàn tất lồng tiếng video. Link thành phẩm: ' + data.dubbed_url, 'info');
+                        resultPlayer.play();
+                    } else {
+                        setStatus(`❌ <b>Lỗi xử lý lồng tiếng:</b> ${data.detail || 'Không xác định'}`, 'error');
+                        addConsoleLog('❌ Lỗi lồng tiếng: ' + (data.detail || 'Không xác định'), 'error');
+                    }
+                } catch(e) {
+                    setStatus(`❌ Lỗi kết nối: ${e.message}`, 'error');
+                    addConsoleLog('❌ Lỗi kết nối: ' + e.message, 'error');
+                } finally {
+                    btnText.innerHTML = '🔊 Sinh Giọng & Lồng Tiếng Vào Video';
+                    document.getElementById('process-btn').disabled = false;
+                }
+            }
     </script>
 </body>
 </html>
