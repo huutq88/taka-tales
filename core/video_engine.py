@@ -785,10 +785,15 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
 # ---------- TTS ----------
 EDGE_VOICE_MAP = {
     "nam-dao-ly": "vi-VN-NamMinhNeural",
+    "nam_dao_ly": "vi-VN-NamMinhNeural",
     "nam-bac-dao-ly": "vi-VN-NamMinhNeural",
+    "nam_bac_dao_ly": "vi-VN-NamMinhNeural",
     "nam-doc-truyen": "vi-VN-NamMinhNeural",
+    "nam_doc_truyen": "vi-VN-NamMinhNeural",
     "nu-doc-truyen": "vi-VN-HoaiMyNeural",
+    "nu_doc_truyen": "vi-VN-HoaiMyNeural",
     "nu-appota": "vi-VN-HoaiMyNeural",
+    "nu_appota": "vi-VN-HoaiMyNeural",
 }
 
 async def tts_edge(text: str, out: pathlib.Path, voice: str = None) -> None:

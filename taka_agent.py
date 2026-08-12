@@ -651,7 +651,11 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
 
         alias_map = {
             "nam-bac-dao-ly": "nam-dao-ly",
-            "nu-appota": "nu-doc-truyen"
+            "nam_bac_dao_ly": "nam-dao-ly",
+            "nam_dao_ly": "nam-dao-ly",
+            "nu-appota": "nu-doc-truyen",
+            "nu_appota": "nu-doc-truyen",
+            "nu_doc_truyen": "nu-doc-truyen"
         }
         resolved_voice_id = alias_map.get(voice_id, voice_id)
 
@@ -756,8 +760,15 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         speed = float(voice_config.get("speed") or 1.0)
         language = voice_config.get("language") or "vi"
 
-    if voice_id == "nam-dao-ly":
-        voice_id = "nam-bac-dao-ly"
+    norm_voice = (voice_id or "").strip().lower().replace("_", "-")
+    melorix_map = {
+        "nam-dao-ly": "nam-bac-dao-ly",
+        "nam-bac-dao-ly": "nam-bac-dao-ly",
+        "nam-doc-truyen": "nam-doc-truyen",
+        "nu-doc-truyen": "nu-doc-truyen",
+        "nu-appota": "nu-appota",
+    }
+    voice_id = melorix_map.get(norm_voice, voice_id)
 
     url = "https://voice.melorix.co/api/tts"
     payload = {
@@ -2893,7 +2904,7 @@ async def main():
                             request_id = message.get("request_id")
                             payload = message.get("payload", {})
                             video_id = payload.get("video_id", "").strip()
-                            voice_id = payload.get("voice_id", "nam-dao-ly").strip()
+                            voice_id = payload.get("voice_id", "nam-bac-dao-ly").strip()
                             text_content = payload.get("text", "").strip()
                             mix_mode = payload.get("mix_mode", "replace").strip()
                             speed = float(payload.get("speed", 1.0))

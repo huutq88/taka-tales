@@ -1933,7 +1933,8 @@ async def list_voices(request: Request):
 
 @app.get("/v1/dubber/voices")
 async def list_dubber_voices(request: Request):
-    return await list_voices(request)
+    voices = await list_voices(request)
+    return [v for v in voices if isinstance(v, dict) and v.get("id") != "nam-dao-ly"]
 
 
 
@@ -3112,7 +3113,7 @@ async def dubber_process_dubbing(request: Request):
     try:
         body = await request.json()
         video_id = body.get("video_id", "").strip()
-        voice_id = body.get("voice_id", "nam-dao-ly").strip()
+        voice_id = body.get("voice_id", "nam-bac-dao-ly").strip()
         text_content = body.get("text", "").strip()
         mix_mode = body.get("mix_mode", "replace").strip()
         speed = float(body.get("speed", 1.0))
@@ -3513,8 +3514,10 @@ async def dubber_ui_page():
             <div class="input-box">
                 <label for="voice-select">Chọn Giọng Đọc (Voice ID):</label>
                 <select id="voice-select">
-                    <option value="nam-dao-ly">🎙️ nam-dao-ly (Giọng Nam Truyền Cảm)</option>
-                    <option value="nu-doc-truyen">🎙️ nu-doc-truyen (Giọng Nữ Đọc Truyện)</option>
+                    <option value="nam-bac-dao-ly" data-provider="melorix">☁️ Nam Bắc Đạo Lý (nam-bac-dao-ly)</option>
+                    <option value="nam-doc-truyen" data-provider="melorix">☁️ Nam đọc truyện (nam-doc-truyen)</option>
+                    <option value="nu-doc-truyen" data-provider="melorix">☁️ Nữ đọc truyện (nu-doc-truyen)</option>
+                    <option value="nu-appota" data-provider="melorix">☁️ Nữ Appota (nu-appota)</option>
                 </select>
             </div>
 
