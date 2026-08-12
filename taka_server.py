@@ -3019,31 +3019,67 @@ async def dubber_download_video(request: Request):
         vid = f"v_{uuid.uuid4().hex[:10]}"
         target_mp4 = DUBBER_INPUT_DIR / f"{vid}.mp4"
 
-        ytdlp_bin = BASE_DIR / "env" / "bin" / "yt-dlp"
-        if not ytdlp_bin.exists():
-            ytdlp_bin = shutil.which("yt-dlp") or "yt-dlp"
-        else:
-            ytdlp_bin = str(ytdlp_bin)
+        downloaded = False
+        try:
+            import yt_dlp
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'outtmpl': str(target_mp4),
+                'quiet': True,
+                'no_warnings': True,
+                'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+            if target_mp4.exists() and target_mp4.stat().st_size > 0:
+                downloaded = True
+        except Exception as e1:
+            print(f"[Server yt-dlp API Warning] {e1}")
 
-        cmd = [
-            ytdlp_bin,
-            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-            "-o", str(target_mp4),
-            "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-            video_url
-        ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if not downloaded:
+            try:
+                cmd = [
+                    sys.executable, "-m", "yt_dlp",
+                    "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                    "-o", str(target_mp4),
+                    "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    video_url
+                ]
+                subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if target_mp4.exists() and target_mp4.stat().st_size > 0:
+                    downloaded = True
+            except Exception as e2:
+                print(f"[Server yt-dlp module Warning] {e2}")
 
-        if not target_mp4.exists() or target_mp4.stat().st_size == 0:
+        if not downloaded:
+            bin_path = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+            if bin_path:
+                try:
+                    cmd = [
+                        bin_path,
+                        "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                        "-o", str(target_mp4),
+                        "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                        video_url
+                    ]
+                    subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    if target_mp4.exists() and target_mp4.stat().st_size > 0:
+                        downloaded = True
+                except Exception as e3:
+                    print(f"[Server yt-dlp bin Warning] {e3}")
+
+        if not downloaded:
             import requests
             headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
-            r = requests.get(video_url, headers=headers, stream=True, timeout=60)
+            r = requests.get(video_url, headers=headers, stream=True, timeout=60, allow_redirects=True)
             if r.status_code == 200:
                 with open(target_mp4, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
+                    for chunk in r.iter_content(chunk_size=16384):
                         f.write(chunk)
+                if target_mp4.exists() and target_mp4.stat().st_size > 0:
+                    downloaded = True
 
-        if not target_mp4.exists() or target_mp4.stat().st_size == 0:
+        if not downloaded or not target_mp4.exists() or target_mp4.stat().st_size == 0:
             raise HTTPException(status_code=400, detail="Không thể tải video từ URL. Vui lòng chọn 'Tải File Lên' để nạp video trực tiếp.")
 
         return {
