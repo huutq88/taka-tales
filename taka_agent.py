@@ -783,7 +783,7 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
     }
 
     print(f"[Melorix Cloud TTS] Calling https://voice.melorix.co/api/tts: voice_id='{voice_id}', text='{clean_text[:40]}...'")
-    resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=60)
+    resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=90)
     if resp.status_code != 200:
         print(f"[Melorix Cloud TTS] Warning: Voice '{voice_id}' returned {resp.status_code}. Attempting fallback Melorix voice...")
         fallback_voices = ["nam-bac-dao-ly", "nam-doc-truyen"]
@@ -793,7 +793,7 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
                 continue
             payload["voice_id"] = alt_voice
             print(f"[Melorix Cloud TTS] Retrying with fallback voice '{alt_voice}'...")
-            alt_resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=60)
+            alt_resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=90)
             if alt_resp.status_code == 200:
                 resp = alt_resp
                 fallback_success = True
