@@ -3687,17 +3687,30 @@ async def dubber_ui_page():
         function showSourceVideo(url) {
             const player = document.getElementById('source-player');
             const placeholder = document.getElementById('source-placeholder');
-            const fullUrl = (url && url.startsWith('/') && API_BASE) ? (API_BASE + url) : url;
+            const useApiBase = (API_BASE && (window.location.protocol === 'http:' || API_BASE.startsWith('https:')));
+            const fullUrl = (url && url.startsWith('/') && useApiBase) ? (API_BASE + url) : url;
             player.src = fullUrl;
+            try { player.load(); } catch(e) {}
             player.style.display = 'block';
             placeholder.style.display = 'none';
         }
 
         async function autoLoadLatestVideo() {
             try {
-                const res = await fetch(API_BASE + '/v1/dubber/latest-input');
-                const data = await res.json();
-                if (data.ok && data.video_id && data.video_url) {
+                let data = null;
+                if (API_BASE) {
+                    try {
+                        const res = await fetch(API_BASE + '/v1/dubber/latest-input');
+                        data = await res.json();
+                    } catch(err) {
+                        console.warn('Failed API_BASE latest-input fetch:', err);
+                    }
+                }
+                if (!data || !data.ok) {
+                    const res = await fetch('/v1/dubber/latest-input');
+                    data = await res.json();
+                }
+                if (data && data.ok && data.video_id && data.video_url) {
                     currentVideoId = data.video_id;
                     sessionStorage.setItem('dubber_video_id', data.video_id);
                     sessionStorage.setItem('dubber_video_url', data.video_url);
