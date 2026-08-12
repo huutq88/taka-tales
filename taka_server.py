@@ -3752,8 +3752,10 @@ async def dubber_ui_page():
 
             if (!text) return alert('Vui lòng nhập nội dung lồng tiếng!');
 
+            setStatus('⏳ <b>Đang tiến hành lồng tiếng video...</b><br>• Bước 1: Gọi TTS đọc thoại (' + (provider === 'melorix' ? 'Melorix Cloud' : 'Local Agent') + ')<br>• Bước 2: Ghép âm thanh thoại vào video gốc bằng FFmpeg', 'loading');
+
             const btnText = document.getElementById('process-btn-text');
-            btnText.innerHTML = '<div class="spinner"></div> Đang đọc TTS & Lồng tiếng vào video...';
+            btnText.innerHTML = '<div class="spinner"></div> Đang lồng tiếng video...';
             document.getElementById('process-btn').disabled = true;
 
             try {
@@ -3775,20 +3777,23 @@ async def dubber_ui_page():
                     const resultPlaceholder = document.getElementById('result-placeholder');
                     const downloadLink = document.getElementById('download-link');
 
-                    const dubbedFullUrl = (data.dubbed_url && data.dubbed_url.startsWith('/') && API_BASE) ? (API_BASE + data.dubbed_url) : data.dubbed_url;
+                    const useApiBase = (API_BASE && (window.location.protocol === 'http:' || API_BASE.startsWith('https:')));
+                    const dubbedFullUrl = (data.dubbed_url && data.dubbed_url.startsWith('/') && useApiBase) ? (API_BASE + data.dubbed_url) : data.dubbed_url;
                     resultPlayer.src = dubbedFullUrl;
+                    try { resultPlayer.load(); } catch(e) {}
                     resultPlayer.style.display = 'block';
                     resultPlaceholder.style.display = 'none';
 
                     downloadLink.href = dubbedFullUrl;
                     downloadLink.style.display = 'inline-flex';
 
+                    setStatus('✅ <b>Lồng tiếng thành công!</b> Bạn có thể xem trước hoặc tải video thành phẩm bên phải.', 'success');
                     resultPlayer.play();
                 } else {
-                    alert(`❌ Lỗi xử lý lồng tiếng: ${data.detail || 'Không xác định'}`);
+                    setStatus(`❌ <b>Lỗi xử lý lồng tiếng:</b> ${data.detail || 'Không xác định'}`, 'error');
                 }
             } catch(e) {
-                alert(`❌ Lỗi kết nối: ${e.message}`);
+                setStatus(`❌ <b>Lỗi kết nối:</b> ${e.message}`, 'error');
             } finally {
                 btnText.innerHTML = '🔊 Sinh Giọng & Lồng Tiếng Vào Video';
                 document.getElementById('process-btn').disabled = false;
