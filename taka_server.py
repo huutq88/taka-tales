@@ -3123,7 +3123,7 @@ async def dubber_process_dubbing(request: Request):
             raise HTTPException(status_code=400, detail="Missing video_id or text content")
 
         ws_id = get_workspace_id_from_request(request)
-        res = await tunnel_request_to_agent("dubber_process_request", body, workspace_id=ws_id, timeout=300.0)
+        res = await tunnel_request_to_agent("dubber_process_request", body, workspace_id=ws_id, timeout=3600.0)
         if res and isinstance(res, dict) and res.get("ok"):
             return res
         if res and isinstance(res, dict) and res.get("detail"):

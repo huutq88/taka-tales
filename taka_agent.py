@@ -740,7 +740,7 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
         v_id = voice_config.get("voice_id") if voice_config else None
         asyncio.run(video_engine.tts_edge(text, out, voice=v_id))
 
-async def _tts_melorix_single_chunk(clean_text: str, voice_id: str, speed: float, language: str, out: pathlib.Path) -> None:
+async def _tts_melorix_single_chunk(clean_text: str, voice_id: str, speed: float, language: str, out: pathlib.Path, max_retries: int = 5) -> None:
     import requests, time
     url = "https://voice.melorix.co/api/tts"
     payload = {
@@ -753,60 +753,72 @@ async def _tts_melorix_single_chunk(clean_text: str, voice_id: str, speed: float
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=90)
-    if resp.status_code != 200:
-        print(f"[Melorix Cloud TTS] Warning: Voice '{voice_id}' returned {resp.status_code}. Attempting fallback Melorix voice...")
-        fallback_voices = ["nam-bac-dao-ly", "nam-doc-truyen"]
-        fallback_success = False
-        for alt_voice in fallback_voices:
-            if alt_voice == voice_id:
-                continue
-            payload["voice_id"] = alt_voice
-            print(f"[Melorix Cloud TTS] Retrying with fallback voice '{alt_voice}'...")
-            alt_resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=90)
-            if alt_resp.status_code == 200:
-                resp = alt_resp
-                fallback_success = True
-                print(f"[Melorix Cloud TTS] Fallback voice '{alt_voice}' succeeded!")
-                break
-        if not fallback_success:
-            err_msg = f"Melorix API (https://voice.melorix.co) error status {resp.status_code}: {resp.text}"
-            print(f"[Melorix Cloud TTS] {err_msg}")
-            raise RuntimeError(err_msg)
-
-    data = resp.json()
-    job_id = data.get("job_id")
-    status = data.get("status")
-    if not job_id:
-        err_msg = f"Missing job_id in Melorix API response: {data}"
-        print(f"[Melorix Cloud TTS] {err_msg}")
-        raise RuntimeError(err_msg)
-
-    start_t = time.time()
-    status_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/status"
-    while status != "done":
-        if time.time() - start_t > 120:
-            err_msg = f"Melorix API job {job_id} timed out after 120 seconds"
-            print(f"[Melorix Cloud TTS] {err_msg}")
-            raise RuntimeError(err_msg)
-        await asyncio.sleep(1.5)
+    last_error = None
+    for attempt in range(1, max_retries + 1):
         try:
-            s_res = await asyncio.to_thread(requests.get, status_url, headers=headers, timeout=15)
-            if s_res.status_code == 200:
-                status = s_res.json().get("status")
-        except Exception as poll_err:
-            print(f"[Melorix Cloud TTS] Status poll glitch (retrying): {poll_err}")
+            resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=180)
+            if resp.status_code != 200:
+                print(f"[Melorix Cloud TTS] Warning: Voice '{voice_id}' returned status {resp.status_code} (lần thử {attempt}/{max_retries}). Thử fallback voice...")
+                fallback_voices = ["nam-bac-dao-ly", "nam-doc-truyen"]
+                fallback_success = False
+                for alt_voice in fallback_voices:
+                    if alt_voice == voice_id:
+                        continue
+                    payload["voice_id"] = alt_voice
+                    print(f"[Melorix Cloud TTS] Thử lại với fallback voice '{alt_voice}'...")
+                    alt_resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=180)
+                    if alt_resp.status_code == 200:
+                        resp = alt_resp
+                        fallback_success = True
+                        print(f"[Melorix Cloud TTS] Fallback voice '{alt_voice}' thành công!")
+                        break
+                if not fallback_success:
+                    err_msg = f"Melorix API (https://voice.melorix.co) status {resp.status_code}: {resp.text}"
+                    print(f"[Melorix Cloud TTS] {err_msg}")
+                    raise RuntimeError(err_msg)
 
-    audio_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/audio"
-    a_res = await asyncio.to_thread(requests.get, audio_url, headers=headers, timeout=30)
+            data = resp.json()
+            job_id = data.get("job_id")
+            status = data.get("status")
+            if not job_id:
+                err_msg = f"Missing job_id in Melorix API response: {data}"
+                print(f"[Melorix Cloud TTS] {err_msg}")
+                raise RuntimeError(err_msg)
 
-    if a_res.status_code != 200:
-        err_msg = f"Failed to download audio from Melorix API: status {a_res.status_code}"
-        print(f"[Melorix Cloud TTS] {err_msg}")
-        raise RuntimeError(err_msg)
+            start_t = time.time()
+            status_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/status"
+            while status != "done":
+                if time.time() - start_t > 300:
+                    err_msg = f"Melorix API job {job_id} timed out after 300 seconds"
+                    print(f"[Melorix Cloud TTS] {err_msg}")
+                    raise RuntimeError(err_msg)
+                await asyncio.sleep(2.0)
+                try:
+                    s_res = await asyncio.to_thread(requests.get, status_url, headers=headers, timeout=30)
+                    if s_res.status_code == 200:
+                        status = s_res.json().get("status")
+                except Exception as poll_err:
+                    print(f"[Melorix Cloud TTS] Status poll glitch (retrying): {poll_err}")
 
-    with open(out, "wb") as f:
-        f.write(a_res.content)
+            audio_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/audio"
+            a_res = await asyncio.to_thread(requests.get, audio_url, headers=headers, timeout=60)
+
+            if a_res.status_code != 200:
+                err_msg = f"Failed to download audio from Melorix API: status {a_res.status_code}"
+                print(f"[Melorix Cloud TTS] {err_msg}")
+                raise RuntimeError(err_msg)
+
+            with open(out, "wb") as f:
+                f.write(a_res.content)
+
+            return  # Succeeded!
+        except Exception as chunk_err:
+            last_error = chunk_err
+            print(f"[Melorix Cloud TTS] Lỗi đoạn thoại (Lần thử {attempt}/{max_retries}): {chunk_err}")
+            if attempt < max_retries:
+                await asyncio.sleep(attempt * 2)
+
+    raise RuntimeError(f"Melorix Cloud TTS thất bại cho đoạn thoại sau {max_retries} lần thử: {last_error}")
 
 
 def split_text_into_chunks(text: str, max_chars: int = 180) -> list:
