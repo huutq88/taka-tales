@@ -3204,13 +3204,17 @@ async def dubber_get_media(category: str, filename: str, request: Request):
             ".mp3": "audio/mpeg"
         }
         media_type = media_type_map.get(ext, "application/octet-stream")
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
         if request.method == "HEAD":
-            return Response(status_code=200, headers={
-                "Content-Type": media_type,
-                "Content-Length": str(target_file.stat().st_size),
-                "Accept-Ranges": "bytes"
-            })
-        return FileResponse(target_file, media_type=media_type, headers={"Accept-Ranges": "bytes"})
+            headers["Content-Type"] = media_type
+            headers["Content-Length"] = str(target_file.stat().st_size)
+            return Response(status_code=200, headers=headers)
+        return FileResponse(target_file, media_type=media_type, headers=headers)
 
     # 2. If not on server local disk, tunnel to Agent via WebSocket
     ws_id = get_workspace_id_from_request(request)
@@ -3222,17 +3226,22 @@ async def dubber_get_media(category: str, filename: str, request: Request):
         "filename": filename,
         "range": range_hdr,
         "head_only": is_head
-    }, workspace_id=ws_id, timeout=10.0 if is_head else 30.0)
+    }, workspace_id=ws_id, timeout=10.0 if is_head else 60.0)
 
     if res and isinstance(res, dict) and res.get("exists"):
         content_type = res.get("content_type", "video/mp4")
         file_size = res.get("size", 0)
+        base_headers = {
+            "Content-Type": content_type,
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+
         if is_head:
-            return Response(status_code=200, headers={
-                "Content-Type": content_type,
-                "Content-Length": str(file_size),
-                "Accept-Ranges": "bytes"
-            })
+            base_headers["Content-Length"] = str(file_size)
+            return Response(status_code=200, headers=base_headers)
 
         content_bytes = b""
         if res.get("content_b64"):
@@ -3242,25 +3251,19 @@ async def dubber_get_media(category: str, filename: str, request: Request):
         if res.get("partial"):
             start = res.get("start", 0)
             end = res.get("end", max(0, len(content_bytes) - 1))
+            base_headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+            base_headers["Content-Length"] = str(len(content_bytes))
             return Response(
                 content=content_bytes,
                 status_code=206,
-                headers={
-                    "Content-Type": content_type,
-                    "Content-Range": f"bytes {start}-{end}/{file_size}",
-                    "Content-Length": str(len(content_bytes)),
-                    "Accept-Ranges": "bytes"
-                }
+                headers=base_headers
             )
 
-        headers = {
-            "Content-Length": str(len(content_bytes)),
-            "Accept-Ranges": "bytes"
-        }
+        base_headers["Content-Length"] = str(len(content_bytes))
         if category == "output" or request.query_params.get("download") == "1":
-            headers["Content-Disposition"] = f'inline; filename="{filename}"'
+            base_headers["Content-Disposition"] = f'inline; filename="{filename}"'
 
-        return Response(content=content_bytes, media_type=content_type, headers=headers)
+        return Response(content=content_bytes, media_type=content_type, headers=base_headers)
 
     raise HTTPException(status_code=404, detail="Media file not found")
 
