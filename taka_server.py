@@ -1901,7 +1901,8 @@ async def list_voices(request: Request):
 
     # 3. Include Melorix Cloud voices as well
     try:
-        r = await asyncio.to_thread(requests.get, "https://voice.melorix.co/api/voices", timeout=3.0)
+        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        r = await asyncio.to_thread(requests.get, "https://voice.melorix.co/api/voices", headers=headers, timeout=5.0)
         if r.status_code == 200:
             melorix_voices = r.json()
             if isinstance(melorix_voices, list):
@@ -1923,18 +1924,8 @@ async def list_voices(request: Request):
 
 
 @app.get("/v1/dubber/voices")
-async def list_dubber_voices():
-    try:
-        r = await asyncio.to_thread(requests.get, "https://voice.melorix.co/api/voices", timeout=5.0)
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    return [
-        {"id": "nam-bac-dao-ly", "name": "Nam Bắc Đạo Lý"},
-        {"id": "nam-doc-truyen", "name": "Nam đọc truyện"},
-        {"id": "nu-doc-truyen", "name": "Nữ đọc truyện"}
-    ]
+async def list_dubber_voices(request: Request):
+    return await list_voices(request)
 
 
 

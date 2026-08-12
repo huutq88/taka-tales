@@ -754,6 +754,9 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         speed = float(voice_config.get("speed") or 1.0)
         language = voice_config.get("language") or "vi"
 
+    if voice_id == "nam-dao-ly":
+        voice_id = "nam-bac-dao-ly"
+
     url = "https://voice.melorix.co/api/tts"
     payload = {
         "text": clean_text,
@@ -762,8 +765,12 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
         "speed": speed
     }
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     print(f"[Melorix Cloud TTS] Calling https://voice.melorix.co/api/tts: voice_id='{voice_id}', text='{clean_text[:40]}...'")
-    resp = await asyncio.to_thread(requests.post, url, json=payload, timeout=60)
+    resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=60)
     if resp.status_code != 200:
         print(f"[Melorix Cloud TTS] Warning: Voice '{voice_id}' returned {resp.status_code}. Attempting fallback Melorix voice...")
         fallback_voices = ["nam-bac-dao-ly", "nam-doc-truyen"]
@@ -773,7 +780,7 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
                 continue
             payload["voice_id"] = alt_voice
             print(f"[Melorix Cloud TTS] Retrying with fallback voice '{alt_voice}'...")
-            alt_resp = await asyncio.to_thread(requests.post, url, json=payload, timeout=60)
+            alt_resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=60)
             if alt_resp.status_code == 200:
                 resp = alt_resp
                 fallback_success = True
@@ -801,12 +808,12 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
             print(f"[Melorix Cloud TTS] {err_msg}")
             raise RuntimeError(err_msg)
         await asyncio.sleep(1.5)
-        s_res = await asyncio.to_thread(requests.get, status_url, timeout=10)
+        s_res = await asyncio.to_thread(requests.get, status_url, headers=headers, timeout=10)
         if s_res.status_code == 200:
             status = s_res.json().get("status")
 
     audio_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/audio"
-    a_res = await asyncio.to_thread(requests.get, audio_url, timeout=30)
+    a_res = await asyncio.to_thread(requests.get, audio_url, headers=headers, timeout=30)
 
     if a_res.status_code != 200:
         err_msg = f"Failed to download audio from Melorix API: status {a_res.status_code}"
@@ -838,12 +845,23 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
     formatted_text = format_for_voice(text, language=lang)
 
     tts_provider = str(merged_config.get("provider") or merged_config.get("tts_provider") or "").lower()
+    voice_id = str(merged_config.get("voice_id") or "").strip()
 
-    if tts_provider == "melorix" or merged_config.get("use_melorix"):
-        print(f"[Agent Voiceover] Routing to Melorix Cloud TTS API")
+    is_local_voice = False
+    if voice_id == "nam-dao-ly":
+        is_local_voice = True
+    elif voice_id:
+        v_folder = AGENT_VOICES_DIR / voice_id
+        if v_folder.exists() and v_folder.is_dir():
+            is_local_voice = True
+
+    use_melorix = merged_config.get("use_melorix")
+
+    if (tts_provider == "melorix" or (use_melorix is True and not is_local_voice)) and voice_id != "nam-dao-ly":
+        print(f"[Agent Voiceover] Routing to Melorix Cloud TTS API (voice_id='{voice_id}')")
         await tts_melorix_api(formatted_text, out, merged_config)
     else:
-        print(f"[Agent Voiceover] Routing to OmniVoice Local GPU Voice Clone (provider='{tts_provider or 'omnivoice'}')")
+        print(f"[Agent Voiceover] Routing to OmniVoice Local GPU Voice Clone (provider='{tts_provider or 'omnivoice'}', voice_id='{voice_id}')")
         await asyncio.to_thread(tts_omnivoice, formatted_text, out, merged_config)
 
 
@@ -2888,7 +2906,10 @@ async def main():
                                 out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
                                 voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
                                 output_video = DUBBER_OUTPUT_DIR / f"{out_id}.mp4"
-                                voice_config = {"voice_id": voice_id, "speed": speed, "use_melorix": True}
+                                use_melorix = payload.get("use_melorix")
+                                if use_melorix is None:
+                                    use_melorix = (voice_id != "nam-dao-ly")
+                                voice_config = {"voice_id": voice_id, "speed": speed, "use_melorix": use_melorix}
 
 
                                 await generate_voiceover(text_content, voice_audio, voice_config)
