@@ -3168,7 +3168,7 @@ async def dubber_process_dubbing(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/v1/dubber/media/{category}/{filename}")
+@app.api_route("/v1/dubber/media/{category}/{filename}", methods=["GET", "HEAD"])
 async def dubber_get_media(category: str, filename: str, request: Request):
     if category not in ("input", "output"):
         raise HTTPException(status_code=400, detail="Invalid media category")
@@ -3193,6 +3193,12 @@ async def dubber_get_media(category: str, filename: str, request: Request):
             ".mp3": "audio/mpeg"
         }
         media_type = media_type_map.get(ext, "application/octet-stream")
+        if request.method == "HEAD":
+            return Response(status_code=200, headers={
+                "Content-Type": media_type,
+                "Content-Length": str(target_file.stat().st_size),
+                "Accept-Ranges": "bytes"
+            })
         return FileResponse(target_file, media_type=media_type, headers={"Accept-Ranges": "bytes"})
 
     # 2. If not on server local disk, tunnel to Agent via WebSocket
