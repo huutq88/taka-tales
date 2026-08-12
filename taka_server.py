@@ -3239,9 +3239,9 @@ async def dubber_get_media(category: str, filename: str, request: Request):
             import base64
             content_bytes = base64.b64decode(res["content_b64"])
 
-        if res.get("partial") and range_hdr:
+        if res.get("partial"):
             start = res.get("start", 0)
-            end = res.get("end", len(content_bytes) - 1)
+            end = res.get("end", max(0, len(content_bytes) - 1))
             return Response(
                 content=content_bytes,
                 status_code=206,
@@ -3252,7 +3252,15 @@ async def dubber_get_media(category: str, filename: str, request: Request):
                     "Accept-Ranges": "bytes"
                 }
             )
-        return Response(content=content_bytes, media_type=content_type, headers={"Accept-Ranges": "bytes"})
+
+        headers = {
+            "Content-Length": str(len(content_bytes)),
+            "Accept-Ranges": "bytes"
+        }
+        if category == "output" or request.query_params.get("download") == "1":
+            headers["Content-Disposition"] = f'inline; filename="{filename}"'
+
+        return Response(content=content_bytes, media_type=content_type, headers=headers)
 
     raise HTTPException(status_code=404, detail="Media file not found")
 

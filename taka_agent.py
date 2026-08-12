@@ -3058,7 +3058,7 @@ async def main():
                                 else:
                                     try:
                                         with open(found_file, "rb") as f:
-                                            max_chunk = 2 * 1024 * 1024
+                                            max_chunk = 10 * 1024 * 1024
                                             if range_hdr and range_hdr.startswith("bytes="):
                                                 r_parts = range_hdr.split("=")[1].split("-")
                                                 start = int(r_parts[0]) if r_parts[0] else 0
@@ -3077,18 +3077,13 @@ async def main():
                                                     "partial": True
                                                 }
                                             else:
-                                                start = 0
-                                                end = min(max_chunk - 1, file_size - 1)
-                                                f.seek(start)
-                                                chunk_data = f.read(end - start + 1)
+                                                chunk_data = f.read()
                                                 res_payload = {
                                                     "exists": True,
                                                     "content_b64": base64.b64encode(chunk_data).decode("utf-8"),
                                                     "content_type": content_type,
                                                     "size": file_size,
-                                                    "start": start,
-                                                    "end": start + len(chunk_data) - 1,
-                                                    "partial": True
+                                                    "partial": False
                                                 }
                                     except Exception as r_err:
                                         res_payload = {"exists": False, "error": str(r_err)}
