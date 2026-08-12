@@ -3139,8 +3139,10 @@ async def dubber_process_dubbing(request: Request):
             raise HTTPException(status_code=404, detail="Không tìm thấy file video nguồn. Vui lòng chọn lại file video ở tab 'Tải File Lên' hoặc dán link video mới.")
 
         out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
-        voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
-        output_video = DUBBER_OUTPUT_DIR / f"{out_id}.mp4"
+        voice_audio_name = f"{out_id}_voice.wav"
+        output_video_name = f"{out_id}.mp4"
+        voice_audio = DUBBER_OUTPUT_DIR / voice_audio_name
+        output_video = DUBBER_OUTPUT_DIR / output_video_name
 
         provider = body.get("provider", "").strip().lower()
         use_melorix = body.get("use_melorix")
@@ -3160,6 +3162,8 @@ async def dubber_process_dubbing(request: Request):
             print(f"[Dubber] TTS generation error: {tts_err}")
             raise HTTPException(status_code=500, detail=f"TTS error: {tts_err}")
 
+        wav_size = voice_audio.stat().st_size if voice_audio.exists() else 0
+
         from core import video_engine
         await asyncio.to_thread(
             video_engine.dub_video_with_voice,
@@ -3169,10 +3173,16 @@ async def dubber_process_dubbing(request: Request):
         if not output_video.exists() or output_video.stat().st_size == 0:
             raise HTTPException(status_code=500, detail="Dubbed video rendering failed")
 
+        mp4_size = output_video.stat().st_size
+
         return {
             "ok": True,
             "dubbed_url": f"/v1/dubber/media/output/{out_id}.mp4",
-            "size": output_video.stat().st_size
+            "wav_filename": voice_audio_name,
+            "wav_size": wav_size,
+            "mp4_filename": output_video_name,
+            "mp4_size": mp4_size,
+            "size": mp4_size
         }
     except HTTPException:
         raise
@@ -3890,8 +3900,11 @@ async def dubber_ui_page():
                         downloadLink.style.display = 'inline-flex';
 
                         setStatus('✅ <b>Lồng tiếng thành công!</b> Bạn có thể xem trước hoặc tải video thành phẩm bên phải.', 'success');
-                        addConsoleLog('Bước 2: Ghép âm thanh & render video thành công!', 'info');
-                        addConsoleLog('✅ Hoàn tất lồng tiếng video. Link thành phẩm: ' + data.dubbed_url, 'info');
+                        const wavMB = (data.wav_size ? (data.wav_size / 1024 / 1024).toFixed(2) : '0');
+                        const mp4MB = (data.mp4_size ? (data.mp4_size / 1024 / 1024).toFixed(2) : '0');
+                        addConsoleLog('🔊 [Bước 1/2] Đã sinh file thoại WAV: ' + (data.wav_filename || 'voice.wav') + ' (' + wavMB + ' MB)', 'info');
+                        addConsoleLog('🎬 [Bước 2/2] Đã ghép âm thanh & render video MP4: ' + (data.mp4_filename || 'dubbed.mp4') + ' (' + mp4MB + ' MB)', 'info');
+                        addConsoleLog('✅ Hoàn tất lồng tiếng video! Thành phẩm: ' + data.dubbed_url, 'system');
                         resultPlayer.play();
                     } else {
                         setStatus(`❌ <b>Lỗi xử lý lồng tiếng:</b> ${data.detail || 'Không xác định'}`, 'error');

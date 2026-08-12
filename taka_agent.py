@@ -2997,14 +2997,16 @@ async def main():
                                     raise Exception("Không tìm thấy file video nguồn tại ~/taka-cover/input trên máy bạn!")
 
                                 out_id = f"dubbed_{video_id}_{uuid.uuid4().hex[:6]}"
-                                voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
-                                output_video = DUBBER_OUTPUT_DIR / f"{out_id}.mp4"
+                                voice_audio_name = f"{out_id}_voice.wav"
+                                output_video_name = f"{out_id}.mp4"
+                                voice_audio = DUBBER_OUTPUT_DIR / voice_audio_name
+                                output_video = DUBBER_OUTPUT_DIR / output_video_name
                                 provider = payload.get("provider", "")
                                 use_melorix = payload.get("use_melorix")
                                 if use_melorix is None:
                                     if provider == "melorix":
                                         use_melorix = True
-                                    elif provider == "agent" or voice_id == "nam-dao-ly":
+                                    elif provider in ("agent", "omnivoice") or voice_id == "nam-dao-ly":
                                         use_melorix = False
                                     else:
                                         use_melorix = (voice_id != "nam-dao-ly")
@@ -3015,17 +3017,24 @@ async def main():
                                     "use_melorix": use_melorix
                                 }
 
-
                                 await generate_voiceover(text_content, voice_audio, voice_config)
+                                wav_size = voice_audio.stat().st_size if voice_audio.exists() else 0
+
                                 from core import video_engine
                                 await asyncio.to_thread(
                                     video_engine.dub_video_with_voice,
                                     input_video, voice_audio, output_video, mix_mode
                                 )
+                                mp4_size = output_video.stat().st_size if output_video.exists() else 0
+
                                 res_payload = {
                                     "ok": True,
                                     "dubbed_url": f"/v1/dubber/media/output/{out_id}.mp4",
-                                    "size": output_video.stat().st_size if output_video.exists() else 0
+                                    "wav_filename": voice_audio_name,
+                                    "wav_size": wav_size,
+                                    "mp4_filename": output_video_name,
+                                    "mp4_size": mp4_size,
+                                    "size": mp4_size
                                 }
                             except Exception as err:
                                 res_payload = {"ok": False, "detail": str(err)}
