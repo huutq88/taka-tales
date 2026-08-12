@@ -3075,6 +3075,30 @@ async def dubber_upload_video(request: Request, file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/v1/dubber/latest-input")
+async def dubber_get_latest_input(request: Request):
+    try:
+        ws_id = get_workspace_id_from_request(request)
+        res = await tunnel_request_to_agent("dubber_latest_input_request", {}, workspace_id=ws_id, timeout=10.0)
+        if res and isinstance(res, dict) and res.get("ok"):
+            return res
+
+        if DUBBER_INPUT_DIR.exists():
+            files = [f for f in DUBBER_INPUT_DIR.iterdir() if f.is_file() and not f.name.startswith(".")]
+            if files:
+                files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                latest = files[0]
+                vid = latest.stem
+                return {
+                    "ok": True,
+                    "video_id": vid,
+                    "video_url": f"/v1/dubber/media/input/{latest.name}",
+                    "size": latest.stat().st_size
+                }
+        return {"ok": False, "detail": "No input video found"}
+    except Exception as e:
+        return {"ok": False, "detail": str(e)}
+
 @app.post("/v1/dubber/process")
 async def dubber_process_dubbing(request: Request):
     try:
@@ -3655,11 +3679,30 @@ async def dubber_ui_page():
             placeholder.style.display = 'none';
         }
 
-        if (sessionStorage.getItem('dubber_video_id') && sessionStorage.getItem('dubber_video_url')) {
-            showSourceVideo(sessionStorage.getItem('dubber_video_url'));
-            setStatus('✅ Đã nạp video nguồn sẵn sàng (Local Agent)!', 'success');
-            document.getElementById('process-btn').disabled = false;
+        async function autoLoadLatestVideo() {
+            try {
+                const res = await fetch(API_BASE + '/v1/dubber/latest-input');
+                const data = await res.json();
+                if (data.ok && data.video_id && data.video_url) {
+                    currentVideoId = data.video_id;
+                    sessionStorage.setItem('dubber_video_id', data.video_id);
+                    sessionStorage.setItem('dubber_video_url', data.video_url);
+                    showSourceVideo(data.video_url);
+                    setStatus('✅ Đã nạp video nguồn gần nhất sẵn sàng (Local Agent)!', 'success');
+                    document.getElementById('process-btn').disabled = false;
+                    return;
+                }
+            } catch(e) {
+                console.warn('Failed to fetch latest input video:', e);
+            }
+
+            if (sessionStorage.getItem('dubber_video_id') && sessionStorage.getItem('dubber_video_url')) {
+                showSourceVideo(sessionStorage.getItem('dubber_video_url'));
+                setStatus('✅ Đã nạp video nguồn sẵn sàng (Local Agent)!', 'success');
+                document.getElementById('process-btn').disabled = false;
+            }
         }
+        autoLoadLatestVideo();
 
         async function processDubbing() {
             if (!currentVideoId) {

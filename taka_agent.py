@@ -2973,11 +2973,18 @@ async def main():
                                                     "partial": True
                                                 }
                                             else:
+                                                start = 0
+                                                end = min(max_chunk - 1, file_size - 1)
+                                                f.seek(start)
+                                                chunk_data = f.read(end - start + 1)
                                                 res_payload = {
                                                     "exists": True,
-                                                    "content_b64": base64.b64encode(f.read()).decode("utf-8"),
+                                                    "content_b64": base64.b64encode(chunk_data).decode("utf-8"),
                                                     "content_type": content_type,
-                                                    "size": file_size
+                                                    "size": file_size,
+                                                    "start": start,
+                                                    "end": start + len(chunk_data) - 1,
+                                                    "partial": True
                                                 }
                                     except Exception as r_err:
                                         res_payload = {"exists": False, "error": str(r_err)}
@@ -2986,6 +2993,27 @@ async def main():
 
                             await websocket.send(json.dumps({
                                 "type": "dubber_get_media_response",
+                                "request_id": request_id,
+                                "payload": res_payload
+                            }))
+
+                        elif msg_type == "dubber_latest_input_request":
+                            request_id = message.get("request_id")
+                            res_payload = {"ok": False, "detail": "No input video found"}
+                            if DUBBER_INPUT_DIR.exists():
+                                files = [f for f in DUBBER_INPUT_DIR.iterdir() if f.is_file() and not f.name.startswith(".")]
+                                if files:
+                                    files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                                    latest = files[0]
+                                    vid = latest.stem
+                                    res_payload = {
+                                        "ok": True,
+                                        "video_id": vid,
+                                        "video_url": f"/v1/dubber/media/input/{latest.name}",
+                                        "size": latest.stat().st_size
+                                    }
+                            await websocket.send(json.dumps({
+                                "type": "dubber_latest_input_response",
                                 "request_id": request_id,
                                 "payload": res_payload
                             }))
