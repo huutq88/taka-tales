@@ -3173,6 +3173,29 @@ async def dubber_get_media(category: str, filename: str, request: Request):
     if category not in ("input", "output"):
         raise HTTPException(status_code=400, detail="Invalid media category")
 
+    # 1. Check local server disk first for instant streaming
+    target_dir = DUBBER_INPUT_DIR if category == "input" else DUBBER_OUTPUT_DIR
+    target_file = target_dir / filename
+    if not target_file.exists():
+        matches = [f for f in target_dir.glob(f"{filename}*") if f.is_file()]
+        if matches:
+            target_file = matches[0]
+
+    if target_file and target_file.exists():
+        ext = target_file.suffix.lower()
+        media_type_map = {
+            ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
+            ".webm": "video/webm",
+            ".m4v": "video/x-m4v",
+            ".mkv": "video/x-matroska",
+            ".wav": "audio/wav",
+            ".mp3": "audio/mpeg"
+        }
+        media_type = media_type_map.get(ext, "application/octet-stream")
+        return FileResponse(target_file, media_type=media_type, headers={"Accept-Ranges": "bytes"})
+
+    # 2. If not on server local disk, tunnel to Agent via WebSocket
     ws_id = get_workspace_id_from_request(request)
     is_head = (request.method == "HEAD")
     range_hdr = request.headers.get("range")
@@ -3199,7 +3222,7 @@ async def dubber_get_media(category: str, filename: str, request: Request):
             import base64
             content_bytes = base64.b64decode(res["content_b64"])
 
-        if res.get("partial"):
+        if res.get("partial") and range_hdr:
             start = res.get("start", 0)
             end = res.get("end", len(content_bytes) - 1)
             return Response(
@@ -3214,27 +3237,7 @@ async def dubber_get_media(category: str, filename: str, request: Request):
             )
         return Response(content=content_bytes, media_type=content_type, headers={"Accept-Ranges": "bytes"})
 
-    target_dir = DUBBER_INPUT_DIR if category == "input" else DUBBER_OUTPUT_DIR
-    target_file = target_dir / filename
-    if not target_file.exists():
-        matches = [f for f in target_dir.glob(f"{filename}*") if f.is_file()]
-        if matches:
-            target_file = matches[0]
-    if not target_file.exists():
-        raise HTTPException(status_code=404, detail="Media file not found")
-
-    ext = target_file.suffix.lower()
-    media_type_map = {
-        ".mp4": "video/mp4",
-        ".mov": "video/quicktime",
-        ".webm": "video/webm",
-        ".m4v": "video/x-m4v",
-        ".mkv": "video/x-matroska",
-        ".wav": "audio/wav",
-        ".mp3": "audio/mpeg"
-    }
-    media_type = media_type_map.get(ext, "application/octet-stream")
-    return FileResponse(target_file, media_type=media_type, headers={"Accept-Ranges": "bytes"})
+    raise HTTPException(status_code=404, detail="Media file not found")
 
 
 
