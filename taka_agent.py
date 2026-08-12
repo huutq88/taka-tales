@@ -816,14 +816,17 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
     start_t = time.time()
     status_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/status"
     while status != "done":
-        if time.time() - start_t > 90:
-            err_msg = f"Melorix API job {job_id} timed out after 90 seconds"
+        if time.time() - start_t > 120:
+            err_msg = f"Melorix API job {job_id} timed out after 120 seconds"
             print(f"[Melorix Cloud TTS] {err_msg}")
             raise RuntimeError(err_msg)
         await asyncio.sleep(1.5)
-        s_res = await asyncio.to_thread(requests.get, status_url, headers=headers, timeout=10)
-        if s_res.status_code == 200:
-            status = s_res.json().get("status")
+        try:
+            s_res = await asyncio.to_thread(requests.get, status_url, headers=headers, timeout=15)
+            if s_res.status_code == 200:
+                status = s_res.json().get("status")
+        except Exception as poll_err:
+            print(f"[Melorix Cloud TTS] Status poll glitch (retrying): {poll_err}")
 
     audio_url = f"https://voice.melorix.co/api/tts/jobs/{job_id}/audio"
     a_res = await asyncio.to_thread(requests.get, audio_url, headers=headers, timeout=30)
