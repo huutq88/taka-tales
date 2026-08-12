@@ -1906,6 +1906,7 @@ async def list_voices(request: Request):
                         existing_ids.add(v_id)
 
     # 3. Include Melorix Cloud voices as well
+    melorix_added = set()
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
         r = await asyncio.to_thread(requests.get, "https://voice.melorix.co/api/voices", headers=headers, timeout=5.0)
@@ -1914,7 +1915,7 @@ async def list_voices(request: Request):
             if isinstance(melorix_voices, list):
                 for v in melorix_voices:
                     v_id = v.get("id", "")
-                    if v_id and v_id not in existing_ids:
+                    if v_id and v_id not in melorix_added:
                         voices_list.append({
                             "id": v_id,
                             "name": v.get("name", v_id),
@@ -1924,7 +1925,7 @@ async def list_voices(request: Request):
                             "provider": "melorix",
                             "provider_label": "Melorix Cloud"
                         })
-                        existing_ids.add(v_id)
+                        melorix_added.add(v_id)
     except Exception:
         pass
 
@@ -3141,7 +3142,17 @@ async def dubber_process_dubbing(request: Request):
         voice_audio = DUBBER_OUTPUT_DIR / f"{out_id}_voice.wav"
         output_video = DUBBER_OUTPUT_DIR / f"{out_id}.mp4"
 
-        voice_config = {"voice_id": voice_id, "speed": speed}
+        provider = body.get("provider", "").strip().lower()
+        use_melorix = body.get("use_melorix")
+        if use_melorix is None:
+            use_melorix = (provider == "melorix")
+
+        voice_config = {
+            "voice_id": voice_id,
+            "provider": provider,
+            "use_melorix": use_melorix,
+            "speed": speed
+        }
         try:
             import taka_agent
             await taka_agent.generate_voiceover(text_content, voice_audio, voice_config)

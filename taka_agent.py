@@ -944,12 +944,18 @@ async def generate_voiceover(text: str, out: pathlib.Path, voice_config: dict = 
 
     use_melorix = merged_config.get("use_melorix")
 
-    if (tts_provider == "melorix" or (use_melorix is True and not is_local_voice)) and voice_id != "nam-dao-ly":
+    if tts_provider == "melorix" or use_melorix is True:
         print(f"[Agent Voiceover] Routing to Melorix Cloud TTS API (voice_id='{voice_id}')")
         await tts_melorix_api(formatted_text, out, merged_config)
-    else:
+    elif tts_provider in ("agent", "omnivoice", "local") or use_melorix is False:
         print(f"[Agent Voiceover] Routing to OmniVoice Local GPU Voice Clone (provider='{tts_provider or 'omnivoice'}', voice_id='{voice_id}')")
         await asyncio.to_thread(tts_omnivoice, formatted_text, out, merged_config)
+    elif is_local_voice:
+        print(f"[Agent Voiceover] Routing to OmniVoice Local GPU Voice Clone (provider='{tts_provider or 'omnivoice'}', voice_id='{voice_id}')")
+        await asyncio.to_thread(tts_omnivoice, formatted_text, out, merged_config)
+    else:
+        print(f"[Agent Voiceover] Routing to Melorix Cloud TTS API (Fallback, voice_id='{voice_id}')")
+        await tts_melorix_api(formatted_text, out, merged_config)
 
 
 
