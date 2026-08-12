@@ -94,6 +94,7 @@ agent_ip_map: Dict[str, str] = {}               # client_ip -> workspace_id
 project_jobs: Dict[str, dict] = {}              # project_name -> job state
 pending_file_selects: Dict[str, dict] = {}
 pending_agent_requests: Dict[str, dict] = {}
+latest_dubber_progress: Dict[str, dict] = {}
 
 def get_workspace_id_from_request(request: Request) -> str:
     ws_id = request.headers.get("x-workspace-id") or request.query_params.get("workspace_id") or request.query_params.get("ws")
@@ -483,6 +484,8 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default_w
 
             if msg_type == "status_update":
                 agent_status[workspace_id] = payload
+            elif msg_type == "dubber_progress_update":
+                latest_dubber_progress[workspace_id] = payload
             elif msg_type == "pipeline_progress":
                 project_name = data.get("project_name") or payload.get("project_name")
                 story_id = data.get("story_id") or payload.get("story_id")
@@ -3187,7 +3190,14 @@ async def dubber_process_dubbing(request: Request):
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[Dubber Error] Process error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/v1/dubber/progress")
+async def get_dubber_progress(request: Request):
+    ws_id = get_workspace_id_from_request(request)
+    prog = latest_dubber_progress.get(ws_id, {})
+    return {"ok": True, "progress": prog}
 
 @app.api_route("/v1/dubber/media/{category}/{filename}", methods=["GET", "HEAD"])
 async def dubber_get_media(category: str, filename: str, request: Request):
@@ -3867,6 +3877,27 @@ async def dubber_ui_page():
                 btnText.innerHTML = '<div class="spinner"></div> Đang lồng tiếng video...';
                 document.getElementById('process-btn').disabled = true;
 
+                let lastLoggedIdx = 0;
+                let lastLoggedStep = '';
+                const progressTimer = setInterval(async () => {
+                    try {
+                        const pRes = await fetch(API_BASE + '/v1/dubber/progress');
+                        const pData = await pRes.json();
+                        if (pData && pData.ok && pData.progress) {
+                            const p = pData.progress;
+                            if (p.step === 'tts_chunk' && p.idx > lastLoggedIdx) {
+                                lastLoggedIdx = p.idx;
+                                setStatus(`⏳ <b>Đang tạo thoại AI [Đoạn ${p.idx}/${p.total}]...</b><br>• File part: ${p.filename}<br>• Nội dung: "${p.text}..."`, 'loading');
+                                addConsoleLog(`🔊 [Đoạn ${p.idx}/${p.total}] Đã sinh voice part: ${p.filename}`, 'info');
+                            } else if (p.step === 'ffmpeg_concat' && lastLoggedStep !== 'ffmpeg_concat') {
+                                lastLoggedStep = 'ffmpeg_concat';
+                                setStatus(`⏳ <b>Đã xong ${p.total}/${p.total} đoạn voice! Đang ghép audio & render video MP4...</b>`, 'loading');
+                                addConsoleLog(`🎬 [Hòa Âm] Đã sinh đủ ${p.total} part voice.wav! Đang ghép audio & render video thành phẩm...`, 'info');
+                            }
+                        }
+                    } catch(err) {}
+                }, 1000);
+
                 try {
                     const res = await fetch(API_BASE + '/v1/dubber/process', {
                         method: 'POST',
@@ -3914,6 +3945,7 @@ async def dubber_ui_page():
                     setStatus(`❌ Lỗi kết nối: ${e.message}`, 'error');
                     addConsoleLog('❌ Lỗi kết nối: ' + e.message, 'error');
                 } finally {
+                    clearInterval(progressTimer);
                     btnText.innerHTML = '🔊 Sinh Giọng & Lồng Tiếng Vào Video';
                     document.getElementById('process-btn').disabled = false;
                 }

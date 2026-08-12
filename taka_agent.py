@@ -889,6 +889,16 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
     chunks = split_text_into_chunks(clean_text, max_chars=180)
     if len(chunks) == 1:
         print(f"[Melorix Cloud TTS] Generating voiceover for 1 single text block: '{clean_text[:40]}...'")
+        await send_ws_message({
+            "type": "dubber_progress_update",
+            "payload": {
+                "step": "tts_chunk",
+                "idx": 1,
+                "total": 1,
+                "filename": out.name,
+                "text": clean_text[:40]
+            }
+        })
         await _tts_melorix_single_chunk(clean_text, voice_id, speed, language, out)
     else:
         print(f"[Melorix Cloud TTS] Tách văn bản thành {len(chunks)} đoạn thoại để sinh voice từng đoạn.")
@@ -898,7 +908,28 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
                 chunk_out = out.parent / f"{out.stem}_part_{idx}.wav"
                 temp_files.append(chunk_out)
                 print(f"[Melorix Cloud TTS] [Đoạn {idx}/{len(chunks)}] Đang tạo voice cho: '{ch_text[:35]}...'")
+                await send_ws_message({
+                    "type": "dubber_progress_update",
+                    "payload": {
+                        "step": "tts_chunk",
+                        "idx": idx,
+                        "total": len(chunks),
+                        "filename": chunk_out.name,
+                        "text": ch_text[:40]
+                    }
+                })
                 await _tts_melorix_single_chunk(ch_text, voice_id, speed, language, chunk_out)
+
+            await send_ws_message({
+                "type": "dubber_progress_update",
+                "payload": {
+                    "step": "ffmpeg_concat",
+                    "idx": len(chunks),
+                    "total": len(chunks),
+                    "filename": out.name,
+                    "text": f"Đã sinh đủ {len(chunks)} đoạn voice. Đang trộn âm thanh & render video thành phẩm..."
+                }
+            })
 
             # Combine audio chunks using ffmpeg concat
             concat_list_file = out.parent / f"{out.stem}_concat.txt"
