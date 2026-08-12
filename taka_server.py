@@ -3449,404 +3449,333 @@ async def dubber_ui_page():
             border-radius: 20px;
             display: inline-flex;
             align-items: center;
-            gap: 0.4rem;
-            width: fit-content;
+            --accent: #10b981;
         }
-        .status-loading { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid var(--accent); }
-        .status-success { background: rgba(52, 211, 153, 0.15); color: var(--success); border: 1px solid var(--success); }
-        .status-error { background: rgba(248, 113, 113, 0.15); color: var(--danger); border: 1px solid var(--danger); }
 
-        .download-btn {
-            background: var(--success);
-            color: #090d16;
-            text-decoration: none;
-            padding: 0.75rem 1.25rem;
-            border-radius: 10px;
-            font-weight: 700;
-            text-align: center;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            transition: all 0.2s;
-        }
-        .download-btn:hover { opacity: 0.9; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg-color); color: var(--text-main); padding: 2rem 1rem; min-height: 100vh; }
+        .container { max-width: 1200px; margin: 0 auto; }
 
-        .spinner {
-            width: 18px; height: 18px;
-            border: 2px solid rgba(255, 255, 255, 0.3);
-            border-top-color: #fff;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
+        header { text-align: center; margin-bottom: 2.5rem; }
+        header h1 { font-size: 2.2rem; font-weight: 700; background: linear-gradient(135deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        header p { color: var(--text-sub); margin-top: 0.5rem; font-size: 1rem; }
+
+        .grid-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+        @media (max-width: 900px) { .grid-layout { grid-template-columns: 1fr; } }
+
+        .panel { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 1.8rem; display: flex; flex-direction: column; gap: 1.2rem; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3); }
+        .panel-title { font-size: 1.25rem; font-weight: 600; color: #e2e8f0; border-bottom: 1px solid var(--card-border); padding-bottom: 0.8rem; }
+
+        .input-box { display: flex; flex-direction: column; gap: 0.5rem; }
+        .input-box label { font-size: 0.9rem; font-weight: 500; color: var(--text-sub); }
+        .input-box input[type="text"], .input-box select, .input-box textarea { background: #0f172a; border: 1px solid var(--card-border); border-radius: 8px; padding: 0.75rem 1rem; color: #fff; font-size: 0.95rem; outline: none; transition: border 0.2s; }
+        .input-box input[type="text"]:focus, .input-box select:focus, .input-box textarea:focus { border-color: var(--primary); }
+        .input-box textarea { resize: vertical; min-height: 120px; }
+
+        .tabs { display: flex; gap: 0.5rem; background: #0f172a; padding: 4px; border-radius: 8px; border: 1px solid var(--card-border); }
+        .tab-btn { flex: 1; padding: 0.6rem; border: none; background: transparent; color: var(--text-sub); border-radius: 6px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+        .tab-btn.active { background: var(--card-bg); color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+
+        .btn-action { background: linear-gradient(135deg, var(--primary), #6366f1); color: #fff; border: none; border-radius: 8px; padding: 0.9rem; font-size: 1rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
+        .btn-action:hover { opacity: 0.9; }
+        .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .video-preview { width: 100%; border-radius: 12px; background: #000; aspect-ratio: 16/9; }
+
+        .download-btn { background: var(--accent); color: #fff; text-decoration: none; border-radius: 8px; padding: 0.9rem; font-weight: 600; text-align: center; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; transition: background 0.2s; margin-top: 1rem; }
+        .download-btn:hover { background: #059669; }
+
+        .status-badge { padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 500; display: none; margin-top: 0.5rem; }
+        .status-loading { background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; color: #93c5fd; }
+        .status-success { background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #6ee7b7; }
+        .status-error { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; }
+
+        .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <header class="header">
-        <div class="logo-area">
-            <div class="logo-icon">🎬</div>
-            <div class="logo-title">Taka Cover & Video Dubber</div>
-        </div>
-        <a href="/" class="back-btn">📚 Về Taka Studio</a>
-    </header>
+    <div class="container">
+        <header>
+            <h1>🎬 Taka Cover Studio - Video Dubbing</h1>
+            <p>Lồng tiếng chuẩn Studio vào video với mô hình OmniVoice & AI Agent</p>
+        </header>
 
-    <main class="container">
-        <!-- LEFT PANEL: VIDEO SOURCE & VOICEOVER INPUT -->
-        <section class="panel">
-            <div class="panel-title">1. Chọn Nguồn Video & Nội Dung Voice</div>
+        <main class="grid-layout">
+            <!-- LEFT PANEL: INPUT SOURCE & VOICE TEXT -->
+            <section class="panel">
+                <div class="panel-title">1. Chọn Nguồn Video & Nội Dung Voice</div>
 
-            <div class="tab-group">
-                <button class="tab-btn active" id="tab-url-btn" onclick="switchTab('url')">🔗 Nhập Link Video</button>
-                <button class="tab-btn" id="tab-upload-btn" onclick="switchTab('upload')">📁 Tải File Lên</button>
-            </div>
+                <div class="tabs">
+                    <button class="tab-btn active" id="tab-url-btn" onclick="switchTab('url')">🌐 Link Video (URL)</button>
+                    <button class="tab-btn" id="tab-upload-btn" onclick="switchTab('upload')">📁 Tải File Lên</button>
+                </div>
 
-            <div id="tab-url-sec" class="input-box">
-                <label for="video-url">URL Video (iStock, YouTube, Direct MP4...):</label>
-                <input type="text" id="video-url" placeholder="https://www.istockphoto.com/vi/video/... hoặc link mp4">
-                <button class="btn-action" style="margin-top: 0.5rem;" onclick="fetchVideoFromUrl()">
-                    <span id="fetch-btn-text">📥 Tải Nguồn Video</span>
+                <div id="tab-url-sec" class="input-box">
+                    <label for="video-url">Nhập Link Video (TikTok, YouTube, MP4 URL...):</label>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <input type="text" id="video-url" placeholder="https://..." style="flex: 1;">
+                        <button class="btn-action" style="padding: 0.75rem 1.2rem; font-size: 0.9rem;" onclick="fetchVideoFromUrl()">
+                            <span id="fetch-btn-text">📥 Tải Nguồn Video</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="tab-upload-sec" class="input-box" style="display: none;">
+                    <label for="video-file">Chọn File Video từ máy tính (.mp4, .mov):</label>
+                    <input type="file" id="video-file" accept="video/*" onchange="uploadVideoFile(this.files[0])">
+                </div>
+
+                <div id="source-status" class="status-badge"></div>
+
+                <div class="input-box" style="margin-top: 1rem;">
+                    <label for="voice-select">Chọn Giọng Đọc (Voice):</label>
+                    <select id="voice-select">
+                        <option value="nam-bac-dao-ly" data-provider="melorix">☁️ Nam Bắc Đạo Lý [Melorix Cloud]</option>
+                        <option value="nu-doc-truyen" data-provider="melorix">☁️ Nữ Đọc Truyện [Melorix Cloud]</option>
+                        <option value="nam-doc-truyen" data-provider="melorix">☁️ Nam Đọc Truyện [Melorix Cloud]</option>
+                        <option value="nu-appota" data-provider="melorix">☁️ Nữ Appota [Melorix Cloud]</option>
+                        <option value="nam-doc-truyen" data-provider="agent">🎙️ Nam Đọc Truyện [Local Agent]</option>
+                        <option value="nu-doc-truyen" data-provider="agent">🎙️ Nữ Đọc Truyện [Local Agent]</option>
+                        <option value="nam-bac-dao-ly" data-provider="agent">🎙️ Nam Bắc Đạo Lý [Local Agent]</option>
+                    </select>
+                </div>
+
+                <div class="input-box">
+                    <label for="voice-text">Nội Dung Lồng Tiếng (Text Kịch Bản):</label>
+                    <textarea id="voice-text" placeholder="Nhập văn bản cần lồng tiếng vào video..."></textarea>
+                </div>
+
+                <div class="input-box">
+                    <label for="mix-mode">Chế Độ Hòa Âm Thanh:</label>
+                    <select id="mix-mode">
+                        <option value="replace">🔇 Thay Thế Hoàn Toàn Nhạc Gốc (Replace Audio)</option>
+                        <option value="mix">🔊 Giảm Nhỏ Nhạc Gốc & Đè Voice lên (Mix Background)</option>
+                    </select>
+                </div>
+
+                <button class="btn-action" id="process-btn" onclick="processDubbing()" disabled>
+                    <span id="process-btn-text">🔊 Sinh Giọng & Lồng Tiếng Vào Video</span>
                 </button>
-            </div>
+            </section>
 
-            <div id="tab-upload-sec" class="input-box" style="display: none;">
-                <label>Tải File Video Từ Máy Tính (.mp4, .mov):</label>
-                <div class="dropzone" onclick="document.getElementById('file-input').click()">
-                    <p style="font-size: 1.5rem; margin-bottom: 0.5rem;">📂</p>
-                    <p style="font-weight: 600;">Nhấn vào đây để chọn file video</p>
-                    <input type="file" id="file-input" accept="video/*" style="display: none;" onchange="uploadVideoFile(this.files[0])">
+            <!-- RIGHT PANEL: PREVIEW & OUTPUT -->
+            <section class="panel">
+                <div class="panel-title">2. Xem Trước & Tải Video Thành Phẩm</div>
+
+                <div class="input-box">
+                    <label>Video Nguồn (Gốc):</label>
+                    <video id="source-player" class="video-preview" controls preload="metadata" playsinline style="display: none;"></video>
+                    <div id="source-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
+                        Chưa có video nguồn. Hãy nhập URL hoặc tải file lên ở bảng bên trái.
+                    </div>
                 </div>
-            </div>
 
-            <div id="source-status" style="display: none;"></div>
-
-            <div class="input-box">
-                <label for="voice-select">Chọn Giọng Đọc (Voice ID):</label>
-                <select id="voice-select">
-                    <option value="nam-bac-dao-ly" data-provider="melorix">☁️ Nam Bắc Đạo Lý (nam-bac-dao-ly)</option>
-                    <option value="nam-doc-truyen" data-provider="melorix">☁️ Nam đọc truyện (nam-doc-truyen)</option>
-                    <option value="nu-doc-truyen" data-provider="melorix">☁️ Nữ đọc truyện (nu-doc-truyen)</option>
-                    <option value="nu-appota" data-provider="melorix">☁️ Nữ Appota (nu-appota)</option>
-                </select>
-            </div>
-
-            <div class="input-box">
-                <label for="voice-text">Nội Dung Lồng Tiếng (Voiceover Text):</label>
-                <textarea id="voice-text" rows="5" placeholder="Nhập câu thoại hoặc đoạn văn bản cần đọc lồng tiếng vào video tại đây..."></textarea>
-            </div>
-
-            <div class="input-box">
-                <label for="mix-mode">Chế Độ Hòa Âm Thanh:</label>
-                <select id="mix-mode">
-                    <option value="replace">🔇 Thay Thế Hoàn Toàn Nhạc Gốc (Replace Audio)</option>
-                    <option value="mix">🔊 Giảm Nhỏ Nhạc Gốc & Đè Voice lên (Mix Background)</option>
-                </select>
-            </div>
-
-            <button class="btn-action" id="process-btn" onclick="processDubbing()" disabled>
-                <span id="process-btn-text">🔊 Sinh Giọng & Lồng Tiếng Vào Video</span>
-            </button>
-        </section>
-
-        <!-- RIGHT PANEL: PREVIEW & OUTPUT -->
-        <section class="panel">
-            <div class="panel-title">2. Xem Trước & Tải Video Thành Phẩm</div>
-
-            <div class="input-box">
-                <label>Video Nguồn (Gốc):</label>
-                <video id="source-player" class="video-preview" controls style="display: none;"></video>
-                <div id="source-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
-                    Chưa có video nguồn. Hãy nhập URL hoặc tải file lên ở bảng bên trái.
+                <div class="input-box">
+                    <label>Video Sau Khi Lồng Tiếng (Dubbed Result):</label>
+                    <video id="result-player" class="video-preview" controls preload="metadata" playsinline style="display: none;"></video>
+                    <div id="result-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
+                        Video sau khi lồng tiếng sẽ xuất hiện tại đây.
+                    </div>
                 </div>
-            </div>
 
-            <div class="input-box">
-                <label>Video Sau Khi Lồng Tiếng (Dubbed Result):</label>
-                <video id="result-player" class="video-preview" controls style="display: none;"></video>
-                <div id="result-placeholder" style="padding: 3rem; text-align: center; color: var(--text-sub); border: 1px dashed var(--card-border); border-radius: 12px;">
-                    Video sau khi lồng tiếng sẽ xuất hiện tại đây.
+                <a id="download-link" class="download-btn" style="display: none;" download>
+                    📥 Tải Video Đã Lồng Tiếng (.mp4)
+                </a>
+            </section>
+
+            <!-- BOTTOM PANEL: SYSTEM CONSOLE LOGS -->
+            <section class="panel" style="grid-column: 1 / -1; margin-top: 1rem;">
+                <div class="panel-title" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>💻 Nhật Ký Hệ Thống (Console Log)</span>
+                    <button onclick="clearConsoleLog()" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); color: #ccc; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">🧹 Xóa Log</button>
                 </div>
-            </div>
+                <div id="console-log-box" style="background: #0d1117; color: #39d353; font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace; font-size: 0.85rem; padding: 1rem; border-radius: 8px; height: 180px; overflow-y: auto; border: 1px solid #30363d; white-space: pre-wrap; word-break: break-word;">
+                    <div style="color: #8b949e;">[System Log] Console ready. Waiting for events...</div>
+                </div>
+            </section>
+        </main>
 
-            <a id="download-link" class="download-btn" style="display: none;" download>
-                📥 Tải Video Đã Lồng Tiếng (.mp4)
-            </a>
-        </section>
+        <script>
+            let currentVideoId = sessionStorage.getItem('dubber_video_id') || null;
+            let API_BASE = '';
 
-        <!-- BOTTOM PANEL: SYSTEM CONSOLE LOGS -->
-        <section class="panel" style="grid-column: 1 / -1; margin-top: 1rem;">
-            <div class="panel-title" style="display: flex; justify-content: space-between; align-items: center;">
-                <span>💻 Nhật Ký Hệ Thống (Console Log)</span>
-                <button onclick="clearConsoleLog()" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); color: #ccc; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">🧹 Xóa Log</button>
-            </div>
-            <div id="console-log-box" style="background: #0d1117; color: #39d353; font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace; font-size: 0.85rem; padding: 1rem; border-radius: 8px; height: 180px; overflow-y: auto; border: 1px solid #30363d; white-space: pre-wrap; word-break: break-word;">
-                <div style="color: #8b949e;">[System Log] Console ready. Waiting for events...</div>
-            </div>
-        </section>
-    </main>
+            function addConsoleLog(msg, type = 'info') {
+                const box = document.getElementById('console-log-box');
+                if (!box) return;
+                const timeStr = new Date().toLocaleTimeString();
+                let color = '#39d353';
+                if (type === 'warn') color = '#e3b341';
+                if (type === 'error') color = '#ff7b72';
+                if (type === 'system') color = '#58a6ff';
 
-    <script>
-        let currentVideoId = sessionStorage.getItem('dubber_video_id') || null;
-        let API_BASE = '';
+                const line = document.createElement('div');
+                line.style.color = color;
+                line.style.marginBottom = '4px';
+                line.textContent = `[${timeStr}] ${msg}`;
+                box.appendChild(line);
+                box.scrollTop = box.scrollHeight;
+            }
 
-        function addConsoleLog(msg, type = 'info') {
-            const box = document.getElementById('console-log-box');
-            if (!box) return;
-            const timeStr = new Date().toLocaleTimeString();
-            let color = '#39d353';
-            if (type === 'warn') color = '#e3b341';
-            if (type === 'error') color = '#ff7b72';
-            if (type === 'system') color = '#58a6ff';
+            function clearConsoleLog() {
+                const box = document.getElementById('console-log-box');
+                if (box) box.innerHTML = '<div style="color:#58a6ff">[System Log] Console cleared.</div>';
+            }
 
-            const line = document.createElement('div');
-            line.style.color = color;
-            line.style.marginBottom = '4px';
-            line.textContent = `[${timeStr}] ${msg}`;
-            box.appendChild(line);
-            box.scrollTop = box.scrollHeight;
-        }
+            async function detectApiBase() {
+                if (window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost') {
+                    try {
+                        const testRes = await fetch('http://127.0.0.1:8080/v1/voices', { method: 'GET' });
+                        if (testRes.ok) {
+                            API_BASE = 'http://127.0.0.1:8080';
+                            addConsoleLog('Khởi tạo kết nối Taka Agent: ' + API_BASE, 'system');
+                            return;
+                        }
+                    } catch(e) {
+                        addConsoleLog('Chạy trên Host Domain (Fallback): ' + window.location.origin, 'system');
+                    }
+                }
+                API_BASE = '';
+            }
 
-        function clearConsoleLog() {
-            const box = document.getElementById('console-log-box');
-            if (box) box.innerHTML = '<div style="color:#58a6ff">[System Log] Console cleared.</div>';
-        }
+            function switchTab(tab) {
+                document.getElementById('tab-url-btn').classList.toggle('active', tab === 'url');
+                document.getElementById('tab-upload-btn').classList.toggle('active', tab === 'upload');
+                document.getElementById('tab-url-sec').style.display = tab === 'url' ? 'flex' : 'none';
+                document.getElementById('tab-upload-sec').style.display = tab === 'upload' ? 'flex' : 'none';
+            }
 
-        async function detectApiBase() {
-            if (window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost') {
+            async function loadVoices() {
+                await detectApiBase();
                 try {
-                    const testRes = await fetch('http://127.0.0.1:8080/v1/voices', { method: 'GET' });
-                    if (testRes.ok) {
-                        API_BASE = 'http://127.0.0.1:8080';
-                        addConsoleLog('Khởi tạo kết nối Taka Agent: ' + API_BASE, 'system');
-                        return;
+                    const res = await fetch(API_BASE + '/v1/dubber/voices');
+                    const data = await res.json();
+                    const voicesList = Array.isArray(data) ? data : (data.voices || []);
+
+                    if (voicesList.length > 0) {
+                        const sel = document.getElementById('voice-select');
+                        sel.innerHTML = '';
+                        voicesList.forEach(v => {
+                            const opt = document.createElement('option');
+                            opt.value = v.id;
+                            const icon = v.provider === 'melorix' ? '☁️' : '🎙️';
+                            const providerText = v.provider_label ? ` [${v.provider_label}]` : '';
+                            opt.textContent = `${icon} ${v.name || v.id}${providerText}`;
+                            opt.dataset.provider = v.provider || '';
+                            sel.appendChild(opt);
+                        });
+                        addConsoleLog('Đã nạp danh sách ' + voicesList.length + ' giọng đọc.', 'system');
                     }
                 } catch(e) {
-                    addConsoleLog('Chạy trên Host Domain (Fallback): ' + window.location.origin, 'system');
+                    addConsoleLog('Lỗi nạp danh sách giọng đọc: ' + e.message, 'error');
                 }
             }
-            API_BASE = '';
-        }
+            loadVoices();
 
-        function switchTab(tab) {
-            document.getElementById('tab-url-btn').classList.toggle('active', tab === 'url');
-            document.getElementById('tab-upload-btn').classList.toggle('active', tab === 'upload');
-            document.getElementById('tab-url-sec').style.display = tab === 'url' ? 'flex' : 'none';
-            document.getElementById('tab-upload-sec').style.display = tab === 'upload' ? 'flex' : 'none';
-        }
+            function setStatus(msg, type) {
+                const el = document.getElementById('source-status');
+                el.style.display = 'block';
+                el.className = `status-badge status-${type}`;
+                el.innerHTML = msg;
+            }
 
-        async function loadVoices() {
-            await detectApiBase();
-            try {
-                const res = await fetch(API_BASE + '/v1/dubber/voices');
-                const data = await res.json();
-                const voicesList = Array.isArray(data) ? data : (data.voices || []);
+            async function fetchVideoFromUrl() {
+                const url = document.getElementById('video-url').value.trim();
+                if (!url) return alert('Vui lòng nhập URL video!');
 
-                if (voicesList.length > 0) {
-                    const sel = document.getElementById('voice-select');
-                    sel.innerHTML = '';
-                    voicesList.forEach(v => {
-                        const opt = document.createElement('option');
-                        opt.value = v.id;
-                        const icon = v.provider === 'melorix' ? '☁️' : '🎙️';
-                        const providerText = v.provider_label ? ` [${v.provider_label}]` : '';
-                        opt.textContent = `${icon} ${v.name || v.id}${providerText}`;
-                        opt.dataset.provider = v.provider || '';
-                        sel.appendChild(opt);
+                const btnText = document.getElementById('fetch-btn-text');
+                btnText.innerHTML = '<div class="spinner"></div> Đang tải video từ URL...';
+                setStatus('⌛ Đang xử lý và tải video từ URL...', 'loading');
+                addConsoleLog('Bắt đầu tải video từ URL: ' + url, 'info');
+
+                try {
+                    const res = await fetch(API_BASE + '/v1/dubber/download-video', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url})
                     });
-                    addConsoleLog('Đã nạp danh sách ' + voicesList.length + ' giọng đọc.', 'system');
-                }
-            } catch(e) {
-                addConsoleLog('Lỗi nạp danh sách giọng đọc: ' + e.message, 'error');
-            }
-        }
-        loadVoices();
-
-        function setStatus(msg, type) {
-            const el = document.getElementById('source-status');
-            el.style.display = 'block';
-            el.className = `status-badge status-${type}`;
-            el.innerHTML = msg;
-        }
-
-        async function fetchVideoFromUrl() {
-            const url = document.getElementById('video-url').value.trim();
-            if (!url) return alert('Vui lòng nhập URL video!');
-
-            const btnText = document.getElementById('fetch-btn-text');
-            btnText.innerHTML = '<div class="spinner"></div> Đang tải video từ URL...';
-            setStatus('⌛ Đang xử lý và tải video từ URL...', 'loading');
-            addConsoleLog('Bắt đầu tải video từ URL: ' + url, 'info');
-
-            try {
-                const res = await fetch(API_BASE + '/v1/dubber/download-video', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({url})
-                });
-                const data = await res.json();
-                if (data.ok) {
-                    currentVideoId = data.video_id;
-                    sessionStorage.setItem('dubber_video_id', data.video_id);
-                    sessionStorage.setItem('dubber_video_url', data.video_url);
-                    showSourceVideo(data.video_url);
-                    setStatus('✅ Tải nguồn video thành công (Local Agent)!', 'success');
-                    addConsoleLog('✅ Tải nguồn video thành công: ' + data.video_id, 'info');
-                    document.getElementById('process-btn').disabled = false;
-                } else {
-                    setStatus(`❌ Lỗi tải video: ${data.detail || 'Không xác định'}`, 'error');
-                    addConsoleLog('❌ Lỗi tải video: ' + (data.detail || 'Không xác định'), 'error');
-                }
-            } catch(e) {
-                setStatus(`❌ Lỗi kết nối: ${e.message}`, 'error');
-                addConsoleLog('❌ Lỗi kết nối: ' + e.message, 'error');
-            } finally {
-                btnText.innerHTML = '📥 Tải Nguồn Video';
-            }
-        }
-
-        async function uploadVideoFile(file) {
-            if (!file) return;
-            setStatus('⌛ Đang tải file video lên Local Agent...', 'loading');
-            addConsoleLog('Bắt đầu upload file video: ' + file.name + ' (' + Math.round(file.size/1024/1024) + ' MB)', 'info');
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                const res = await fetch(API_BASE + '/v1/dubber/upload-video', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await res.json();
-                if (data.ok) {
-                    currentVideoId = data.video_id;
-                    sessionStorage.setItem('dubber_video_id', data.video_id);
-                    sessionStorage.setItem('dubber_video_url', data.video_url);
-                    showSourceVideo(data.video_url);
-                    setStatus('✅ Upload video thành công (Local Agent)!', 'success');
-                    addConsoleLog('✅ Upload video thành công: ' + data.video_id, 'info');
-                    document.getElementById('process-btn').disabled = false;
-                } else {
-                    setStatus(`❌ Lỗi upload: ${data.detail || 'Không xác định'}`, 'error');
-                    addConsoleLog('❌ Lỗi upload: ' + (data.detail || 'Không xác định'), 'error');
-                }
-            } catch(e) {
-                setStatus(`❌ Lỗi kết nối: ${e.message}`, 'error');
-                addConsoleLog('❌ Lỗi kết nối: ' + e.message, 'error');
-            }
-        }
-
-        function showSourceVideo(url) {
-            const player = document.getElementById('source-player');
-            const placeholder = document.getElementById('source-placeholder');
-            const useApiBase = (API_BASE && (window.location.protocol === 'http:' || API_BASE.startsWith('https:')));
-            const fullUrl = (url && url.startsWith('/') && useApiBase) ? (API_BASE + url) : url;
-            player.src = fullUrl;
-            try { player.load(); } catch(e) {}
-            player.style.display = 'block';
-            placeholder.style.display = 'none';
-        }
-
-        async function autoLoadLatestVideo() {
-            try {
-                let data = null;
-                if (API_BASE) {
-                    try {
-                        const res = await fetch(API_BASE + '/v1/dubber/latest-input');
-                        data = await res.json();
-                    } catch(err) {
-                        console.warn('Failed API_BASE latest-input fetch:', err);
+                    const data = await res.json();
+                    if (data.ok) {
+                        currentVideoId = data.video_id;
+                        sessionStorage.setItem('dubber_video_id', data.video_id);
+                        sessionStorage.setItem('dubber_video_url', data.video_url);
+                        showSourceVideo(data.video_url);
+                        setStatus('✅ Tải nguồn video thành công (Local Agent)!', 'success');
+                        addConsoleLog('✅ Tải nguồn video thành công: ' + data.video_id, 'info');
+                        document.getElementById('process-btn').disabled = false;
+                    } else {
+                        setStatus(`❌ Lỗi tải video: ${data.detail || 'Không xác định'}`, 'error');
+                        addConsoleLog('❌ Lỗi tải video: ' + (data.detail || 'Không xác định'), 'error');
                     }
-                }
-                if (!data || !data.ok) {
-                    const res = await fetch('/v1/dubber/latest-input');
-                    data = await res.json();
-                }
-                if (data && data.ok && data.video_id && data.video_url) {
-                    currentVideoId = data.video_id;
-                    sessionStorage.setItem('dubber_video_id', data.video_id);
-                    sessionStorage.setItem('dubber_video_url', data.video_url);
-                    showSourceVideo(data.video_url);
-                    setStatus('✅ Đã nạp video nguồn gần nhất sẵn sàng (Local Agent)!', 'success');
-                    addConsoleLog('Đã nạp video nguồn gần nhất: ' + data.video_id + ' (' + Math.round(data.size/1024/1024) + ' MB)', 'system');
-                    document.getElementById('process-btn').disabled = false;
-                    return;
-                }
-            } catch(e) {
-                console.warn('Failed to fetch latest input video:', e);
-            }
-
-            if (sessionStorage.getItem('dubber_video_id') && sessionStorage.getItem('dubber_video_url')) {
-                showSourceVideo(sessionStorage.getItem('dubber_video_url'));
-                setStatus('✅ Đã nạp video nguồn sẵn sàng (Local Agent)!', 'success');
-                addConsoleLog('Đã nạp video nguồn sẵn sàng từ cache.', 'system');
-                document.getElementById('process-btn').disabled = false;
-            }
-        }
-        autoLoadLatestVideo();
-
-        async function processDubbing() {
-            if (!currentVideoId) {
-                const url = document.getElementById('video-url') ? document.getElementById('video-url').value.trim() : '';
-                if (url) {
-                    await fetchVideoFromUrl();
+                } catch(e) {
+                    setStatus(`❌ Lỗi kết nối: ${e.message}`, 'error');
+                    addConsoleLog('❌ Lỗi kết nối: ' + e.message, 'error');
+                } finally {
+                    btnText.innerHTML = '📥 Tải Nguồn Video';
                 }
             }
-            if (!currentVideoId) return alert('Chưa chọn video nguồn! Vui lòng nhập link video (và bấm Tải Nguồn Video) hoặc chọn Tải File Lên từ máy tính.');
 
-            const voiceSelect = document.getElementById('voice-select');
-            const voiceId = voiceSelect.value;
-            const selectedOpt = voiceSelect.options[voiceSelect.selectedIndex];
-            const provider = selectedOpt ? (selectedOpt.dataset.provider || '') : '';
-            const text = document.getElementById('voice-text').value.trim();
-            const mixMode = document.getElementById('mix-mode').value;
+            async function uploadVideoFile(file) {
+                if (!file) return;
+                setStatus('⌛ Đang tải file video lên Local Agent...', 'loading');
+                addConsoleLog('Bắt đầu upload file video: ' + file.name + ' (' + Math.round(file.size/1024/1024) + ' MB)', 'info');
+                const formData = new FormData();
+                formData.append('file', file);
 
-            if (!text) return alert('Vui lòng nhập nội dung lồng tiếng!');
+                try {
+                    const res = await fetch(API_BASE + '/v1/dubber/upload-video', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                        currentVideoId = data.video_id;
+                        sessionStorage.setItem('dubber_video_id', data.video_id);
+                        sessionStorage.setItem('dubber_video_url', data.video_url);
+                        showSourceVideo(data.video_url);
+                        setStatus('✅ Upload video thành công (Local Agent)!', 'success');
+                        addConsoleLog('✅ Upload video thành công: ' + data.video_id, 'info');
+                        document.getElementById('process-btn').disabled = false;
+                    } else {
+                        setStatus(`❌ Lỗi upload: ${data.detail || 'Không xác định'}`, 'error');
+                        addConsoleLog('❌ Lỗi upload: ' + (data.detail || 'Không xác định'), 'error');
+                    }
+                } catch(e) {
+                    setStatus(`❌ Lỗi kết nối: ${e.message}`, 'error');
+                    addConsoleLog('❌ Lỗi kết nối: ' + e.message, 'error');
+                }
+            }
 
-            setStatus('⏳ <b>Đang tiến hành lồng tiếng video...</b><br>• Bước 1: Gọi TTS đọc thoại (' + (provider === 'melorix' ? 'Melorix Cloud' : 'Local Agent') + ')<br>• Bước 2: Ghép âm thanh thoại vào video gốc bằng FFmpeg', 'loading');
-            addConsoleLog('Bắt đầu lồng tiếng cho video: ' + currentVideoId, 'system');
-            addConsoleLog('Thông số: Voice=' + voiceId + ' (' + (provider || 'agent') + '), MixMode=' + mixMode, 'info');
-            addConsoleLog('Bước 1: Gọi mô hình TTS đọc nội dung thoại...', 'info');
+            function showSourceVideo(url) {
+                const player = document.getElementById('source-player');
+                const placeholder = document.getElementById('source-placeholder');
+                const useApiBase = (API_BASE && (window.location.protocol === 'http:' || API_BASE.startsWith('https:')));
+                let fullUrl = (url && url.startsWith('/') && useApiBase) ? (API_BASE + url) : url;
 
-            const btnText = document.getElementById('process-btn-text');
-            btnText.innerHTML = '<div class="spinner"></div> Đang lồng tiếng video...';
-            document.getElementById('process-btn').disabled = true;
+                const cleanUrl = fullUrl.split('#')[0];
+                const sep = cleanUrl.includes('?') ? '&' : '?';
+                const cacheBustUrl = cleanUrl + sep + '_v=' + Date.now() + '#t=0.1';
 
-            try {
-                const res = await fetch(API_BASE + '/v1/dubber/process', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        video_id: currentVideoId,
-                        voice_id: voiceId,
-                        provider: provider,
-                        use_melorix: provider === 'melorix',
-                        text: text,
-                        mix_mode: mixMode
-                    })
-                });
-                const data = await res.json();
-                if (data.ok) {
-                    const resultPlayer = document.getElementById('result-player');
-                    const resultPlaceholder = document.getElementById('result-placeholder');
-                    const downloadLink = document.getElementById('download-link');
+                player.src = cacheBustUrl;
+                try { player.load(); } catch(e) {}
+                player.style.display = 'block';
+                placeholder.style.display = 'none';
+            }
 
-                    const useApiBase = (API_BASE && (window.location.protocol === 'http:' || API_BASE.startsWith('https:')));
-                    const dubbedFullUrl = (data.dubbed_url && data.dubbed_url.startsWith('/') && useApiBase) ? (API_BASE + data.dubbed_url) : data.dubbed_url;
-                    resultPlayer.src = dubbedFullUrl;
-                    try { resultPlayer.load(); } catch(e) {}
-                    resultPlayer.style.display = 'block';
-                    resultPlaceholder.style.display = 'none';
-
-                    downloadLink.href = dubbedFullUrl;
-                    downloadLink.style.display = 'inline-flex';
-
-                    setStatus('✅ <b>Lồng tiếng thành công!</b> Bạn có thể xem trước hoặc tải video thành phẩm bên phải.', 'success');
-                    addConsoleLog('Bước 2: Ghép âm thanh & render video thành công!', 'info');
-                    addConsoleLog('✅ Hoàn tất lồng tiếng video. Link thành phẩm: ' + data.dubbed_url, 'info');
-                    resultPlayer.play();
-                } else {
-                    setStatus(`❌ <b>Lỗi xử lý lồng tiếng:</b> ${data.detail || 'Không xác định'}`, 'error');
-                    addConsoleLog('❌ Lỗi lồng tiếng: ' + (data.detail || 'Không xác định'), 'error');
+            async function autoLoadLatestVideo() {
+                try {
+                    let data = null;
+                    if (API_BASE) {
+                        try {
+                            const res = await fetch(API_BASE + '/v1/dubber/latest-input');
+                            data = await res.json();
+                        } catch(err) {
+                            console.warn('Failed API_BASE latest-input fetch:', err);
+                        }
+                    }
+                    if (!data || !data.ok) {
+                        const res = await fetch('/v1/dubber/latest-input');
+                        data = await res.json();
                 }
             } catch(e) {
                 setStatus(`❌ <b>Lỗi kết nối:</b> ${e.message}`, 'error');
