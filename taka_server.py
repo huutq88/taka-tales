@@ -663,7 +663,7 @@ source env/bin/activate
 
 # 5. Install core connection requirements first and start Agent immediately
 echo "[5/6] Installing core connection dependencies..."
-pip3 install websockets requests configparser edge-tts psutil
+pip3 install websockets requests configparser edge-tts psutil nltk
 
 echo "============================================="
 echo "🎉 Taka Agent Core Connected!"
@@ -848,7 +848,7 @@ if (-not (Test-Path $ENV_PYTHON)) {{
 
 # 5. Install core connection requirements first and start Agent immediately
 Write-Host "[5/6] Installing core connection dependencies..." -ForegroundColor Green
-& $ENV_PIP install websockets requests configparser edge-tts psutil
+& $ENV_PIP install websockets requests configparser edge-tts psutil nltk
 
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "🎉 Taka Agent Connected Successfully!" -ForegroundColor Green

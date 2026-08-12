@@ -103,16 +103,41 @@ except ImportError:
     concatenate_audioclips = None
     concatenate_videoclips = None
 
-from nltk.tokenize import sent_tokenize, word_tokenize
-import nltk
-for nltk_res in ('punkt', 'punkt_tab'):
-    try:
-        nltk.data.find(f'tokenizers/{nltk_res}')
-    except LookupError:
+try:
+    import nltk
+    from nltk.tokenize import sent_tokenize, word_tokenize
+    for nltk_res in ('punkt', 'punkt_tab'):
         try:
-            nltk.download(nltk_res, quiet=True)
-        except Exception:
-            pass
+            nltk.data.find(f'tokenizers/{nltk_res}')
+        except LookupError:
+            try:
+                nltk.download(nltk_res, quiet=True)
+            except Exception:
+                pass
+except ImportError:
+    try:
+        import subprocess, sys
+        subprocess.run([sys.executable, "-m", "pip", "install", "nltk", "--break-system-packages"], check=False)
+        import nltk
+        from nltk.tokenize import sent_tokenize, word_tokenize
+        for nltk_res in ('punkt', 'punkt_tab'):
+            try:
+                nltk.data.find(f'tokenizers/{nltk_res}')
+            except LookupError:
+                try:
+                    nltk.download(nltk_res, quiet=True)
+                except Exception:
+                    pass
+    except Exception:
+        import re
+        def sent_tokenize(text: str):
+            if not text:
+                return []
+            return [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+        def word_tokenize(text: str):
+            if not text:
+                return []
+            return text.split()
 from ollama import ChatResponse, chat
 from PIL import Image, PngImagePlugin
 
@@ -1652,7 +1677,8 @@ def make_final_video(project_name: str, project_dir: pathlib.Path, start_idx: in
         except Exception as ex:
             print(f"[VideoEngine Warning] Failed to generate clean Pydub master audio: {ex}")
 
-    out = project_dir / f"{project_name}.mp4"
+    clean_name = pathlib.Path(project_name).name
+    out = project_dir / f"{clean_name}.mp4"
     temp_audio = project_dir / "temp_audio.m4a"
     final.write_videofile(
         str(out), fps=FPS, codec="libx264", audio_codec="aac",
@@ -1710,7 +1736,8 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
         from PIL import Image as PILImage, ImageDraw, ImageFont as PILFont
         import subprocess
 
-        video_path = project_dir / f"{project_name}.mp4"
+        clean_name = pathlib.Path(project_name).name
+        video_path = project_dir / f"{clean_name}.mp4"
         if not video_path.exists():
             video_path = project_dir / "final.mp4"
         if not video_path.exists():
@@ -1736,22 +1763,38 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
 
         # 3. Typography & Styling according to 3-line requirement:
         # Line 1: short_title (Yellow Pill Badge)
-        # Line 2: title (Main bold title)
+        # Line 2: title (Main bold title, stripping episode_label)
         # Line 3: first sentence of content
         short_title = ""
         title_text = ""
-        
+        content_text = ""
+        episode_label = ""
+
+        item_file = project_dir / "item.json"
+        if item_file.exists():
+            try:
+                with open(item_file, "r", encoding="utf-8") as f:
+                    idata = json.load(f)
+                short_title = str(idata.get("short_title", "") or "").strip()
+                title_text = str(idata.get("title", "") or "").strip()
+                episode_label = str(idata.get("episode_label", "") or "").strip()
+                content_text = str(idata.get("content", "") or "").strip()
+            except Exception:
+                pass
+
         config_file = project_dir / "project_config.json"
         if config_file.exists():
             try:
                 with open(config_file, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
-                short_title = cfg.get("short_title", "")
-                title_text = cfg.get("title", "")
+                if not short_title: short_title = str(cfg.get("short_title", "") or "").strip()
+                if not title_text: title_text = str(cfg.get("title", "") or "").strip()
+                if not episode_label: episode_label = str(cfg.get("episode_label", "") or "").strip()
+                if not content_text: content_text = str(cfg.get("content", "") or "").strip()
             except Exception:
                 pass
 
-        if not short_title or not title_text:
+        if not short_title or not title_text or not content_text:
             story_id = project_dir.parent.name
             chap_id = project_dir.name
             data_dir = pathlib.Path(__file__).parent.parent / "data"
@@ -1760,27 +1803,48 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
                     with open(jpath, "r", encoding="utf-8") as f:
                         jdata = json.load(f)
                     if jdata.get("slug") in (chap_id, story_id, project_name):
-                        if not short_title: short_title = jdata.get("short_title", "")
-                        if not title_text: title_text = jdata.get("title", "")
+                        if not short_title: short_title = str(jdata.get("short_title", "") or "").strip()
+                        if not title_text: title_text = str(jdata.get("title", "") or "").strip()
+                        if not episode_label: episode_label = str(jdata.get("episode_label", "") or "").strip()
+                        if not content_text: content_text = str(jdata.get("content", "") or "").strip()
                         break
                 except Exception:
                     pass
 
+        # Clean Line 1: Short title badge text (strip episode label, replace hyphens/underscores)
+        if episode_label:
+            short_title = re.sub(r'^' + re.escape(episode_label) + r'[\s:\-]*', '', short_title, flags=re.IGNORECASE).strip()
+        short_title = re.sub(r'^(?:Tập\s*\d+|Ep\.?\s*\d+|Chapter\s*\d+|Phần\s*\d+)[\s:\-]*', '', short_title, flags=re.IGNORECASE).strip()
+        if ('-' in short_title or '_' in short_title) and ' ' not in short_title:
+            short_title = short_title.replace("-", " ").replace("_", " ").strip()
         if not short_title:
-            short_title = project_name.replace("dao_ly_", "").replace("dao-ly-", "").replace("_", " ").strip().title()
+            short_title = project_name.replace("dao_ly_", "").replace("dao-ly-", "").replace("-", " ").replace("_", " ").strip().title()
+
+        # Clean Line 2: Strip episode_label (e.g. "Tập 01:", "Tập 1 -", "Ep 01:", etc.) from title_text
+        if episode_label:
+            title_text = re.sub(r'^' + re.escape(episode_label) + r'[\s:\-]*', '', title_text, flags=re.IGNORECASE).strip()
+        title_text = re.sub(r'^(?:Tập\s*\d+|Ep\.?\s*\d+|Chapter\s*\d+|Phần\s*\d+|Cơ-sở\s*\d+)[\s:\-]*', '', title_text, flags=re.IGNORECASE).strip()
+        if ('-' in title_text or '_' in title_text) and ' ' not in title_text:
+            title_text = title_text.replace("-", " ").replace("_", " ").strip()
         if not title_text:
             title_text = short_title
 
         # Line 3: Extract first sentence of content
         first_sentence = ""
-        story_file = project_dir / "story.txt"
-        if story_file.exists():
+        raw_story = content_text.strip()
+        if not raw_story:
+            story_file = project_dir / "story.txt"
+            if story_file.exists():
+                try:
+                    raw_story = story_file.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+
+        if raw_story:
             try:
-                raw_story = story_file.read_text(encoding="utf-8").strip()
-                raw_story = re.sub(r'\[.*?\]', '', raw_story).strip()
-                paragraphs = [p.strip() for p in raw_story.splitlines() if p.strip()]
+                clean_story = re.sub(r'\[.*?\]', '', raw_story).strip()
+                paragraphs = [p.strip() for p in clean_story.splitlines() if p.strip()]
                 for p in paragraphs:
-                    # Clean ellipses temporarily to find sentence boundary
                     p_clean = p.replace("...", "___ELLIPSIS___")
                     sents = [s.replace("___ELLIPSIS___", "...").strip() for s in re.split(r'[.!?\n]', p_clean) if s.strip()]
                     if sents:
@@ -1799,26 +1863,38 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
         font_path_tag = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
         
         try:
-            pil_font_title = PILFont.truetype(font_path_title, int(0.032 * IMAGE_HEIGHT))
-            pil_font_sub = PILFont.truetype(font_path_sub, int(0.020 * IMAGE_HEIGHT))
-            pil_font_tag = PILFont.truetype(font_path_tag, int(0.020 * IMAGE_HEIGHT))
+            font_size_title = int(0.032 * IMAGE_HEIGHT) if IMAGE_WIDTH > IMAGE_HEIGHT else int(0.024 * IMAGE_HEIGHT)
+            font_size_sub = int(0.020 * IMAGE_HEIGHT) if IMAGE_WIDTH > IMAGE_HEIGHT else int(0.016 * IMAGE_HEIGHT)
+            font_size_tag = int(0.020 * IMAGE_HEIGHT) if IMAGE_WIDTH > IMAGE_HEIGHT else int(0.015 * IMAGE_HEIGHT)
+            pil_font_title = PILFont.truetype(font_path_title, font_size_title)
+            pil_font_sub = PILFont.truetype(font_path_sub, font_size_sub)
+            pil_font_tag = PILFont.truetype(font_path_tag, font_size_tag)
         except Exception:
             pil_font_title = PILFont.load_default()
             pil_font_sub = pil_font_title
             pil_font_tag = pil_font_title
 
-        # Line 1: Short Title Pill Badge
-        tag_text = f"  {short_title.upper()}  "
+        # Line 1: Short Title Pill Badge (Truncate/wrap if too long to prevent horizontal spill)
+        disp_short = short_title.upper()
+        if len(disp_short) > 30:
+            disp_short = disp_short[:27] + "..."
+        tag_text = f"  {disp_short}  "
         tag_bbox = draw.textbbox((0, 0), tag_text, font=pil_font_tag)
         tag_w = tag_bbox[2] - tag_bbox[0]
         tag_h = tag_bbox[3] - tag_bbox[1]
+
+        # Clamp tag width to max 85% of image width
+        max_tag_w = int(0.85 * IMAGE_WIDTH)
+        if tag_w > max_tag_w:
+            tag_w = max_tag_w
+
         tag_x = (IMAGE_WIDTH - tag_w) // 2
-        tag_y = int(IMAGE_HEIGHT * 0.22)
+        tag_y = int(IMAGE_HEIGHT * 0.18)
 
         draw.rounded_rectangle([tag_x - 18, tag_y - 10, tag_x + tag_w + 18, tag_y + tag_h + 10], radius=22, fill=(245, 158, 11, 240))
         draw.text((tag_x, tag_y), tag_text, font=pil_font_tag, fill=(15, 23, 42))
 
-        # Line 2: Title (Wrap lines)
+        # Line 2: Title (Wrap lines & cap at max 3 lines to prevent vertical spill)
         max_w = int(0.85 * IMAGE_WIDTH)
         words = title_text.split()
         lines, curr = [], []
@@ -1831,7 +1907,12 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
                 curr = [w]
         if curr: lines.append(" ".join(curr))
 
-        curr_y = tag_y + tag_h + 45
+        if len(lines) > 3:
+            lines = lines[:3]
+            if not lines[-1].endswith("..."):
+                lines[-1] = lines[-1].rstrip(".!?") + "..."
+
+        curr_y = tag_y + tag_h + 35
         stroke_w = max(4, int(0.004 * IMAGE_HEIGHT))
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=pil_font_title)
@@ -1840,9 +1921,9 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
             lx = (IMAGE_WIDTH - lw) // 2
             
             draw.text((lx, curr_y), line, font=pil_font_title, fill=(255, 255, 255), stroke_width=stroke_w, stroke_fill=(15, 23, 42))
-            curr_y += lh + 18
+            curr_y += lh + 14
 
-        # Line 3: Full content text (Wrap all lines naturally)
+        # Line 3: Full content text (Wrap lines & cap at max 3 lines)
         quote_text = f"“{first_sentence}”"
 
         q_words = quote_text.split()
@@ -1857,14 +1938,22 @@ def generate_thumbnail_and_embed_metadata(project_dir: pathlib.Path, project_nam
                 curr_q = [w]
         if curr_q: q_lines.append(" ".join(curr_q))
 
-        curr_y += 25
+        if len(q_lines) > 3:
+            q_lines = q_lines[:3]
+            if not q_lines[-1].endswith("..."):
+                q_lines[-1] = q_lines[-1].rstrip(".!?") + "..."
+
+        curr_y += 18
+        max_bottom = int(IMAGE_HEIGHT * 0.90)
         for qline in q_lines:
             bbox = draw.textbbox((0, 0), qline, font=pil_font_sub)
             qw = bbox[2] - bbox[0]
             qh = bbox[3] - bbox[1]
+            if curr_y + qh > max_bottom:
+                break
             qx = (IMAGE_WIDTH - qw) // 2
             draw.text((qx, curr_y), qline, font=pil_font_sub, fill=(252, 211, 77), stroke_width=2, stroke_fill=(0, 0, 0))
-            curr_y += qh + 12
+            curr_y += qh + 10
 
         thumb_jpg = project_dir / "thumbnail.jpg"
         thumb_img.save(thumb_jpg, "JPEG", quality=95)
@@ -2181,8 +2270,17 @@ def make_final_music_video(project_name: str, project_dir: pathlib.Path, origina
         
     final = final.set_audio(music_clip)
     
-    out = project_dir / f"{project_name}.mp4"
+    clean_name = pathlib.Path(project_name).name
+    out = project_dir / f"{clean_name}.mp4"
     final.write_videofile(str(out), fps=FPS, codec="libx264")
+
+    server_final = project_dir / "final.mp4"
+    if out.exists():
+        try:
+            shutil.copy(str(out), str(server_final))
+            print(f"[VideoEngine] Copied final music video to {server_final.name}")
+        except Exception as ex:
+            print(f"[VideoEngine] Error copying to final.mp4: {ex}")
 
 
 def dub_video_with_voice(input_video_path: pathlib.Path, voice_audio_path: pathlib.Path, output_video_path: pathlib.Path, mix_mode: str = "replace", bg_volume: float = 0.15) -> pathlib.Path:

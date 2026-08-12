@@ -758,6 +758,11 @@ async def _tts_melorix_single_chunk(clean_text: str, voice_id: str, speed: float
         try:
             resp = await asyncio.to_thread(requests.post, url, json=payload, headers=headers, timeout=180)
             if resp.status_code != 200:
+                if resp.status_code in (500, 502, 503, 504, 524):
+                    print(f"[Melorix Cloud TTS] Warning: Voice '{voice_id}' returned HTTP {resp.status_code} (Cloudflare/Server Busy). Thử lại lần {attempt}/{max_retries}...")
+                    await asyncio.sleep(attempt * 3)
+                    continue
+
                 print(f"[Melorix Cloud TTS] Warning: Voice '{voice_id}' returned status {resp.status_code} (lần thử {attempt}/{max_retries}). Thử fallback voice...")
                 fallback_voices = ["nam-bac-dao-ly", "nam-doc-truyen"]
                 fallback_success = False
@@ -773,7 +778,7 @@ async def _tts_melorix_single_chunk(clean_text: str, voice_id: str, speed: float
                         print(f"[Melorix Cloud TTS] Fallback voice '{alt_voice}' thành công!")
                         break
                 if not fallback_success:
-                    err_msg = f"Melorix API (https://voice.melorix.co) status {resp.status_code}: {resp.text}"
+                    err_msg = f"Melorix API (https://voice.melorix.co) status {resp.status_code}: {resp.text[:120]}"
                     print(f"[Melorix Cloud TTS] {err_msg}")
                     raise RuntimeError(err_msg)
 
@@ -886,7 +891,7 @@ async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = Non
     }
     voice_id = melorix_map.get(norm_voice, voice_id)
 
-    chunks = split_text_into_chunks(clean_text, max_chars=180)
+    chunks = split_text_into_chunks(clean_text, max_chars=140)
     if len(chunks) == 1:
         print(f"[Melorix Cloud TTS] Generating voiceover for 1 single text block: '{clean_text[:40]}...'")
         await send_ws_message({
@@ -1344,7 +1349,8 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
                     shutil.rmtree(fpath, ignore_errors=True)
                 fpath.mkdir(parents=True, exist_ok=True)
 
-        final_video = project_dir / f"{project_name}.mp4"
+        clean_proj_name = pathlib.Path(project_name).name
+        final_video = project_dir / f"{clean_proj_name}.mp4"
         server_final = project_dir / "final.mp4"
         if final_video.exists():
             final_video.unlink()
@@ -1556,7 +1562,8 @@ async def run_pipeline_task(project_name: str, project_path_str: str, websocket,
             "total_fragments": total_frags
         }))
         
-        final_video = project_dir / f"{project_name}.mp4"
+        clean_proj_name = pathlib.Path(project_name).name
+        final_video = project_dir / f"{clean_proj_name}.mp4"
         server_final = project_dir / "final.mp4"
         
         await asyncio.to_thread(video_engine.make_final_video, project_name, project_dir, start_idx=start_idx, end_idx=end_idx)
@@ -1659,7 +1666,8 @@ async def run_music_pipeline_task(project_name: str, project_path_str: str, webs
                 shutil.rmtree(fpath)
             fpath.mkdir(parents=True, exist_ok=True)
 
-        final_video = project_dir / f"{project_name}.mp4"
+        clean_proj_name = pathlib.Path(project_name).name
+        final_video = project_dir / f"{clean_proj_name}.mp4"
         server_final = project_dir / "final.mp4"
         if final_video.exists():
             final_video.unlink()
