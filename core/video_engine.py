@@ -783,10 +783,27 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
 
 
 # ---------- TTS ----------
-async def tts_edge(text: str, out: pathlib.Path) -> None:
+EDGE_VOICE_MAP = {
+    "nam-dao-ly": "vi-VN-NamMinhNeural",
+    "nam-bac-dao-ly": "vi-VN-NamMinhNeural",
+    "nam-doc-truyen": "vi-VN-NamMinhNeural",
+    "nu-doc-truyen": "vi-VN-HoaiMyNeural",
+    "nu-appota": "vi-VN-HoaiMyNeural",
+}
+
+async def tts_edge(text: str, out: pathlib.Path, voice: str = None) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    com = edge_tts.Communicate(text, VOICE)
-    await com.save(str(out))
+    target_voice = voice or VOICE
+    edge_voice = EDGE_VOICE_MAP.get(target_voice, target_voice)
+    if not edge_voice or not (edge_voice.startswith("vi-") or ("-" in edge_voice and len(edge_voice) > 10)):
+        edge_voice = "vi-VN-NamMinhNeural"
+    try:
+        com = edge_tts.Communicate(text, edge_voice)
+        await com.save(str(out))
+    except Exception as e:
+        print(f"[VideoEngine] Edge-TTS error with voice '{edge_voice}': {e}. Retrying with vi-VN-NamMinhNeural...")
+        com = edge_tts.Communicate(text, "vi-VN-NamMinhNeural")
+        await com.save(str(out))
 
 
 def tts_elevenlabs(text: str, out: pathlib.Path) -> None:

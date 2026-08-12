@@ -602,7 +602,8 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
     
     if not scripts:
         print("[Agent] OmniVoice tts/generate/infer script not found. Falling back to edge-tts.")
-        asyncio.run(video_engine.tts_edge(text, out))
+        v_id = voice_config.get("voice_id") if voice_config else None
+        asyncio.run(video_engine.tts_edge(text, out, voice=v_id))
         return
         
     script_path = scripts[0]
@@ -732,7 +733,8 @@ def tts_omnivoice(text: str, out: pathlib.Path, voice_config: dict = None) -> No
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         print(f"[Agent] OmniVoice script failed or timed out: {e}")
         print("[Agent] Falling back to Edge-TTS...")
-        asyncio.run(video_engine.tts_edge(text, out))
+        v_id = voice_config.get("voice_id") if voice_config else None
+        asyncio.run(video_engine.tts_edge(text, out, voice=v_id))
 
 async def tts_melorix_api(text: str, out: pathlib.Path, voice_config: dict = None) -> None:
     """Synthesize TTS audio exclusively using Melorix Voice API (http://voice.melorix.co/api/tts). No local fallback."""
