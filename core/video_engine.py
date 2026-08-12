@@ -23,6 +23,7 @@ import re
 import shutil
 import time
 
+import requests
 import resource
 try:
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)

@@ -2132,16 +2132,17 @@ async def main():
     
     while True:
         try:
-            async with websockets.connect(current_ws_url, ping_interval=None, ping_timeout=None, max_size=100 * 1024 * 1024) as websocket:
+            async with websockets.connect(current_ws_url, ping_interval=30, ping_timeout=30, max_size=100 * 1024 * 1024) as websocket:
                 print("[Agent] Connected to Taka Server successfully.")
                 active_websocket = websocket
                 
                 async def heartbeat_loop(ws):
                     while True:
                         try:
-                            await asyncio.sleep(12)
+                            await asyncio.sleep(10)
                             await ws.send(json.dumps({"type": "heartbeat"}))
-                        except Exception:
+                        except Exception as hb_err:
+                            print(f"[Agent] Heartbeat exception: {hb_err}")
                             break
                             
                 heartbeat_task = asyncio.create_task(heartbeat_loop(websocket))
