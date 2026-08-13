@@ -751,10 +751,10 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                     "-o", str(image_path)
                 ]
                 try:
-                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 except subprocess.TimeoutExpired:
-                    _log(f"[Agent] ima2-gen timed out after 120s for image {idx}. Retrying...")
-                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    _log(f"[Agent] ima2-gen timed out after 300s for image {idx}. Retrying...")
+                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 if res.returncode != 0:
                     _log(f"[Agent] ima2-gen error: {res.stderr.strip()}. Tự động xoay token Codex auth từ pool...")
                     try:
@@ -762,7 +762,7 @@ def generate_image(idx: int, project_dir: pathlib.Path, art_style: str = None, f
                         rotate_auth()
                     except Exception as e:
                         _log(f"[Agent] Lỗi khi xoay auth: {e}")
-                    res_retry = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    res_retry = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                     if res_retry.returncode != 0:
                         raise RuntimeError(f"ima2-gen error sau khi re-auth: {res_retry.stderr}")
                 
