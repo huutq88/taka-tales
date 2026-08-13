@@ -482,6 +482,13 @@ async def agent_ws_endpoint(websocket: WebSocket, workspace_id: str = "default_w
             msg_type = data.get("type")
             payload = data.get("payload", {})
 
+            if msg_type == "heartbeat":
+                try:
+                    await websocket.send_text(json.dumps({"type": "heartbeat_ack"}))
+                except Exception:
+                    pass
+                continue
+
             if msg_type == "status_update":
                 agent_status[workspace_id] = payload
             elif msg_type == "dubber_progress_update":

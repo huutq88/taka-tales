@@ -2174,7 +2174,7 @@ async def main():
 
                         msg_type = message.get("type")
                         payload = message.get("payload", {})
-                        if msg_type == "heartbeat":
+                        if msg_type in ("heartbeat", "heartbeat_ack"):
                             continue
 
                         if msg_type == "run_pipeline":
