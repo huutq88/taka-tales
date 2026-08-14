@@ -562,7 +562,6 @@ def get_default_workspace_id():
 
 @app.get("/v1/agent/status")
 async def get_agent_status(request: Request):
-    active_ws_list = list(agents_by_workspace.keys())
     request_ws = get_workspace_id_from_request(request)
 
     connected = bool(request_ws and request_ws in agents_by_workspace)
@@ -579,7 +578,6 @@ async def get_agent_status(request: Request):
         content={
             "connected": connected,
             "workspace_id": request_ws,
-            "active_workspaces": active_ws_list,
             "agents": {request_ws: st} if (request_ws and connected) else {},
             "server_version": AGENT_VERSION,
             "needs_update": needs_update,
@@ -4310,16 +4308,6 @@ async def dashboard():
                         <span class="dropdown-label">Workspace:</span>
                         <span id="dropdown-workspace-name" class="dropdown-val">--</span>
                     </div>
-                    <div class="dropdown-item" id="workspace-select-row" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
-                        <span class="dropdown-label">Active Workspaces:</span>
-                        <div style="display: flex; gap: 6px; width: 100%;">
-                            <select id="workspace-selector" onchange="switchWorkspace(this.value)" style="flex: 1; background: rgba(255,255,255,0.08); color: #fff; border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 0.8rem;">
-                            </select>
-                            <button onclick="switchWorkspace('')" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; cursor: pointer;" title="Clear saved workspace">
-                                Clear
-                            </button>
-                        </div>
-                    </div>
                     <div class="dropdown-item">
                         <span class="dropdown-label">Agent Version:</span>
                         <span id="dropdown-agent-version" class="dropdown-val">v0.4.4</span>
@@ -4685,29 +4673,6 @@ async def dashboard():
             return originalFetch(resource, config);
         };
 
-        function switchWorkspace(newWs) {
-            if (!newWs || !newWs.trim()) {
-                localStorage.removeItem("taka_workspace_id");
-                activeWorkspaceId = null;
-                try {
-                    const url = new URL(window.location.href);
-                    url.searchParams.delete("ws");
-                    window.history.replaceState({}, "", url);
-                } catch(e) {}
-            } else {
-                let cleanWs = newWs.trim();
-                localStorage.setItem("taka_workspace_id", cleanWs);
-                activeWorkspaceId = cleanWs;
-                try {
-                    const url = new URL(window.location.href);
-                    url.searchParams.set("ws", cleanWs);
-                    window.history.replaceState({}, "", url);
-                } catch(e) {}
-            }
-            updateAgentStatus();
-            loadProjects();
-        }
-
         let currentCategoryFilter = 'all';
         let selectedNewCategory = 'story';
         let allProjectsList = [];
@@ -4779,23 +4744,6 @@ async def dashboard():
                 activeWorkspaceId = currentWs || null;
 
                 if (wsName) wsName.innerText = currentWs || "None Selected";
-
-                let activeList = data.active_workspaces || [];
-                let wsSelectRow = document.getElementById("workspace-select-row");
-                let wsSelector = document.getElementById("workspace-selector");
-                if (wsSelector) {
-                    wsSelectRow.style.display = "flex";
-                    wsSelector.innerHTML = '<option value="">-- Choose Workspace --</option>';
-                    activeList.forEach(ws => {
-                        let opt = document.createElement("option");
-                        opt.value = ws;
-                        opt.innerText = ws + (ws === currentWs ? " (Active)" : "");
-                        if (ws === currentWs) {
-                            opt.selected = true;
-                        }
-                        wsSelector.appendChild(opt);
-                    });
-                }
 
                 if (data.connected && currentWs) {
                     badge.className = "agent-badge connected";
