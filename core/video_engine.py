@@ -54,27 +54,27 @@ from typing import (Dict, List, Tuple)
 
 try:
     import edge_tts
-except ImportError:
+except Exception:
     edge_tts = None
 
 try:
     import openai
-except ImportError:
+except Exception:
     openai = None
 
 try:
     import psutil
-except ImportError:
+except Exception:
     psutil = None
 
 try:
     from fake_useragent import UserAgent
-except ImportError:
+except Exception:
     UserAgent = None
 
 try:
     from keybert import KeyBERT
-except ImportError:
+except Exception:
     KeyBERT = None
 
 try:
@@ -91,7 +91,7 @@ try:
         concatenate_audioclips,
         concatenate_videoclips,
     )
-except ImportError:
+except Exception:
     AudioClip = None
     volumex = None
     AudioFileClip = None
@@ -115,7 +115,7 @@ try:
                 nltk.download(nltk_res, quiet=True)
             except Exception:
                 pass
-except ImportError:
+except Exception:
     try:
         import subprocess, sys
         subprocess.run([sys.executable, "-m", "pip", "install", "nltk", "--break-system-packages"], check=False)
@@ -471,21 +471,24 @@ def _get_kw_model() -> KeyBERT:
 
 
 def _keywords_fallback(fragment: str) -> str:
-    kw_model = _get_kw_model()
-    ngram_range = (1, 8)
-    keywords = kw_model.extract_keywords(
-        fragment,
-        keyphrase_ngram_range=ngram_range, 
-        stop_words='english', 
-        highlight=False,
-        top_n=1
-    )
-    keywords_list = list(dict(keywords).keys())
-    del kw_model
-    del keywords
-    gc.collect()
-    image_prompt = ', '.join(keywords_list)
-    return image_prompt
+    if KeyBERT is None:
+        return fragment[:100]
+    try:
+        kw_model = _get_kw_model()
+        ngram_range = (1, 8)
+        keywords = kw_model.extract_keywords(
+            fragment,
+            keyphrase_ngram_range=ngram_range, 
+            stop_words='english', 
+            highlight=False,
+            top_n=1
+        )
+        keywords_list = list(dict(keywords).keys())
+        if keywords_list:
+            return keywords_list[0]
+    except Exception:
+        pass
+    return fragment[:100]
     
 
 VIETNAMESE_CONCEPT_MAP: Dict[str, str] = {
