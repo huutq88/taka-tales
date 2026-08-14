@@ -103,27 +103,29 @@ def get_workspace_id_from_request(request: Request) -> str:
     else:
         ws_id = ws_id.strip()
 
-    if not ws_id or ws_id not in agents_by_workspace:
-        client_ip = ""
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            client_ip = forwarded_for.split(",")[0].strip()
-        elif request.client and request.client.host:
-            client_ip = request.client.host
+    if ws_id:
+        return ws_id
 
-        if client_ip:
-            matched_ws = agent_ip_map.get(client_ip)
-            if matched_ws and matched_ws in agents_by_workspace:
-                ws_id = matched_ws
+    client_ip = ""
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        client_ip = forwarded_for.split(",")[0].strip()
+    elif request.client and request.client.host:
+        client_ip = request.client.host
 
-        if (not ws_id or ws_id not in agents_by_workspace) and len(agents_by_workspace) >= 1:
-            ws_id = list(agents_by_workspace.keys())[0]
+    if client_ip:
+        matched_ws = agent_ip_map.get(client_ip)
+        if matched_ws and matched_ws in agents_by_workspace:
+            return matched_ws
 
-    return ws_id
+    if len(agents_by_workspace) == 1:
+        return list(agents_by_workspace.keys())[0]
+
+    return ""
 
 async def tunnel_request_to_agent(message_type: str, payload: dict, workspace_id: str = "", timeout: float = 10.0) -> Optional[dict]:
-    if not workspace_id or workspace_id not in agents_by_workspace:
-        if len(agents_by_workspace) >= 1:
+    if not workspace_id:
+        if len(agents_by_workspace) == 1:
             workspace_id = list(agents_by_workspace.keys())[0]
         else:
             return None
@@ -562,9 +564,6 @@ def get_default_workspace_id():
 async def get_agent_status(request: Request):
     active_ws_list = list(agents_by_workspace.keys())
     request_ws = get_workspace_id_from_request(request)
-    
-    if (not request_ws or request_ws not in agents_by_workspace) and active_ws_list:
-        request_ws = active_ws_list[0]
 
     connected = bool(request_ws and request_ws in agents_by_workspace)
     st = agent_status.get(request_ws, {}) if (request_ws and connected) else {}
@@ -904,9 +903,17 @@ try {{
     Write-Host "Warning: Failed to pre-download some models, they will download on first run." -ForegroundColor Gray
 }}
 
-Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "🎉 All Taka Agent packages successfully ready!" -ForegroundColor Green
-Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "=====================================================" -ForegroundColor Cyan
+Write-Host "🎉 TAKA AGENT INSTALLATION COMPLETE & CONNECTED!" -ForegroundColor Green
+Write-Host "=====================================================" -ForegroundColor Cyan
+Write-Host "👉 WORKSPACE ID CỦA MÁY BẠN LÀ : $WORKSPACE_ID" -ForegroundColor Yellow
+Write-Host "👉 TRÌNH DUYỆT ĐÃ TỰ ĐỘNG MỞ : $SERVER_URL/?ws=$WORKSPACE_ID" -ForegroundColor Green
+Write-Host "=====================================================" -ForegroundColor Cyan
+
+try {{
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show("Taka Agent đã cài đặt và kết nối thành công!`n`nWorkspace ID của máy bạn: $WORKSPACE_ID`n`nTrình duyệt đã tự động mở.", "Taka Agent Connected", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+}} catch {{}}
 """
     return PlainTextResponse(content=script_content, media_type="text/plain")
 
@@ -4298,7 +4305,17 @@ async def dashboard():
                     </div>
                     <div class="dropdown-item">
                         <span class="dropdown-label">Workspace:</span>
-                        <span id="dropdown-workspace-name" class="dropdown-val">huutq_d23b05</span>
+                        <span id="dropdown-workspace-name" class="dropdown-val">--</span>
+                    </div>
+                    <div class="dropdown-item" id="workspace-select-row" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                        <span class="dropdown-label">Active Workspaces:</span>
+                        <div style="display: flex; gap: 6px; width: 100%;">
+                            <select id="workspace-selector" onchange="switchWorkspace(this.value)" style="flex: 1; background: rgba(255,255,255,0.08); color: #fff; border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 0.8rem;">
+                            </select>
+                            <button onclick="switchWorkspace('')" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; cursor: pointer;" title="Clear saved workspace">
+                                Clear
+                            </button>
+                        </div>
                     </div>
                     <div class="dropdown-item">
                         <span class="dropdown-label">Agent Version:</span>
@@ -4306,11 +4323,11 @@ async def dashboard():
                     </div>
                     <div class="dropdown-item">
                         <span class="dropdown-label">Hardware Acceleration:</span>
-                        <span id="dropdown-hardware-info" class="dropdown-val">MPS (Apple Silicon)</span>
+                        <span id="dropdown-hardware-info" class="dropdown-val">--</span>
                     </div>
                     <div class="dropdown-item">
                         <span class="dropdown-label">OmniVoice Engine:</span>
-                        <span id="dropdown-omnivoice-status" class="dropdown-val">Active (v0.1.0)</span>
+                        <span id="dropdown-omnivoice-status" class="dropdown-val">--</span>
                     </div>
                 </div>
             </div>
@@ -4637,17 +4654,67 @@ async def dashboard():
     </div>
 
     <script>
+        (function initWorkspaceId() {
+            try {
+                let urlParams = new URLSearchParams(window.location.search);
+                let wsParam = urlParams.get("ws") || urlParams.get("workspace_id") || urlParams.get("workspace");
+                if (wsParam && wsParam.trim()) {
+                    localStorage.setItem("taka_workspace_id", wsParam.trim());
+                }
+            } catch(e) {}
+        })();
+
+        const originalFetch = window.fetch;
+        window.fetch = async function(...args) {
+            let [resource, config] = args;
+            config = config || {};
+            config.headers = config.headers || {};
+            let wsId = localStorage.getItem("taka_workspace_id");
+            if (wsId && wsId.trim()) {
+                if (config.headers instanceof Headers) {
+                    config.headers.set("X-Workspace-ID", wsId.trim());
+                } else if (Array.isArray(config.headers)) {
+                    config.headers.push(["X-Workspace-ID", wsId.trim()]);
+                } else {
+                    config.headers["X-Workspace-ID"] = wsId.trim();
+                }
+            }
+            return originalFetch(resource, config);
+        };
+
+        function switchWorkspace(newWs) {
+            if (!newWs || !newWs.trim()) {
+                localStorage.removeItem("taka_workspace_id");
+                activeWorkspaceId = null;
+                try {
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete("ws");
+                    window.history.replaceState({}, "", url);
+                } catch(e) {}
+            } else {
+                let cleanWs = newWs.trim();
+                localStorage.setItem("taka_workspace_id", cleanWs);
+                activeWorkspaceId = cleanWs;
+                try {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("ws", cleanWs);
+                    window.history.replaceState({}, "", url);
+                } catch(e) {}
+            }
+            updateAgentStatus();
+            loadProjects();
+        }
+
         let currentCategoryFilter = 'all';
         let selectedNewCategory = 'story';
         let allProjectsList = [];
         let activeStoryId = null;
         let activeChapterId = null;
-        let activeWorkspaceId = null;
+        let activeWorkspaceId = localStorage.getItem("taka_workspace_id") || null;
         let loadedChapterConfigKey = null;
 
         function getWorkspaceParam() {
-            let urlParams = new URLSearchParams(window.location.search);
-            let ws = urlParams.get("ws") || urlParams.get("workspace_id") || activeWorkspaceId;
+            let ws = localStorage.getItem("taka_workspace_id") || activeWorkspaceId;
             return ws ? `?ws=${encodeURIComponent(ws)}` : "";
         }
 
@@ -4704,14 +4771,35 @@ async def dashboard():
                 let omniStatus = document.getElementById("dropdown-omnivoice-status");
                 let dropTitle = document.getElementById("dropdown-status-title");
 
-                if (data.workspace_id) activeWorkspaceId = data.workspace_id;
-                if (data.connected) {
+                let savedWs = localStorage.getItem("taka_workspace_id");
+                let currentWs = savedWs || data.workspace_id || "";
+                activeWorkspaceId = currentWs || null;
+
+                if (wsName) wsName.innerText = currentWs || "None Selected";
+
+                let activeList = data.active_workspaces || [];
+                let wsSelectRow = document.getElementById("workspace-select-row");
+                let wsSelector = document.getElementById("workspace-selector");
+                if (wsSelector) {
+                    wsSelectRow.style.display = "flex";
+                    wsSelector.innerHTML = '<option value="">-- Choose Workspace --</option>';
+                    activeList.forEach(ws => {
+                        let opt = document.createElement("option");
+                        opt.value = ws;
+                        opt.innerText = ws + (ws === currentWs ? " (Active)" : "");
+                        if (ws === currentWs) {
+                            opt.selected = true;
+                        }
+                        wsSelector.appendChild(opt);
+                    });
+                }
+
+                if (data.connected && currentWs) {
                     badge.className = "agent-badge connected";
                     status.innerText = "Agent Online";
                     if (dropTitle) dropTitle.innerHTML = `<span style="color: var(--success);">🟢 Agent Online</span>`;
                     
-                    let agentMeta = data.agents ? data.agents[data.workspace_id] : null;
-                    if (wsName) wsName.innerText = data.workspace_id || "huutq_d23b05";
+                    let agentMeta = data.agents ? data.agents[currentWs] : null;
                     if (agentVer) agentVer.innerText = "v" + (data.agent_version || "0.4.4");
                     
                     if (agentMeta) {
@@ -4720,10 +4808,11 @@ async def dashboard():
                     }
                 } else {
                     badge.className = "agent-badge";
-                    status.innerText = "Agent Offline";
-                    if (dropTitle) dropTitle.innerHTML = `<span style="color: var(--text-muted);">🔴 Agent Offline</span>`;
-                    if (wsName) wsName.innerText = "--";
+                    status.innerText = currentWs ? "Agent Offline" : "No Workspace";
+                    if (dropTitle) dropTitle.innerHTML = `<span style="color: var(--text-muted);">🔴 ${currentWs ? "Agent Offline" : "No Workspace Selected"}</span>`;
                     if (agentVer) agentVer.innerText = "v" + (data.agent_version || "0.4.4");
+                    if (hwInfo) hwInfo.innerText = "--";
+                    if (omniStatus) omniStatus.innerText = "--";
                 }
                 if (document.getElementById("view-project-workspace").style.display !== "none") {
                     updateCurrentChapterStatusBanner();
