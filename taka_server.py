@@ -863,6 +863,9 @@ Write-Host "👉 Workspace ID của máy bạn là: $WORKSPACE_ID" -ForegroundCo
 Write-Host "👉 Tự động mở trình duyệt $SERVER_URL/?ws=$WORKSPACE_ID..." -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
+try {{
+    Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like "*taka_agent.py*" }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
+}} catch {{}}
 Start-Process -FilePath "$ENV_PYTHON" -ArgumentList "-u", "taka_agent.py" -WorkingDirectory "$HOME/.taka-agent" -WindowStyle Hidden
 Start-Process "$SERVER_URL/?ws=$WORKSPACE_ID"
 
