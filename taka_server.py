@@ -823,19 +823,12 @@ if (-not $PYTHON_EXE) {{
 }}
 
 # Configure config.ini
-& $PYTHON_EXE -c "
-import configparser, uuid, hashlib, socket
-
-config = configparser.ConfigParser()
-config.read('config.ini', encoding='utf-8')
-if not config.has_section('TAKA_AGENT'):
-    config.add_section('TAKA_AGENT')
-config.set('TAKA_AGENT', 'SERVER_URL', '$SERVER_URL')
-config.set('TAKA_AGENT', 'WORKSPACE_ID', '$WORKSPACE_ID')
-
-with open('config.ini', 'w', encoding='utf-8') as f:
-    config.write(f)
-"
+$configContent = @"
+[TAKA_AGENT]
+SERVER_URL = $SERVER_URL
+WORKSPACE_ID = $WORKSPACE_ID
+"@
+Set-Content -Path "config.ini" -Value $configContent -Encoding UTF8
 
 # 4. Set up virtual environment
 Write-Host "[4/6] Setting up Python virtual environment..." -ForegroundColor Green
@@ -3788,7 +3781,14 @@ async def dubber_ui_page():
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({url})
                     });
-                    const data = await res.json();
+                    let data;
+                    const cType = res.headers.get('content-type') || '';
+                    if (cType.includes('application/json')) {
+                        data = await res.json();
+                    } else {
+                        const rawText = await res.text();
+                        data = { ok: false, detail: `Lỗi kết nối Server/Agent (HTTP ${res.status}): ${rawText.slice(0, 120)}` };
+                    }
                     if (data.ok) {
                         currentVideoId = data.video_id;
                         sessionStorage.setItem('dubber_video_id', data.video_id);
@@ -3822,7 +3822,14 @@ async def dubber_ui_page():
                         method: 'POST',
                         body: formData
                     });
-                    const data = await res.json();
+                    let data;
+                    const cType = res.headers.get('content-type') || '';
+                    if (cType.includes('application/json')) {
+                        data = await res.json();
+                    } else {
+                        const rawText = await res.text();
+                        data = { ok: false, detail: `Lỗi kết nối Server/Agent (HTTP ${res.status}): ${rawText.slice(0, 120)}` };
+                    }
                     if (data.ok) {
                         currentVideoId = data.video_id;
                         sessionStorage.setItem('dubber_video_id', data.video_id);
@@ -3963,7 +3970,14 @@ async def dubber_ui_page():
                             mix_mode: mixMode
                         })
                     });
-                    const data = await res.json();
+                    let data;
+                    const cType = res.headers.get('content-type') || '';
+                    if (cType.includes('application/json')) {
+                        data = await res.json();
+                    } else {
+                        const rawText = await res.text();
+                        data = { ok: false, detail: `Lỗi kết nối Server/Agent (HTTP ${res.status}): ${rawText.slice(0, 120)}` };
+                    }
                     if (data.ok) {
                         const resultPlayer = document.getElementById('result-player');
                         const resultPlaceholder = document.getElementById('result-placeholder');
