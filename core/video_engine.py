@@ -24,8 +24,8 @@ import shutil
 import time
 
 import requests
-import resource
 try:
+    import resource
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target_limit = min(10240, hard) if hard != resource.RLIM_INFINITY else 10240
     resource.setrlimit(resource.RLIMIT_NOFILE, (target_limit, hard))
