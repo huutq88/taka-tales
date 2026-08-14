@@ -2129,10 +2129,25 @@ async def main():
         ws_base = SERVER_URL.replace("http://", "ws://").replace("https://", "ws://")
     current_ws_url = f"{ws_base}/v1/system/agent/ws?workspace_id={WORKSPACE_ID}"
     print(f"[Agent] Starting Taka-Agent ({WORKSPACE_ID}). Connecting to server {current_ws_url}...")
-    
+
+    import ssl
+    ssl_context = None
+    if current_ws_url.startswith("wss://"):
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
     while True:
         try:
-            async with websockets.connect(current_ws_url, ping_interval=30, ping_timeout=30, max_size=100 * 1024 * 1024) as websocket:
+            connect_kwargs = {
+                "ping_interval": 30,
+                "ping_timeout": 30,
+                "max_size": 100 * 1024 * 1024
+            }
+            if ssl_context:
+                connect_kwargs["ssl"] = ssl_context
+
+            async with websockets.connect(current_ws_url, **connect_kwargs) as websocket:
                 print("[Agent] Connected to Taka Server successfully.")
                 active_websocket = websocket
                 
