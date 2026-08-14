@@ -864,7 +864,7 @@ Write-Host "Starting Taka Agent connection..." -ForegroundColor Yellow
 try {{
     Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like "*taka_agent.py*" }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
 }} catch {{}}
-Start-Process -FilePath "$ENV_PYTHON" -ArgumentList "-u", "taka_agent.py" -WorkingDirectory "$HOME/.taka-agent" -RedirectStandardOutput "$HOME/.taka-agent/agent.log" -RedirectStandardError "$HOME/.taka-agent/agent.err.log" -WindowStyle Hidden
+Start-Process -FilePath "$ENV_PYTHON" -ArgumentList "-u taka_agent.py" -WorkingDirectory "$HOME\.taka-agent" -RedirectStandardOutput "$HOME\.taka-agent\agent.log" -RedirectStandardError "$HOME\.taka-agent\agent.err.log" -WindowStyle Hidden
 Start-Process "$SERVER_URL/?ws=$WORKSPACE_ID"
 
 Write-Host "Installing PyTorch, Whisper & AI rendering packages (in background)..." -ForegroundColor Yellow
