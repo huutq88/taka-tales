@@ -2147,23 +2147,28 @@ async def main():
                             
                 heartbeat_task = asyncio.create_task(heartbeat_loop(websocket))
                 
-                # Check environment
+                # Check initial environment & send status IMMEDIATELY so server marks agent connected right away
                 status = await check_environment()
-                
-                # Auto setup OmniVoice if not present
-                if not status["omnivoice_installed"]:
-                    print("[Agent] OmniVoice not installed. Commencing automatic setup...")
-                    try:
-                        await setup_omnivoice()
-                        status = await check_environment()
-                    except Exception as se:
-                        print(f"[Agent] Failed to automatically setup OmniVoice: {se}")
-                
-                # Send status update
                 await websocket.send(json.dumps({
                     "type": "status_update",
                     "payload": status
                 }))
+                
+                # Auto setup OmniVoice in background task if not present
+                if not status["omnivoice_installed"]:
+                    print("[Agent] OmniVoice not installed. Commencing automatic setup in background...")
+                    async def bg_setup_omnivoice():
+                        try:
+                            await setup_omnivoice()
+                            new_status = await check_environment()
+                            if active_websocket:
+                                await active_websocket.send(json.dumps({
+                                    "type": "status_update",
+                                    "payload": new_status
+                                }))
+                        except Exception as se:
+                            print(f"[Agent] Failed to automatically setup OmniVoice: {se}")
+                    asyncio.create_task(bg_setup_omnivoice())
 
                 try:
                     async for message_str in websocket:
